@@ -82,9 +82,13 @@ const styles = `
   .complete-sub { font-size: 15px; color: rgba(255,255,255,0.4); line-height: 1.7; margin-bottom: 40px; }
   .summary-pills { margin-bottom: 36px; }
   .summary-pill { display: inline-flex; align-items: center; gap: 8px; padding: 8px 16px; border-radius: 30px; border: 1px solid rgba(160,120,255,0.25); background: rgba(160,120,255,0.07); font-size: 13px; color: rgba(255,255,255,0.6); margin: 4px; }
+  .age-input { width: 140px; padding: 16px 20px; border-radius: 14px; border: 1.5px solid rgba(255,255,255,0.1); background: rgba(255,255,255,0.04); color: rgba(255,255,255,0.95); font-family: 'Roboto', sans-serif; font-size: 40px; font-weight: 300; text-align: center; outline: none; transition: all 0.2s ease; -moz-appearance: textfield; }
+  .age-input::-webkit-outer-spin-button, .age-input::-webkit-inner-spin-button { -webkit-appearance: none; }
+  .age-input:focus { border-color: rgba(160,120,255,0.6); background: rgba(160,120,255,0.06); }
+  .age-wrap { display: flex; justify-content: center; margin-bottom: 36px; }
 `;
 
-const stars = Array.from({ length: 60 }, (_, i) => ({
+const stars = Array.from({ length: 60 }, (_, i) => ({   //code to generate random stars for the background
   id: i,
   top: `${Math.random() * 100}%`,
   left: `${Math.random() * 100}%`,
@@ -93,7 +97,7 @@ const stars = Array.from({ length: 60 }, (_, i) => ({
   delay: `${Math.random() * 5}s`,
 }));
 
-function TimeScalePicker({ value, onChange, autoLabel }) {
+function TimeScalePicker({ value, onChange, autoLabel }) { //code to create a time scale picker component for the survey
   const { hours, minutes, auto } = value;
 
   const update = (field, delta) => {
@@ -146,21 +150,20 @@ function TimeScalePicker({ value, onChange, autoLabel }) {
 export default function LuniferSurvey() {
   const [step, setStep] = useState(0);
   const [answers, setAnswers] = useState({
+    age: "",
+    lifestyle: null,
     calendar: null,
     sleep: { hours: 8, minutes: 0, auto: false },
     routine: { hours: 1, minutes: 0, auto: false },
     commute: { hours: 0, minutes: 30, auto: false },
   });
 
-  const totalSteps = 4;
-  const canNext = () => step === 0 ? answers.calendar !== null : true;
-
-  const formatTime = (t) => {
-    if (t.auto) return "Auto";
-    const parts = [];
-    if (t.hours > 0) parts.push(`${t.hours}h`);
-    if (t.minutes > 0) parts.push(`${t.minutes}m`);
-    return parts.length > 0 ? parts.join(" ") : "0m";
+  const totalSteps = 6;
+  const canNext = () => {
+    if (step === 0) return answers.age !== "" && Number(answers.age) > 0;
+    if (step === 1) return answers.lifestyle !== null;
+    if (step === 2) return answers.calendar !== null;
+    return true;
   };
 
   return (
@@ -175,21 +178,6 @@ export default function LuniferSurvey() {
           ))}
         </div>
 
-        {step === totalSteps && (
-          <div className="complete-screen">
-            <span className="moon-complete">🌙</span>
-            <h1 className="complete-title">You're all set.</h1>
-            <p className="complete-sub">Lunifer has everything it needs to start protecting your sleep. Your first smart alarm will be ready tonight.</p>
-            <div className="summary-pills">
-              <span className="summary-pill">🗓️ {CALENDAR_APPS.find(c => c.id === answers.calendar)?.name}</span>
-              <span className="summary-pill">💤 {formatTime(answers.sleep)} sleep</span>
-              <span className="summary-pill">🌅 {formatTime(answers.routine)} routine</span>
-              <span className="summary-pill">🚗 {formatTime(answers.commute)} commute</span>
-            </div>
-            <button className="btn-next">Open Lunifer →</button>
-          </div>
-        )}
-
         {step < totalSteps && (
           <div className="card">
             <div className="step-indicator">
@@ -200,7 +188,48 @@ export default function LuniferSurvey() {
 
             {step === 0 && (
               <>
-                <div className="question-label">Step 1 of 4</div>
+
+                <h2 className="question-title" style={{ textAlign: "center" }}>How old are you?</h2>
+                <div className="age-wrap">
+                  <input
+                    className="age-input"
+                    type="number"
+                    min="1"
+                    max="120"
+                    placeholder="—"
+                    value={answers.age}
+                    onChange={(e) => setAnswers({ ...answers, age: e.target.value })}
+                  />
+                </div>
+              </>
+            )}
+
+            {step === 1 && (
+              <>
+                <h2 className="question-title">Which of these best describes you?</h2>
+                <div style={{ display: "flex", flexDirection: "column", gap: 10, marginBottom: 36 }}>
+                  {[
+                    { id: "student", label: "I am a student" },
+                    { id: "wfh", label: "I work from home" },
+                    { id: "commuter", label: "I commute to work sometimes or most days" },
+                    { id: "not_working", label: "I'm not working right now" },
+                  ].map((opt) => (
+                    <div
+                      key={opt.id}
+                      className={`cal-option ${answers.lifestyle === opt.id ? "selected" : ""}`}
+                      style={{ gridColumn: "span 2" }}
+                      onClick={() => setAnswers({ ...answers, lifestyle: opt.id })}
+                    >
+                      <span>{opt.label}</span>
+                    </div>
+                  ))}
+                </div>
+              </>
+            )}
+
+            {step === 2 && (
+              <>
+
                 <h2 className="question-title">Which calendar do you use?</h2>
                 <p className="question-sub">Lunifer will sync with your calendar to automatically adapt your alarm around early meetings, late nights, and days off.</p>
                 <div className="cal-grid">
@@ -214,32 +243,29 @@ export default function LuniferSurvey() {
               </>
             )}
 
-            {step === 1 && (
+            {step === 3 && (
               <>
-                <div className="question-label">Step 2 of 4</div>
+
                 <h2 className="question-title">How long do you sleep to feel your best?</h2>
-                <p className="question-sub">This is your personal sweet spot. Lunifer will protect this number every night.</p>
-                <p className="time-hint">Adjust hours and minutes using the arrows</p>
+                <p className="question-sub">Lunifer will protect this number every night.</p>
                 <TimeScalePicker value={answers.sleep} onChange={(v) => setAnswers({ ...answers, sleep: v })} autoLabel="I'm not sure — let Lunifer learn this" />
               </>
             )}
 
-            {step === 2 && (
+            {step === 4 && (
               <>
-                <div className="question-label">Step 3 of 4</div>
+
                 <h2 className="question-title">How long does your morning routine take?</h2>
                 <p className="question-sub">Shower, coffee, getting dressed — everything before you leave. Lunifer can trim this slightly when you're running late.</p>
-                <p className="time-hint">Adjust hours and minutes using the arrows</p>
+
                 <TimeScalePicker value={answers.routine} onChange={(v) => setAnswers({ ...answers, routine: v })} autoLabel="Not sure — let Lunifer figure this out" />
               </>
             )}
 
-            {step === 3 && (
+            {step === 5 && (
               <>
-                <div className="question-label">Step 4 of 4</div>
+
                 <h2 className="question-title">How long is your commute?</h2>
-                <p className="question-sub">Door to desk, home to campus — whatever applies. Lunifer will also factor in live traffic each morning.</p>
-                <p className="time-hint">Adjust hours and minutes using the arrows</p>
                 <TimeScalePicker value={answers.commute} onChange={(v) => setAnswers({ ...answers, commute: v })} autoLabel="Let Lunifer calculate this from my location" />
               </>
             )}

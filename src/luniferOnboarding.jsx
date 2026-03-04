@@ -1,4 +1,4 @@
-import { useState, useEffect } from "react";
+import { useState } from "react";
 
 const FONT = `@import url('https://fonts.googleapis.com/css2?family=Cormorant+Garamond:ital,wght@0,300;0,400;1,300;1,400&family=Cormorant+Infant:ital,wght@1,300&family=DM+Sans:wght@300;400&family=Roboto:wght@300;400&display=swap');`;
 
@@ -272,7 +272,7 @@ ${FONT}
 .dot:not(.active) { width: 4px; }
 `;
 
-const TOTAL_SCREENS = 4;
+const TOTAL_SCREENS = 3;
 
 const Stars = () => {
   const stars = Array.from({ length: 60 }, (_, i) => ({
@@ -304,19 +304,6 @@ function getScreenState(current, index) {
 
 export default function LuniferOnboarding({ onFinish }) {
   const [screen, setScreen] = useState(0);
-  const [time, setTime] = useState("");
-
-  useEffect(() => {
-    const update = () => {
-      const now = new Date();
-      let h = now.getHours() % 12 || 12;
-      const m = String(now.getMinutes()).padStart(2, "0");
-      setTime(`${h}:${m}`);
-    };
-    update();
-    const id = setInterval(update, 1000);
-    return () => clearInterval(id);
-  }, []);
 
   const next = () => setScreen(s => Math.min(s + 1, TOTAL_SCREENS - 1));
   const goTo = (i) => setScreen(i);
@@ -373,19 +360,7 @@ export default function LuniferOnboarding({ onFinish }) {
               </div>
             ))}
           </div>
-          <button className="btn-primary" onClick={next}>Continue</button>
-        </div>
-
-        {/* ── SCREEN 3 — Get Started ── */}
-        <div className={`screen ${getScreenState(screen, 3)}`}>
-          <div className="big-time" style={{ fontSize: 95
-           }}>{time}</div>
-          <div className="screen-body" style={{ marginBottom: 23 }}>
-            Put your phone down.<br />
-            Lunifer will handle the rest.
-          </div>
-          <button className="btn-primary" onClick={onFinish}>Set Up Lunifer</button>
-          <button className="btn-ghost">Skip for now</button>
+          <button className="btn-primary" onClick={onFinish}>Set up Lunifer</button>
         </div>
 
         {/* ── Progress dots ── */}
