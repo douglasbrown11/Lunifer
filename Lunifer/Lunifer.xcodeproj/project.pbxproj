@@ -1,0 +1,458 @@
+// !$*UTF8*$!
+{
+	archiveVersion = 1;
+	classes = {
+	};
+	objectVersion = 56;
+	objects = {
+
+/* Begin PBXBuildFile section */
+		AABBCC000001000000000015 /* LuniferApp.swift in Sources */ = {isa = PBXBuildFile; fileRef = AABBCC000001000000000005 /* LuniferApp.swift */; };
+		AABBCC000001000000000016 /* ContentView.swift in Sources */ = {isa = PBXBuildFile; fileRef = AABBCC000001000000000006 /* ContentView.swift */; };
+		AABBCC000001000000000017 /* Assets.xcassets in Resources */ = {isa = PBXBuildFile; fileRef = AABBCC000001000000000007 /* Assets.xcassets */; };
+		AABBCC000001000000000018 /* Preview Assets.xcassets in Resources */ = {isa = PBXBuildFile; fileRef = AABBCC000001000000000009 /* Preview Assets.xcassets */; };
+		AABBCC000001000000000033 /* FirebaseAuth in Frameworks */ = {isa = PBXBuildFile; productRef = AABBCC000001000000000030 /* FirebaseAuth */; };
+		AABBCC000001000000000034 /* FirebaseFirestore in Frameworks */ = {isa = PBXBuildFile; productRef = AABBCC000001000000000031 /* FirebaseFirestore */; };
+		AABBCC000001000000000035 /* FirebaseAnalytics in Frameworks */ = {isa = PBXBuildFile; productRef = AABBCC000001000000000032 /* FirebaseAnalytics */; };
+		AABBCC000001000000000037 /* GoogleService-Info.plist in Resources */ = {isa = PBXBuildFile; fileRef = AABBCC000001000000000036 /* GoogleService-Info.plist */; };
+		AABBCC000001000000000039 /* LuniferIntro.swift in Sources */ = {isa = PBXBuildFile; fileRef = AABBCC000001000000000038 /* LuniferIntro.swift */; };
+		AABBCC000001000000000042 /* GoogleSignIn in Frameworks */ = {isa = PBXBuildFile; productRef = AABBCC000001000000000041 /* GoogleSignIn */; };
+		AABBCC000001000000000044 /* LuniferAuth.swift in Sources */ = {isa = PBXBuildFile; fileRef = AABBCC000001000000000043 /* LuniferAuth.swift */; };
+		AABBCC000001000000000048 /* Utils.swift in Sources */ = {isa = PBXBuildFile; fileRef = AABBCC000001000000000047 /* Utils.swift */; };
+		AABBCC000001000000000046 /* LuniferSurvey.swift in Sources */ = {isa = PBXBuildFile; fileRef = AABBCC000001000000000045 /* LuniferSurvey.swift */; };
+/* End PBXBuildFile section */
+
+/* Begin PBXFileReference section */
+		AABBCC000001000000000005 /* LuniferApp.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = LuniferApp.swift; sourceTree = "<group>"; };
+		AABBCC000001000000000006 /* ContentView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ContentView.swift; sourceTree = "<group>"; };
+		AABBCC000001000000000007 /* Assets.xcassets */ = {isa = PBXFileReference; lastKnownFileType = folder.assetcatalog; path = Assets.xcassets; sourceTree = "<group>"; };
+		AABBCC000001000000000009 /* Preview Assets.xcassets */ = {isa = PBXFileReference; lastKnownFileType = folder.assetcatalog; path = "Preview Assets.xcassets"; sourceTree = "<group>"; };
+		AABBCC000001000000000010 /* Lunifer.app */ = {isa = PBXFileReference; explicitFileType = wrapper.application; includeInIndex = 0; path = Lunifer.app; sourceTree = BUILT_PRODUCTS_DIR; };
+		AABBCC000001000000000036 /* GoogleService-Info.plist */ = {isa = PBXFileReference; lastKnownFileType = text.plist.xml; path = "GoogleService-Info.plist"; sourceTree = "<group>"; };
+		AABBCC000001000000000038 /* LuniferIntro.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = LuniferIntro.swift; sourceTree = "<group>"; };
+		AABBCC000001000000000043 /* LuniferAuth.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = LuniferAuth.swift; sourceTree = "<group>"; };
+		AABBCC000001000000000045 /* LuniferSurvey.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = LuniferSurvey.swift; sourceTree = "<group>"; };
+		AABBCC000001000000000047 /* Utils.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Utils.swift; sourceTree = "<group>"; };
+/* End PBXFileReference section */
+
+/* Begin PBXFrameworksBuildPhase section */
+		AABBCC000001000000000020 /* Frameworks */ = {
+			isa = PBXFrameworksBuildPhase;
+			buildActionMask = 2147483647;
+			files = (
+				AABBCC000001000000000033 /* FirebaseAuth in Frameworks */,
+				AABBCC000001000000000034 /* FirebaseFirestore in Frameworks */,
+				AABBCC000001000000000035 /* FirebaseAnalytics in Frameworks */,
+				AABBCC000001000000000042 /* GoogleSignIn in Frameworks */,
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+		};
+/* End PBXFrameworksBuildPhase section */
+
+/* Begin PBXGroup section */
+		AABBCC000001000000000002 /* = */ = {
+			isa = PBXGroup;
+			children = (
+				AABBCC000001000000000003 /* Lunifer */,
+				AABBCC000001000000000004 /* Products */,
+			);
+			sourceTree = "<group>";
+		};
+		AABBCC000001000000000003 /* Lunifer */ = {
+			isa = PBXGroup;
+			children = (
+				AABBCC000001000000000005 /* LuniferApp.swift */,
+				AABBCC000001000000000006 /* ContentView.swift */,
+				AABBCC000001000000000036 /* GoogleService-Info.plist */,
+				AABBCC000001000000000011 /* Screens */,
+				AABBCC000001000000000012 /* Engine */,
+				AABBCC000001000000000013 /* Firebase */,
+				AABBCC000001000000000014 /* Utils */,
+				AABBCC000001000000000007 /* Assets.xcassets */,
+				AABBCC000001000000000008 /* Preview Content */,
+			);
+			path = Lunifer;
+			sourceTree = "<group>";
+		};
+		AABBCC000001000000000004 /* Products */ = {
+			isa = PBXGroup;
+			children = (
+				AABBCC000001000000000010 /* Lunifer.app */,
+			);
+			name = Products;
+			sourceTree = "<group>";
+		};
+		AABBCC000001000000000008 /* Preview Content */ = {
+			isa = PBXGroup;
+			children = (
+				AABBCC000001000000000009 /* Preview Assets.xcassets */,
+			);
+			path = "Preview Content";
+			sourceTree = "<group>";
+		};
+		AABBCC000001000000000011 /* Screens */ = {
+			isa = PBXGroup;
+			children = (
+				AABBCC000001000000000038 /* LuniferIntro.swift */,
+				AABBCC000001000000000043 /* LuniferAuth.swift */,
+				AABBCC000001000000000045 /* LuniferSurvey.swift */,
+			);
+			path = Screens;
+			sourceTree = "<group>";
+		};
+		AABBCC000001000000000012 /* Engine */ = {
+			isa = PBXGroup;
+			children = (
+			);
+			path = Engine;
+			sourceTree = "<group>";
+		};
+		AABBCC000001000000000013 /* Firebase */ = {
+			isa = PBXGroup;
+			children = (
+			);
+			path = Firebase;
+			sourceTree = "<group>";
+		};
+		AABBCC000001000000000014 /* Utils */ = {
+			isa = PBXGroup;
+			children = (
+				AABBCC000001000000000047 /* Utils.swift */,
+			);
+			path = Utils;
+			sourceTree = "<group>";
+		};
+/* End PBXGroup section */
+
+/* Begin PBXNativeTarget section */
+		AABBCC000001000000000022 /* Lunifer */ = {
+			isa = PBXNativeTarget;
+			buildConfigurationList = AABBCC000001000000000028 /* Build configuration list for PBXNativeTarget "Lunifer" */;
+			buildPhases = (
+				AABBCC000001000000000019 /* Sources */,
+				AABBCC000001000000000020 /* Frameworks */,
+				AABBCC000001000000000021 /* Resources */,
+			);
+			buildRules = (
+			);
+			dependencies = (
+			);
+			name = Lunifer;
+			packageProductDependencies = (
+				AABBCC000001000000000030 /* FirebaseAuth */,
+				AABBCC000001000000000031 /* FirebaseFirestore */,
+				AABBCC000001000000000032 /* FirebaseAnalytics */,
+				AABBCC000001000000000041 /* GoogleSignIn */,
+			);
+			productName = Lunifer;
+			productReference = AABBCC000001000000000010 /* Lunifer.app */;
+			productType = "com.apple.product-type.application";
+		};
+/* End PBXNativeTarget section */
+
+/* Begin PBXProject section */
+		AABBCC000001000000000001 /* Project object */ = {
+			isa = PBXProject;
+			attributes = {
+				BuildIndependentTargetsInParallel = 1;
+				LastSwiftUpdateCheck = 1500;
+				LastUpgradeCheck = 1500;
+				TargetAttributes = {
+					AABBCC000001000000000022 = {
+						CreatedOnToolsVersion = 15.0;
+					};
+				};
+			};
+			buildConfigurationList = AABBCC000001000000000027 /* Build configuration list for PBXProject "Lunifer" */;
+			compatibilityVersion = "Xcode 14.0";
+			developmentRegion = en;
+			hasScannedForEncodings = 0;
+			knownRegions = (
+				en,
+				Base,
+			);
+			mainGroup = AABBCC000001000000000002;
+			packageReferences = (
+				AABBCC000001000000000029 /* XCRemoteSwiftPackageReference "firebase-ios-sdk" */,
+				AABBCC000001000000000040 /* XCRemoteSwiftPackageReference "GoogleSignIn-iOS" */,
+			);
+			productRefGroup = AABBCC000001000000000004 /* Products */;
+			projectDirPath = "";
+			projectRoot = "";
+			targets = (
+				AABBCC000001000000000022 /* Lunifer */,
+			);
+		};
+/* End PBXProject section */
+
+/* Begin PBXResourcesBuildPhase section */
+		AABBCC000001000000000021 /* Resources */ = {
+			isa = PBXResourcesBuildPhase;
+			buildActionMask = 2147483647;
+			files = (
+				AABBCC000001000000000018 /* Preview Assets.xcassets in Resources */,
+				AABBCC000001000000000017 /* Assets.xcassets in Resources */,
+				AABBCC000001000000000037 /* GoogleService-Info.plist in Resources */,
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+		};
+/* End PBXResourcesBuildPhase section */
+
+/* Begin PBXSourcesBuildPhase section */
+		AABBCC000001000000000019 /* Sources */ = {
+			isa = PBXSourcesBuildPhase;
+			buildActionMask = 2147483647;
+			files = (
+				AABBCC000001000000000016 /* ContentView.swift in Sources */,
+				AABBCC000001000000000015 /* LuniferApp.swift in Sources */,
+				AABBCC000001000000000039 /* LuniferIntro.swift in Sources */,
+				AABBCC000001000000000044 /* LuniferAuth.swift in Sources */,
+				AABBCC000001000000000046 /* LuniferSurvey.swift in Sources */,
+				AABBCC000001000000000048 /* Utils.swift in Sources */,
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+		};
+/* End PBXSourcesBuildPhase section */
+
+/* Begin XCBuildConfiguration section */
+		AABBCC000001000000000023 /* Debug */ = {
+			isa = XCBuildConfiguration;
+			buildSettings = {
+				ALWAYS_SEARCH_USER_PATHS = NO;
+				ASSETCATALOG_COMPILER_GENERATE_SWIFT_ASSET_SYMBOL_EXTENSIONS = YES;
+				CLANG_ANALYZER_NONNULL = YES;
+				CLANG_ANALYZER_NUMBER_OBJECT_CONVERSION = YES_AGGRESSIVE;
+				CLANG_CXX_LANGUAGE_STANDARD = "gnu++20";
+				CLANG_ENABLE_MODULES = YES;
+				CLANG_ENABLE_OBJC_ARC = YES;
+				CLANG_ENABLE_OBJC_WEAK = YES;
+				CLANG_WARN_BLOCK_CAPTURE_AUTORELEASING = YES;
+				CLANG_WARN_BOOL_CONVERSION = YES;
+				CLANG_WARN_COMMA = YES;
+				CLANG_WARN_CONSTANT_CONVERSION = YES;
+				CLANG_WARN_DEPRECATED_OBJC_IMPLEMENTATIONS = YES;
+				CLANG_WARN_DIRECT_OBJC_ISA_USAGE = YES_ERROR;
+				CLANG_WARN_DOCUMENTATION_COMMENTS = YES;
+				CLANG_WARN_EMPTY_BODY = YES;
+				CLANG_WARN_ENUM_CONVERSION = YES;
+				CLANG_WARN_INFINITE_RECURSION = YES;
+				CLANG_WARN_INT_CONVERSION = YES;
+				CLANG_WARN_NON_LITERAL_NULL_CONVERSION = YES;
+				CLANG_WARN_OBJC_IMPLICIT_RETAIN_SELF = YES;
+				CLANG_WARN_OBJC_LITERAL_CONVERSION = YES;
+				CLANG_WARN_OBJC_ROOT_CLASS = YES_ERROR;
+				CLANG_WARN_QUOTED_INCLUDE_IN_FRAMEWORK_HEADER = YES;
+				CLANG_WARN_RANGE_LOOP_ANALYSIS = YES;
+				CLANG_WARN_STRICT_PROTOTYPES = YES;
+				CLANG_WARN_SUSPICIOUS_MOVE = YES;
+				CLANG_WARN_UNGUARDED_AVAILABILITY = YES_AGGRESSIVE;
+				CLANG_WARN_UNREACHABLE_CODE = YES;
+				CLANG_WARN__DUPLICATE_METHOD_MATCH = YES;
+				COPY_PHASE_STRIP = NO;
+				DEBUG_INFORMATION_FORMAT = dwarf;
+				ENABLE_STRICT_OBJC_MSGSEND = YES;
+				ENABLE_TESTABILITY = YES;
+				ENABLE_USER_SCRIPT_SANDBOXING = YES;
+				GCC_C_LANGUAGE_STANDARD = gnu17;
+				GCC_DYNAMIC_NO_PIC = NO;
+				GCC_NO_COMMON_BLOCKS = YES;
+				GCC_OPTIMIZATION_LEVEL = 0;
+				GCC_PREPROCESSOR_DEFINITIONS = (
+					"DEBUG=1",
+					"$(inherited)",
+				);
+				GCC_WARN_64_TO_32_BIT_CONVERSION = YES;
+				GCC_WARN_ABOUT_RETURN_TYPE = YES_ERROR;
+				GCC_WARN_UNDECLARED_SELECTOR = YES;
+				GCC_WARN_UNINITIALIZED_AUTOS = YES_AGGRESSIVE;
+				GCC_WARN_UNUSED_FUNCTION = YES;
+				GCC_WARN_UNUSED_VARIABLE = YES;
+				IPHONEOS_DEPLOYMENT_TARGET = 16.0;
+				MTL_ENABLE_DEBUG_INFO = INCLUDE_SOURCE;
+				MTL_FAST_MATH = YES;
+				ONLY_ACTIVE_ARCH = YES;
+				SDKROOT = iphoneos;
+				SWIFT_ACTIVE_COMPILATION_CONDITIONS = DEBUG;
+				SWIFT_OPTIMIZATION_LEVEL = "-Onone";
+			};
+			name = Debug;
+		};
+		AABBCC000001000000000024 /* Release */ = {
+			isa = XCBuildConfiguration;
+			buildSettings = {
+				ALWAYS_SEARCH_USER_PATHS = NO;
+				ASSETCATALOG_COMPILER_GENERATE_SWIFT_ASSET_SYMBOL_EXTENSIONS = YES;
+				CLANG_ANALYZER_NONNULL = YES;
+				CLANG_ANALYZER_NUMBER_OBJECT_CONVERSION = YES_AGGRESSIVE;
+				CLANG_CXX_LANGUAGE_STANDARD = "gnu++20";
+				CLANG_ENABLE_MODULES = YES;
+				CLANG_ENABLE_OBJC_ARC = YES;
+				CLANG_ENABLE_OBJC_WEAK = YES;
+				CLANG_WARN_BLOCK_CAPTURE_AUTORELEASING = YES;
+				CLANG_WARN_BOOL_CONVERSION = YES;
+				CLANG_WARN_COMMA = YES;
+				CLANG_WARN_CONSTANT_CONVERSION = YES;
+				CLANG_WARN_DEPRECATED_OBJC_IMPLEMENTATIONS = YES;
+				CLANG_WARN_DIRECT_OBJC_ISA_USAGE = YES_ERROR;
+				CLANG_WARN_DOCUMENTATION_COMMENTS = YES;
+				CLANG_WARN_EMPTY_BODY = YES;
+				CLANG_WARN_ENUM_CONVERSION = YES;
+				CLANG_WARN_INFINITE_RECURSION = YES;
+				CLANG_WARN_INT_CONVERSION = YES;
+				CLANG_WARN_NON_LITERAL_NULL_CONVERSION = YES;
+				CLANG_WARN_OBJC_IMPLICIT_RETAIN_SELF = YES;
+				CLANG_WARN_OBJC_LITERAL_CONVERSION = YES;
+				CLANG_WARN_OBJC_ROOT_CLASS = YES_ERROR;
+				CLANG_WARN_QUOTED_INCLUDE_IN_FRAMEWORK_HEADER = YES;
+				CLANG_WARN_RANGE_LOOP_ANALYSIS = YES;
+				CLANG_WARN_STRICT_PROTOTYPES = YES;
+				CLANG_WARN_SUSPICIOUS_MOVE = YES;
+				CLANG_WARN_UNGUARDED_AVAILABILITY = YES_AGGRESSIVE;
+				CLANG_WARN_UNREACHABLE_CODE = YES;
+				CLANG_WARN__DUPLICATE_METHOD_MATCH = YES;
+				COPY_PHASE_STRIP = NO;
+				DEBUG_INFORMATION_FORMAT = "dwarf-with-dsym";
+				ENABLE_NS_ASSERTIONS = NO;
+				ENABLE_STRICT_OBJC_MSGSEND = YES;
+				ENABLE_USER_SCRIPT_SANDBOXING = YES;
+				GCC_C_LANGUAGE_STANDARD = gnu17;
+				GCC_NO_COMMON_BLOCKS = YES;
+				GCC_WARN_64_TO_32_BIT_CONVERSION = YES;
+				GCC_WARN_ABOUT_RETURN_TYPE = YES_ERROR;
+				GCC_WARN_UNDECLARED_SELECTOR = YES;
+				GCC_WARN_UNINITIALIZED_AUTOS = YES_AGGRESSIVE;
+				GCC_WARN_UNUSED_FUNCTION = YES;
+				GCC_WARN_UNUSED_VARIABLE = YES;
+				IPHONEOS_DEPLOYMENT_TARGET = 16.0;
+				MTL_FAST_MATH = YES;
+				SDKROOT = iphoneos;
+				SWIFT_COMPILATION_MODE = wholemodule;
+				SWIFT_OPTIMIZATION_LEVEL = "-O";
+				VALIDATE_PRODUCT = YES;
+			};
+			name = Release;
+		};
+		AABBCC000001000000000025 /* Debug */ = {
+			isa = XCBuildConfiguration;
+			buildSettings = {
+				ASSETCATALOG_COMPILER_APPICON_NAME = AppIcon;
+				ASSETCATALOG_COMPILER_GLOBAL_ACCENT_COLOR_NAME = AccentColor;
+				CODE_SIGN_STYLE = Automatic;
+				CURRENT_PROJECT_VERSION = 1;
+				DEVELOPMENT_ASSET_PATHS = "\"Lunifer/Preview Content\"";
+				ENABLE_PREVIEWS = YES;
+				GENERATE_INFOPLIST_FILE = YES;
+				INFOPLIST_KEY_UIApplicationSceneManifest_Generation = YES;
+				INFOPLIST_KEY_UIApplicationSupportsIndirectInputEvents = YES;
+				INFOPLIST_KEY_UILaunchScreen_Generation = YES;
+				INFOPLIST_KEY_UISupportedInterfaceOrientations_iPhone = UIInterfaceOrientationPortrait;
+				IPHONEOS_DEPLOYMENT_TARGET = 16.0;
+				LD_RUNPATH_SEARCH_PATHS = (
+					"$(inherited)",
+					"@executable_path/Frameworks",
+				);
+				MARKETING_VERSION = 1.0;
+				PRODUCT_BUNDLE_IDENTIFIER = com.lunifer.app;
+				PRODUCT_NAME = "$(TARGET_NAME)";
+				SWIFT_EMIT_LOC_STRINGS = YES;
+				SWIFT_VERSION = 5.0;
+				TARGETED_DEVICE_FAMILY = 1;
+			};
+			name = Debug;
+		};
+		AABBCC000001000000000026 /* Release */ = {
+			isa = XCBuildConfiguration;
+			buildSettings = {
+				ASSETCATALOG_COMPILER_APPICON_NAME = AppIcon;
+				ASSETCATALOG_COMPILER_GLOBAL_ACCENT_COLOR_NAME = AccentColor;
+				CODE_SIGN_STYLE = Automatic;
+				CURRENT_PROJECT_VERSION = 1;
+				DEVELOPMENT_ASSET_PATHS = "\"Lunifer/Preview Content\"";
+				ENABLE_PREVIEWS = YES;
+				GENERATE_INFOPLIST_FILE = YES;
+				INFOPLIST_KEY_UIApplicationSceneManifest_Generation = YES;
+				INFOPLIST_KEY_UIApplicationSupportsIndirectInputEvents = YES;
+				INFOPLIST_KEY_UILaunchScreen_Generation = YES;
+				INFOPLIST_KEY_UISupportedInterfaceOrientations_iPhone = UIInterfaceOrientationPortrait;
+				IPHONEOS_DEPLOYMENT_TARGET = 16.0;
+				LD_RUNPATH_SEARCH_PATHS = (
+					"$(inherited)",
+					"@executable_path/Frameworks",
+				);
+				MARKETING_VERSION = 1.0;
+				PRODUCT_BUNDLE_IDENTIFIER = com.lunifer.app;
+				PRODUCT_NAME = "$(TARGET_NAME)";
+				SWIFT_EMIT_LOC_STRINGS = YES;
+				SWIFT_VERSION = 5.0;
+				TARGETED_DEVICE_FAMILY = 1;
+			};
+			name = Release;
+		};
+/* End XCBuildConfiguration section */
+
+/* Begin XCConfigurationList section */
+		AABBCC000001000000000027 /* Build configuration list for PBXProject "Lunifer" */ = {
+			isa = XCConfigurationList;
+			buildConfigurations = (
+				AABBCC000001000000000023 /* Debug */,
+				AABBCC000001000000000024 /* Release */,
+			);
+			defaultConfigurationIsVisible = 0;
+			defaultConfigurationName = Release;
+		};
+		AABBCC000001000000000028 /* Build configuration list for PBXNativeTarget "Lunifer" */ = {
+			isa = XCConfigurationList;
+			buildConfigurations = (
+				AABBCC000001000000000025 /* Debug */,
+				AABBCC000001000000000026 /* Release */,
+			);
+			defaultConfigurationIsVisible = 0;
+			defaultConfigurationName = Release;
+		};
+/* End XCConfigurationList section */
+
+/* Begin XCRemoteSwiftPackageReference section */
+		AABBCC000001000000000029 /* XCRemoteSwiftPackageReference "firebase-ios-sdk" */ = {
+			isa = XCRemoteSwiftPackageReference;
+			repositoryURL = "https://github.com/firebase/firebase-ios-sdk";
+			requirement = {
+				kind = upToNextMajorVersion;
+				minimumVersion = 11.0.0;
+			};
+		};
+		AABBCC000001000000000040 /* XCRemoteSwiftPackageReference "GoogleSignIn-iOS" */ = {
+			isa = XCRemoteSwiftPackageReference;
+			repositoryURL = "https://github.com/google/GoogleSignIn-iOS";
+			requirement = {
+				kind = upToNextMajorVersion;
+				minimumVersion = 7.0.0;
+			};
+		};
+/* End XCRemoteSwiftPackageReference section */
+
+/* Begin XCSwiftPackageProductDependency section */
+		AABBCC000001000000000030 /* FirebaseAuth */ = {
+			isa = XCSwiftPackageProductDependency;
+			package = AABBCC000001000000000029 /* XCRemoteSwiftPackageReference "firebase-ios-sdk" */;
+			productName = FirebaseAuth;
+		};
+		AABBCC000001000000000031 /* FirebaseFirestore */ = {
+			isa = XCSwiftPackageProductDependency;
+			package = AABBCC000001000000000029 /* XCRemoteSwiftPackageReference "firebase-ios-sdk" */;
+			productName = FirebaseFirestore;
+		};
+		AABBCC000001000000000032 /* FirebaseAnalytics */ = {
+			isa = XCSwiftPackageProductDependency;
+			package = AABBCC000001000000000029 /* XCRemoteSwiftPackageReference "firebase-ios-sdk" */;
+			productName = FirebaseAnalytics;
+		};
+		AABBCC000001000000000041 /* GoogleSignIn */ = {
+			isa = XCSwiftPackageProductDependency;
+			package = AABBCC000001000000000040 /* XCRemoteSwiftPackageReference "GoogleSignIn-iOS" */;
+			productName = GoogleSignIn;
+		};
+/* End XCSwiftPackageProductDependency section */
+
+	};
+	rootObject = AABBCC000001000000000001 /* Project object */;
+}

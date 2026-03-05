@@ -1,0 +1,9 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+	<!-- REPLACE THIS FILE with the real GoogleService-Info.plist downloaded from Firebase Console -->
+	<!-- Firebase Console → Project Settings → Your Apps → iOS app → Download GoogleService-Info.plist -->
+	<!-- Project ID: lunifer-ce086 -->
+</dict>
+</plist>
