@@ -302,7 +302,7 @@ function getScreenState(current, index) {
   return "hidden";
 }
 
-export default function LuniferOnboarding({ onFinish }) {
+export default function LuniferIntro({ onFinish }) {
   const [screen, setScreen] = useState(0);
 
   const next = () => setScreen(s => Math.min(s + 1, TOTAL_SCREENS - 1));

@@ -1,4 +1,6 @@
 import { useState } from "react";
+import { db } from "./firebase";
+import { collection, addDoc } from "firebase/firestore";
 import { FaApple } from "react-icons/fa";
 import { SiMicrosoftoutlook } from "react-icons/si";
 
@@ -86,16 +88,12 @@ const styles = `
   .age-input::-webkit-outer-spin-button, .age-input::-webkit-inner-spin-button { -webkit-appearance: none; }
   .age-input:focus { border-color: rgba(160,120,255,0.6); background: rgba(160,120,255,0.06); }
   .age-wrap { display: flex; justify-content: center; margin-bottom: 36px; }
+  .error-text { font-size: 13px; color: rgba(255,100,100,0.8); margin-bottom: 12px; text-align: center; }
 `;
 
-const stars = Array.from({ length: 60 }, (_, i) => ({   //code to generate random stars for the background
-  id: i,
-  top: `${Math.random() * 100}%`,
-  left: `${Math.random() * 100}%`,
-  size: Math.random() * 2 + 0.5,
-  dur: `${Math.random() * 4 + 2}s`,
-  delay: `${Math.random() * 5}s`,
-}));
+import { generateStars } from "./utils";
+
+const stars = generateStars();
 
 function TimeScalePicker({ value, onChange, autoLabel }) { //code to create a time scale picker component for the survey
   const { hours, minutes, auto } = value;
@@ -147,8 +145,10 @@ function TimeScalePicker({ value, onChange, autoLabel }) { //code to create a ti
   );
 }
 
-export default function LuniferSurvey() {
+export default function LuniferSurvey({ onFinish }) {
   const [step, setStep] = useState(0);
+  const [saving, setSaving] = useState(false);
+  const [saveError, setSaveError] = useState(null);
   const [answers, setAnswers] = useState({
     age: "",
     lifestyle: null,
@@ -158,12 +158,36 @@ export default function LuniferSurvey() {
     commute: { hours: 0, minutes: 30, auto: false },
   });
 
-  const totalSteps = 6;
+  const showCommute = answers.lifestyle === "student" || answers.lifestyle === "commuter";
+  const totalSteps = showCommute ? 6 : 5;
   const canNext = () => {
     if (step === 0) return answers.age !== "" && Number(answers.age) > 0;
     if (step === 1) return answers.lifestyle !== null;
     if (step === 2) return answers.calendar !== null;
     return true;
+  };
+
+  // Saves all survey answers to Firebase when user hits Finish Setup
+  const handleFinish = async () => {
+    setSaving(true);
+    setSaveError(null);
+    try {
+      await addDoc(collection(db, "users"), {
+        age: Number(answers.age),
+        lifestyle: answers.lifestyle,
+        calendar: answers.calendar,
+        sleep: answers.sleep,
+        routine: answers.routine,
+        commute: answers.commute,
+        createdAt: new Date(),
+      });
+      onFinish(answers);
+    } catch (error) {
+      console.error("Error saving to Firebase:", error);
+      setSaveError("Something went wrong saving your data. Please try again.");
+    } finally {
+      setSaving(false);
+    }
   };
 
   return (
@@ -178,6 +202,7 @@ export default function LuniferSurvey() {
           ))}
         </div>
 
+        {/* SURVEY STEPS */}
         {step < totalSteps && (
           <div className="card">
             <div className="step-indicator">
@@ -188,7 +213,6 @@ export default function LuniferSurvey() {
 
             {step === 0 && (
               <>
-
                 <h2 className="question-title" style={{ textAlign: "center" }}>How old are you?</h2>
                 <div className="age-wrap">
                   <input
@@ -229,7 +253,6 @@ export default function LuniferSurvey() {
 
             {step === 2 && (
               <>
-
                 <h2 className="question-title">Which calendar do you use?</h2>
                 <p className="question-sub">Lunifer will sync with your calendar to automatically adapt your alarm around early meetings, late nights, and days off.</p>
                 <div className="cal-grid">
@@ -245,7 +268,6 @@ export default function LuniferSurvey() {
 
             {step === 3 && (
               <>
-
                 <h2 className="question-title">How long do you sleep to feel your best?</h2>
                 <p className="question-sub">Lunifer will protect this number every night.</p>
                 <TimeScalePicker value={answers.sleep} onChange={(v) => setAnswers({ ...answers, sleep: v })} autoLabel="I'm not sure — let Lunifer learn this" />
@@ -254,25 +276,29 @@ export default function LuniferSurvey() {
 
             {step === 4 && (
               <>
-
                 <h2 className="question-title">How long does your morning routine take?</h2>
                 <p className="question-sub">Shower, coffee, getting dressed — everything before you leave. Lunifer can trim this slightly when you're running late.</p>
-
                 <TimeScalePicker value={answers.routine} onChange={(v) => setAnswers({ ...answers, routine: v })} autoLabel="Not sure — let Lunifer figure this out" />
               </>
             )}
 
             {step === 5 && (
               <>
-
                 <h2 className="question-title">How long is your commute?</h2>
                 <TimeScalePicker value={answers.commute} onChange={(v) => setAnswers({ ...answers, commute: v })} autoLabel="Let Lunifer calculate this from my location" />
               </>
             )}
 
-            <button className="btn-next" onClick={() => setStep(step + 1)} disabled={!canNext()}>
-              {step === totalSteps - 1 ? "Finish Setup →" : "Continue →"}
+            {saveError && <p className="error-text">{saveError}</p>}
+
+            <button
+              className="btn-next"
+              onClick={step === totalSteps - 1 ? handleFinish : () => setStep(step + 1)}
+              disabled={!canNext() || saving}
+            >
+              {saving ? "Saving..." : step === totalSteps - 1 ? "Finish Setup →" : "Continue →"}
             </button>
+
             {step > 0 && <button className="btn-back" onClick={() => setStep(step - 1)}>← Back</button>}
           </div>
         )}
