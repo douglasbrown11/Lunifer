@@ -18,8 +18,8 @@
 		AABBCC000001000000000039 /* LuniferIntro.swift in Sources */ = {isa = PBXBuildFile; fileRef = AABBCC000001000000000038 /* LuniferIntro.swift */; };
 		AABBCC000001000000000042 /* GoogleSignIn in Frameworks */ = {isa = PBXBuildFile; productRef = AABBCC000001000000000041 /* GoogleSignIn */; };
 		AABBCC000001000000000044 /* LuniferAuth.swift in Sources */ = {isa = PBXBuildFile; fileRef = AABBCC000001000000000043 /* LuniferAuth.swift */; };
-		AABBCC000001000000000048 /* Utils.swift in Sources */ = {isa = PBXBuildFile; fileRef = AABBCC000001000000000047 /* Utils.swift */; };
 		AABBCC000001000000000046 /* LuniferSurvey.swift in Sources */ = {isa = PBXBuildFile; fileRef = AABBCC000001000000000045 /* LuniferSurvey.swift */; };
+		AABBCC000001000000000048 /* Utils.swift in Sources */ = {isa = PBXBuildFile; fileRef = AABBCC000001000000000047 /* Utils.swift */; };
 /* End PBXBuildFile section */
 
 /* Begin PBXFileReference section */
@@ -50,7 +50,7 @@
 /* End PBXFrameworksBuildPhase section */
 
 /* Begin PBXGroup section */
-		AABBCC000001000000000002 /* = */ = {
+		AABBCC000001000000000002 = {
 			isa = PBXGroup;
 			children = (
 				AABBCC000001000000000003 /* Lunifer */,
@@ -452,7 +452,6 @@
 			productName = GoogleSignIn;
 		};
 /* End XCSwiftPackageProductDependency section */
-
 	};
 	rootObject = AABBCC000001000000000001 /* Project object */;
 }
