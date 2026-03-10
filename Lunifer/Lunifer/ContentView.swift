@@ -16,5 +16,10 @@ struct ContentView: View {
         case .survey:
             LuniferSurvey()
         }
+            .task {
+                await LuniferAlarm.shared.startMonitoring()
+        }
     }
 }
+
+
