@@ -1,0 +1,39 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+	<key></key>
+	<string></string>
+	<key>CFBundleURLTypes</key>
+	<array>
+		<dict>
+			<key>CFBundleTypeRole</key>
+			<string>Editor</string>
+			<key>CFBundleURLSchemes</key>
+			<array>
+				<string>com.googleusercontent.apps.7167900619-kt1j2i37t8cvkuo9afdnvhro643f05th</string>
+			</array>
+		</dict>
+	</array>
+	<key>GIDClientID</key>
+	<string>7167900619-kt1j2i37t8cvkuo9afdnvhro643f05th.apps.googleusercontent.com</string>
+	<key>NSCalendarsUsageDescription</key>
+	<string>Lunifer uses your calendar to detect early meetings, late events, and days off so it can automatically adjust your wake-up time.</string>
+	<key>UIAppFonts</key>
+	<array>
+		<string></string>
+		<string>DMSans-Medium.ttf
+
+
+
+DMSans-Medium.ttf
+
+
+
+</string>
+		<string>DMSans-Regular.ttf</string>
+		<string>CormorantGaramond-LightItalic.ttf</string>
+		<string>CormorantGaramond-Light.ttf</string>
+	</array>
+</dict>
+</plist>

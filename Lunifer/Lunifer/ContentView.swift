@@ -1,27 +1,10 @@
 import SwiftUI
-import FirebaseCore
 
 enum AppScreen {
-    case intro
-    case auth
-    case survey
+    case intro, auth, survey
 }
 
-@main
-struct LuniferApp: App {
-
-    init() {
-        FirebaseApp.configure()
-    }
-
-    var body: some Scene {
-        WindowGroup {
-            RootView()
-        }
-    }
-}
-
-struct RootView: View {
+struct ContentView: View {
     @State private var screen: AppScreen = .intro
 
     var body: some View {
