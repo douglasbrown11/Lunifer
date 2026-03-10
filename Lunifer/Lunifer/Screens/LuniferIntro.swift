@@ -222,7 +222,7 @@ struct SplashScreen: View {
             Spacer()
 
             MoonView()
-                .padding(.bottom, 36)
+                .padding(.bottom, 16)
 
             Text("Lunifer")
                 .font(.custom("Cormorant Garamond", size: 62))
@@ -253,13 +253,15 @@ struct ProblemScreen: View {
             Spacer()
 
             Text("The last thing you need before bed is one more thing to do")
-                .font(.custom("Cormorant Garamond", size: 42))
+                .font(.custom("Cormorant Garamond", size: 26))
                 .italic()
                 .fontWeight(.light)
                 .foregroundColor(Color(red: 0.878, green: 0.847, blue: 1.0))
                 .multilineTextAlignment(.center)
-                .lineSpacing(6)
-                .kerning(1)
+                .lineSpacing(4)
+                .kerning(0.5)
+                .fixedSize(horizontal: false, vertical: true)
+                .padding(.horizontal, 32)
                 .padding(.bottom, 20)
 
             Text("After a long day, setting your alarm should be the least of your worries. Lunifer takes care of it — quietly and intelligently.")
