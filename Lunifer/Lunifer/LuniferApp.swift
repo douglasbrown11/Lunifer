@@ -1,0 +1,43 @@
+import SwiftUI
+import Firebase
+import GoogleSignIn
+
+// "@main" tells Swift this is where the app starts — only one struct in the
+// entire project can have this attribute.
+@main
+struct LuniferApp: App {
+
+    // Creates one shared CalendarManager for the entire app.
+    // "@StateObject" means SwiftUI owns this object and keeps it alive
+    // for as long as the app is running.
+    @StateObject private var calendarManager = CalendarManager()
+
+    // "init" runs once, the moment the app launches — before any UI appears.
+    // This is where Firebase must be configured so it's ready before anything
+    // tries to use auth or Firestore.
+    init() {
+        FirebaseApp.configure()
+    }
+
+    // "body" defines what the app actually shows on screen.
+    // Every SwiftUI app must have a body that returns a Scene.
+    var body: some Scene {
+
+        // WindowGroup is the standard container for an iOS app's main window.
+        WindowGroup {
+
+            // ContentView is the root of all navigation — it decides whether
+            // to show the Intro, Auth, Survey, or Dashboard screen.
+            ContentView()
+                // ".environmentObject" makes calendarManager available to every
+                // screen in the app without needing to pass it manually each time.
+                .environmentObject(calendarManager)
+                // ".onOpenURL" handles the URL callback from Google Sign In.
+                // When the user finishes signing in via the browser, iOS sends
+                // the app a URL — this passes it to Google Sign In to complete the flow.
+                .onOpenURL { url in
+                    GIDSignIn.sharedInstance.handle(url)
+                }
+        }
+    }
+}
