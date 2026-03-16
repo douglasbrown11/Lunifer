@@ -35,6 +35,10 @@
 	<string>Lunifer sets a wake-up alarm for you automatically each night based on your schedule.</string>
 	<key>NSCalendarsFullAccessUsageDescription</key>
 	<string>Lunifer uses your calendar to detect early meetings, late events, and days off so it can automatically adjust your wake-up time.</string>
+	<key>NSLocationAlwaysAndWhenInUseUsageDescription</key>
+	<string>Lunifer needs your location at all times to automatically calculate your commute and adjust your alarm accordingly.</string>
+	<key>NSLocationWhenInUseUsageDescription</key>
+	<string>Lunifer uses your location to calculate your commute time so it can set the right wake-up alarm.</string>
 	<key>UIApplicationSceneManifest</key>
 	<dict>
 		<key>UIApplicationSupportsMultipleScenes</key>

@@ -9,9 +9,9 @@ struct Feature {
 }
 
 let features: [Feature] = [
-    Feature(icon: "😴", name: "Optimal sleep",   desc: "Learns exactly how much sleep you need to feel your best"),
-    Feature(icon: "🌙", name: "Bedtime adaptive", desc: "Went to bed late? Lunifer quietly adjusts based on your preferences"),
-    Feature(icon: "🚗", name: "Commute aware",    desc: "Factors in your drive time and live traffic conditions"),
+    Feature(icon: "moon.zzz",       name: "Optimal sleep",   desc: "Learns exactly how much sleep you need to feel your best"),
+    Feature(icon: "moon.stars",     name: "Bedtime adaptive", desc: "Went to bed late? Lunifer quietly adjusts based on your preferences"),
+    Feature(icon: "car",            name: "Commute aware",    desc: "Factors in your drive time and live traffic conditions"),
 ]
 
 
@@ -141,7 +141,7 @@ struct ProblemScreen: View {
                 .lineSpacing(3)
                 .kerning(0.5)
                 .minimumScaleFactor(0.8)
-                .padding(.horizontal, 24)
+                .padding(.horizontal, 48)
                 .padding(.bottom, 14)
 
             Text("After a long day, setting your alarm should be the least of your worries. Lunifer takes care of it — quietly and intelligently.")
@@ -152,6 +152,7 @@ struct ProblemScreen: View {
                 .lineSpacing(5)
                 .frame(maxWidth: .infinity)
                 .padding(.bottom, 20)
+                .padding(.horizontal, 42)
 
             Spacer()
 
@@ -175,7 +176,7 @@ struct HowItWorksScreen: View {
             // Spacer pushes the content down from the top
             Spacer()
 
-            Text("Lunifer learns")
+            Text("Lunifer learns") ///Title
                 .font(.custom("Cormorant Garamond", size: 26))
                 .italic()
                 .fontWeight(.light)
@@ -197,8 +198,9 @@ struct HowItWorksScreen: View {
                                 )
                                 .frame(width: 36, height: 36)
 
-                            Text(feature.icon)
+                            Image(systemName: feature.icon)
                                 .font(.system(size: 16))
+                                .foregroundColor(Color(red: 0.706, green: 0.588, blue: 0.902))
                         }
 
                         // Text
@@ -224,6 +226,7 @@ struct HowItWorksScreen: View {
             }
             .frame(maxWidth: .infinity)
             .padding(.bottom, 16)
+            .padding(.horizontal, 40)
 
             Spacer()
 

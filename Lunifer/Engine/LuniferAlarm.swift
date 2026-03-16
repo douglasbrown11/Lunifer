@@ -1,19 +1,6 @@
-// ─────────────────────────────────────────────────────────────
-// LuniferAlarm.swift
-// This file is the alarm brain of Lunifer.
-// It handles everything alarm-related:
-//   1. Asking the user for permission to set alarms
-//   2. Scheduling the alarm at the calculated wake time
-//   3. Cancelling the alarm if needed
-//   4. Listening for when the alarm fires
-//   5. Logging snooze/dismiss behaviour for the ML model
-// ─────────────────────────────────────────────────────────────
-
 import Foundation
-import Combine   // Required for @Published property wrapper and ObservableObject
-import AlarmKit  // Apple's built-in alarm framework (iOS 26+)
-                 // Lets us set alarms that bypass silent mode and Do Not Disturb
-                 // Just like the built-in Clock app — no special Apple approval needed
+import Combine
+import AlarmKit
 import SwiftUI
 
 // ─────────────────────────────────────────────────────────────
@@ -65,6 +52,7 @@ class LuniferAlarm: ObservableObject {
     @Published var isAuthorized: Bool = false       // Has the user granted alarm permission?
     @Published var activeAlarms: [Alarm] = []       // List of currently scheduled alarms
     @Published var scheduledWakeTime: Date? = nil   // The time the next alarm is set for
+    @Published var alertingAlarm: Alarm? = nil      // The alarm currently firing (nil = no alarm ringing)
 
     // ─────────────────────────────────────────────────────────
     // SECTION 3: REQUESTING PERMISSION
@@ -230,14 +218,48 @@ class LuniferAlarm: ObservableObject {
             // Update our local list of active alarms so the UI stays in sync
             activeAlarms = alarms
 
-            // Check if any alarm is currently firing (alerting = alarm is going off right now)
-            for alarm in alarms {
-                if case .alerting = alarm.state {
-                    // The alarm just fired — log it for the ML model
+            // Check if any alarm is currently firing
+            let firing = alarms.first(where: { if case .alerting = $0.state { return true }; return false })
+
+            if let firing {
+                // Only log when the alarm first starts firing, not on every update
+                if alertingAlarm == nil {
                     AlarmBehaviourLogger.shared.logAlarmFired(at: Date())
                 }
+                alertingAlarm = firing
+            } else {
+                alertingAlarm = nil
             }
         }
+    }
+
+    // ─────────────────────────────────────────────────────────
+    // SECTION 7: SNOOZE
+    // ─────────────────────────────────────────────────────────
+    // Dismisses the current alarm and reschedules it for now + snoozeMinutes.
+
+    func snooze(minutes: Int) async {
+        if let alarm = alertingAlarm {
+            try? manager.cancel(id: alarm.id)
+        }
+        AlarmBehaviourLogger.shared.logSnooze(at: Date())
+        alertingAlarm = nil
+        let snoozeDate = Date().addingTimeInterval(Double(minutes) * 60)
+        await scheduleAlarm(for: snoozeDate)
+    }
+
+    // ─────────────────────────────────────────────────────────
+    // SECTION 8: STOP ALARM
+    // ─────────────────────────────────────────────────────────
+    // Dismisses the currently firing alarm and logs the dismiss event.
+
+    func stopAlarm() async {
+        if let alarm = alertingAlarm {
+            try? manager.cancel(id: alarm.id)
+        }
+        AlarmBehaviourLogger.shared.logDismiss(at: Date())
+        alertingAlarm = nil
+        scheduledWakeTime = nil
     }
 }
 

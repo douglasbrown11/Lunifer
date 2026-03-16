@@ -38,7 +38,7 @@ enum CalendarAuthorizationStatus: Equatable {
 ///
 /// Usage:
 /// ```swift
-/// @StateObject private var calendarManager = CalendarManager()
+///@StateObject private var calendarManager = CalendarManager()
 /// // …
 /// .environmentObject(calendarManager)
 /// ```
