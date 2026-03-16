@@ -1,21 +1,36 @@
 import SwiftUI
 import FirebaseFirestore
+import FirebaseAuth
+import CoreLocation
 
 // ── MARK: Models ─────────────────────────────────────────────
 
-struct TimeValue {
+struct TimeValue: Codable {
     var hours: Int
     var minutes: Int
     var auto: Bool
 }
 
-struct SurveyAnswers {
-    var age: String       = "18"
+struct SurveyAnswers: Codable {
+    var age: String        = "18"
     var lifestyle: String? = nil
     var calendar: String?  = nil
     var sleep   = TimeValue(hours: 8, minutes: 0,  auto: false)
     var routine = TimeValue(hours: 1, minutes: 0,  auto: false)
     var commute = TimeValue(hours: 0, minutes: 30, auto: false)
+
+    static func loadFromDefaults() -> SurveyAnswers? {
+        guard let data = UserDefaults.standard.data(forKey: "surveyAnswers"),
+              let answers = try? JSONDecoder().decode(SurveyAnswers.self, from: data)
+        else { return nil }
+        return answers
+    }
+
+    func saveToDefaults() {
+        if let data = try? JSONEncoder().encode(self) {
+            UserDefaults.standard.set(data, forKey: "surveyAnswers")
+        }
+    }
 }
 
 // ── MARK: Step indicator ─────────────────────────────────────
@@ -38,49 +53,6 @@ private struct SurveyStepDots: View {
                     .frame(width: i == current ? 40 : 28, height: 3)
                     .animation(.easeInOut(duration: 0.4), value: current)
             }
-        }
-    }
-}
-
-// ── MARK: Calendar brand icons ───────────────────────────────
-
-private struct AppleCalendarIcon: View {
-    var body: some View {
-        Image(systemName: "apple.logo")
-            .font(.system(size: 18, weight: .medium))
-            .foregroundColor(.white)
-    }
-}
-
-private struct GoogleCalendarIcon: View {
-    var body: some View {
-        ZStack(alignment: .top) {
-            RoundedRectangle(cornerRadius: 3).fill(Color.white)
-            VStack(spacing: 0) {
-                Rectangle()
-                    .fill(Color(red: 0.102, green: 0.451, blue: 0.910))
-                    .frame(height: 7)
-                Spacer()
-                Text("31")
-                    .font(.system(size: 7, weight: .bold))
-                    .foregroundColor(Color(red: 0.102, green: 0.451, blue: 0.910))
-                    .padding(.bottom, 2)
-            }
-        }
-        .frame(width: 22, height: 22)
-        .clipShape(RoundedRectangle(cornerRadius: 3))
-    }
-}
-
-private struct OutlookIcon: View {
-    var body: some View {
-        ZStack {
-            RoundedRectangle(cornerRadius: 3)
-                .fill(Color(red: 0, green: 0.471, blue: 0.831))
-                .frame(width: 22, height: 22)
-            Text("O")
-                .font(.system(size: 13, weight: .bold))
-                .foregroundColor(.white)
         }
     }
 }
@@ -242,15 +214,18 @@ struct TimeScalePicker: View {
 // ── MARK: LuniferSurvey ──────────────────────────────────────
 
 struct LuniferSurvey: View {
-        var onFinish: (() -> Void)? = nil
+        var onFinish: ((SurveyAnswers) -> Void)? = nil
+        @AppStorage("surveyCompleted") private var surveyCompleted = false
 
         @EnvironmentObject private var calendarManager: CalendarManager
+
+        @StateObject private var locationManager = LocationManager()
 
         @State private var step      = 0
         @State private var saving    = false
         @State private var saveError: String? = nil
-        @State private var completed = false
         @State private var answers   = SurveyAnswers()
+        @State private var showLocationDeniedAlert = false
         
         private var showCommute: Bool {
             answers.lifestyle == "student" || answers.lifestyle == "commuter"
@@ -263,6 +238,12 @@ struct LuniferSurvey: View {
             case 0: return !answers.age.isEmpty && (Int(answers.age) ?? 0) > 0
             case 1: return answers.lifestyle != nil
             case 2: return answers.calendar  != nil
+            case 5: // commute step
+                if answers.commute.auto {
+                    return locationManager.authorizationStatus == .authorizedAlways
+                } else {
+                    return answers.commute.hours > 0 || answers.commute.minutes > 0
+                }
             default: return true
             }
         }
@@ -270,12 +251,8 @@ struct LuniferSurvey: View {
         var body: some View {
             ZStack {
                 LuniferBackground()
-                
-                if completed {
-                    LuniferDashboard(answers: $answers)
-                        .transition(.opacity.combined(with: .offset(y: 20)))
-                } else {
-                    ScrollView {
+
+                ScrollView {
                         VStack(spacing: 0) {
                             
                             SurveyStepDots(total: totalSteps, current: step)
@@ -339,11 +316,16 @@ struct LuniferSurvey: View {
                         .padding(.horizontal, 24)
                         .padding(.vertical, 20)
                         .frame(maxWidth: .infinity)
-                    }
                 }
             }
             .frame(maxWidth: .infinity, maxHeight: .infinity)
-            .animation(.easeInOut(duration: 0.5), value: completed)
+            .alert("Location Access Required", isPresented: $showLocationDeniedAlert) {
+                Button("OK") {
+                    answers.commute.auto = false
+                }
+            } message: {
+                Text("In order for Lunifer to learn this, you must select \"Always Allow\" so Lunifer can track your commute.")
+            }
         }
         
         // ── MARK: Step content ───────────────────────────────────
@@ -433,6 +415,7 @@ struct LuniferSurvey: View {
                     }
                 }
                 .padding(.bottom, 24)
+                .padding(.horizontal, 40)
             }
         }
 
@@ -456,6 +439,7 @@ struct LuniferSurvey: View {
                     .lineSpacing(5)
                     .frame(maxWidth: .infinity, alignment: .center)
                     .padding(.bottom, 20)
+                    .padding(.horizontal, 40)
 
                 LazyVGrid(columns: [GridItem(.flexible()), GridItem(.flexible())], spacing: 10) {
                     calendarCard(id: "apple",   name: "Apple Calendar")  { AppleCalendarIcon() }
@@ -469,6 +453,7 @@ struct LuniferSurvey: View {
                     }
                 }
                 .padding(.bottom, 24)
+                .padding(.horizontal, 50)
             }
         }
         
@@ -478,7 +463,7 @@ struct LuniferSurvey: View {
             OptionCard(isSelected: answers.calendar == id) {
                 answers.calendar = id
                 // When the user picks Apple Calendar, request EventKit access immediately.
-                if id == "apple" && calendarManager.authorizationStatus == .notDetermined {
+                if id != "none" && calendarManager.authorizationStatus == .notDetermined {
                     Task { await calendarManager.requestAccess() }
                 }
             } content: {
@@ -525,6 +510,7 @@ struct LuniferSurvey: View {
                 TimeScalePicker(value: $answers.sleep,
                                 autoLabel: "I'm not sure — let Lunifer learn this")
                 .padding(.bottom, 24)
+                .padding(.horizontal, 40)
             }
         }
         
@@ -543,6 +529,7 @@ struct LuniferSurvey: View {
                 TimeScalePicker(value: $answers.routine,
                                 autoLabel: "Not sure — let Lunifer figure this out")
                 .padding(.bottom, 24)
+                .padding(.horizontal, 40)
             }
         }
         
@@ -560,7 +547,38 @@ struct LuniferSurvey: View {
 
                 TimeScalePicker(value: $answers.commute,
                                 autoLabel: "Let Lunifer calculate this from my location")
-                .padding(.bottom, 24)
+                .padding(.horizontal, 40)
+                .onChange(of: answers.commute.auto) { _, isAuto in
+                    if isAuto { locationManager.requestAlwaysAuthorization() }
+                }
+                .onAppear {
+                    if answers.commute.auto { locationManager.requestAlwaysAuthorization() }
+                }
+                .onChange(of: locationManager.authorizationStatus) { _, status in
+                    guard answers.commute.auto else { return }
+                    if status != .notDetermined && status != .authorizedAlways {
+                        showLocationDeniedAlert = true
+                    }
+                }
+
+                // ── Location permission status hint ───────────
+                if answers.commute.auto && locationManager.authorizationStatus == .authorizedAlways {
+                    Label("Location access granted", systemImage: "checkmark.circle.fill")
+                        .font(.custom("DM Sans", size: 13))
+                        .foregroundColor(Color(red: 0.4, green: 0.9, blue: 0.5))
+                        .padding(.top, 14)
+                        .padding(.horizontal, 40)
+                        .transition(.opacity)
+                } else if !answers.commute.auto && answers.commute.hours == 0 && answers.commute.minutes == 0 {
+                    Text("Enter a non-zero commute time to continue.")
+                        .font(.custom("DM Sans", size: 13))
+                        .foregroundColor(Color.white.opacity(0.35))
+                        .padding(.top, 14)
+                        .padding(.horizontal, 40)
+                        .transition(.opacity)
+                }
+
+                Spacer().frame(height: 24)
             }
         }
         
@@ -578,6 +596,10 @@ struct LuniferSurvey: View {
         // Mirrors handleFinish() in luniferSurvey.jsx exactly
         
         private func handleFinish() {
+            guard let uid = Auth.auth().currentUser?.uid else {
+                saveError = "Not signed in. Please sign in and try again."
+                return
+            }
             Task { @MainActor in
                 saving    = true
                 saveError = nil
@@ -600,13 +622,15 @@ struct LuniferSurvey: View {
                 
                 do {
                     try await withCheckedThrowingContinuation { (cont: CheckedContinuation<Void, Error>) in
-                        Firestore.firestore().collection("users").addDocument(data: data) { error in
+                        Firestore.firestore().collection("users").document(uid).setData(data) { error in
                             if let error { cont.resume(throwing: error) }
                             else         { cont.resume() }
                         }
                     }
-                    completed = true
-                    onFinish?()
+                    answers.saveToDefaults()
+                    surveyCompleted = true
+                    await LuniferAlarm.shared.requestAuthorization()
+                    onFinish?(answers)
                 } catch {
                     saveError = "Something went wrong saving your data. Please try again."
                 }

@@ -205,11 +205,9 @@ Hard limits: min 6h, max 10h sleep
 - [ ] Add `NSAlarmKitUsageDescription` to Info.plist
 - [ ] Add `NSCalendarsFullAccessUsageDescription` to Info.plist
 - [ ] Build `LuniferEngine.swift` — rule-based alarm calculation
-- [ ] Build out `LuniferDashboard.swift` — show alarm time + calendar event
 - [ ] Connect real Firebase Auth UID to AlarmBehaviourLogger
 - [ ] Bundle DM Sans font in Xcode
 - [ ] HealthKit integration (detect wake before alarm)
-- [ ] Apple Watch companion app (long-term)
 - [ ] ML model training pipeline in Firebase Functions (long-term)
 
 ---

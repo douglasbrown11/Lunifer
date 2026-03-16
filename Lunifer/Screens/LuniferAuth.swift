@@ -46,6 +46,7 @@ private struct GoogleLogoView: View {
         Image("GoogleLogo")
             .resizable()
             .scaledToFit()
+            .frame(width: 20, height: 20)
     }
 }
     
@@ -90,6 +91,8 @@ private struct LuniferInputField: View {
                                 lineWidth: 1.5)
                 )
         )
+        .contentShape(Rectangle())
+        .onTapGesture { focused = true }
         .animation(.easeInOut(duration: 0.2), value: focused)
     }
 }
@@ -185,12 +188,16 @@ struct LuniferAuth: View {
                             RoundedRectangle(cornerRadius: 12)
                                 .fill(LinearGradient(
                                     colors: [
-                                        Color(red: 0.471, green: 0.314, blue: 0.863).opacity(0.9),
-                                        Color(red: 0.314, green: 0.196, blue: 0.706).opacity(0.9),
+                                        Color(red: 0.471, green: 0.314, blue: 0.863),
+                                        Color(red: 0.314, green: 0.196, blue: 0.706),
                                     ],
                                     startPoint: .topLeading,
                                     endPoint: .bottomTrailing
                                 ))
+                                .overlay(
+                                    RoundedRectangle(cornerRadius: 12)
+                                        .stroke(Color(red: 0.627, green: 0.471, blue: 1.0).opacity(0.6), lineWidth: 1.5)
+                                )
                         )
                         .opacity(canSubmit && !loading ? 1.0 : 0.4)
                     }
@@ -220,11 +227,7 @@ struct LuniferAuth: View {
                         .frame(height: 50)
                         .background(
                             RoundedRectangle(cornerRadius: 12)
-                                .fill(Color.white.opacity(0.04))
-                                .overlay(
-                                    RoundedRectangle(cornerRadius: 12)
-                                        .stroke(Color.white.opacity(0.1), lineWidth: 1.5)
-                                )
+                                .fill(Color.white.opacity(0.06))
                         )
                     }
                     .disabled(loading)
@@ -250,8 +253,8 @@ struct LuniferAuth: View {
                         }
                     }
                 }
-                .padding(.horizontal, 24)
-                .padding(.top, 48)
+                .padding(.horizontal, 62)
+                .padding(.top, 115)
                 .padding(.bottom, 32)
                 .frame(maxWidth: .infinity)
             }
@@ -287,14 +290,23 @@ struct LuniferAuth: View {
             loading = true
             errorMessage = nil
             do {
-                guard let scene = UIApplication.shared.connectedScenes
-                    .first(where: { $0.activationState == .foregroundActive }) as? UIWindowScene,
-                      let rootVC = scene.keyWindow?.rootViewController else {
+                guard let windowScene = UIApplication.shared.connectedScenes
+                    .compactMap({ $0 as? UIWindowScene })
+                    .first(where: { $0.activationState == .foregroundActive }),
+                      let window = windowScene.windows.first(where: { $0.isKeyWindow }),
+                      let rootVC = window.rootViewController else {
+                    errorMessage = "Unable to present sign in. Please try again."
                     loading = false
                     return
                 }
-                let result = try await GIDSignIn.sharedInstance.signIn(withPresenting: rootVC)
+                // Walk up to the topmost presented view controller
+                var presentingVC = rootVC
+                while let presented = presentingVC.presentedViewController {
+                    presentingVC = presented
+                }
+                let result = try await GIDSignIn.sharedInstance.signIn(withPresenting: presentingVC)
                 guard let idToken = result.user.idToken?.tokenString else {
+                    errorMessage = "Something went wrong. Please try again."
                     loading = false
                     return
                 }
