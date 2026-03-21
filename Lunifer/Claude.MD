@@ -2,212 +2,158 @@
 > Read this file at the start of every Claude Code session.
 > Last updated: March 2026
 
----
-
 ## What is Lunifer?
+Lunifer is an iOS alarm app that calculates a wake-up time for the next day from the user's onboarding answers and lets the user review or override that time from the dashboard. The long-term direction is still an adaptive sleep / alarm assistant, but the current app is primarily a SwiftUI prototype with onboarding, auth, survey, dashboard, settings, and AlarmKit integration.
 
-Lunifer is an iOS alarm app that automatically calculates and sets the user's optimal wake-up time every night. The user never has to manually set an alarm — Lunifer figures out when they need to wake up based on their calendar, commute, morning routine, and sleep history. Over time it learns from their behaviour (snoozes, early wakes, dismissals) and improves its recommendations using machine learning.
+## Current Stack
+- Language: Swift / SwiftUI
+- Backend: Firebase Auth + Firestore + Google Sign-In
+- Apple frameworks in use: AlarmKit, EventKit, CoreLocation, AVFoundation
+- App state: local survey answers are persisted in `UserDefaults`; sound preference persisted in `@AppStorage`
 
-Long-term vision: Lunifer will evolve into a sleep-focused language model — an AI that deeply understands the user's sleep patterns and optimises their entire sleep schedule, not just their alarm.
+## Current App Flow
+- `ContentView.swift` controls navigation with `AppScreen`
+- Flow: `Intro -> Auth -> Survey -> Dashboard`
+- If `surveyCompleted == true`, the user is authenticated, and saved survey answers exist, the app opens directly to the dashboard
+- `LuniferAlarm.shared.startMonitoring()` is started from `ContentView`
+- `LuniferAlarmScreen` is presented with `fullScreenCover` when an alarm is alerting
 
----
+## Project File Layout
+All source files live under `Sounds/Lunifer/` (project was restructured from the original `Lunifer/` path).
+`INFOPLIST_FILE` in `project.pbxproj` points to `Sounds/Lunifer/Info.plist`.
 
-## Tech Stack
+## Current Folder Summary
+- `Engine/CalendarManager.swift`: EventKit authorization and calendar event access
+- `Engine/LocationManager.swift`: Core Location authorization status tracking
+- `Engine/LuniferAlarm.swift`: AlarmKit scheduling and alarm behavior logging hooks
+- `Screens/Intro/*`: onboarding intro flow
+- `Screens/Survey/LuniferSurvey.swift`: onboarding survey, survey models, weekday selector, location permission flow
+- `Screens/LuniferAuth.swift`: auth UI
+- `Screens/LuniferDashboard.swift`: main dashboard, calculated alarm display, override time, settings, sound picker
+- `Screens/LuniferSettings.swift`: settings root plus About You editor
+- `Utils/Utils.swift`: shared colors / background utilities
+- `Sounds/` (project root, not inside `Sounds/Lunifer/`): 7 audio files bundled as app resources
 
-- **Language:** Swift / SwiftUI
-- **Minimum iOS:** 26.0
-- **IDE:** Xcode 26.3
-- **Mac:** MacBook Pro M1 2020, macOS Sequoia
-- **Backend:** Firebase (Firestore + Firebase Auth + Google Sign In)
-- **Firebase Project:** lunifer-ce086 (nam5 region)
-- **Bundle ID:** Dream-AI.Lunifer
-- **GitHub:** github.com/douglasbrown11/Lunifer
-- **Git branches:** `main` (Swift, active), `react` (original React demo, preserved)
+## Survey Status
+`SurveyAnswers` currently contains:
+- `age`
+- `lifestyle`
+- `wakeDays`
+- `calendar`
+- `sleep`
+- `routine`
+- `commute`
 
----
+Current survey step order in `LuniferSurvey.swift`:
+1. Age
+2. Lifestyle
+3. Wake days
+4. Calendar
+5. Sleep duration
+6. Morning routine duration
+7. Commute duration, only for `student` or `commuter`
 
-## Project Folder Structure (Xcode)
+Notes:
+- `wakeDays` defaults to `["mon", "tue", "wed", "thu", "fri"]`
+- The wake-day screen uses 7 circular weekday buttons
+- Survey answers are saved to Firestore and also saved locally with `answers.saveToDefaults()`
+- Firestore payload currently includes `wakeDays`
 
-```
-Lunifer/
-├── Engine/
-│   ├── LuniferAlarm.swift       ← AlarmKit alarm scheduling + ML behaviour logging
-│   └── CalendarManager.swift    ← EventKit calendar access
-├── Firebase/                    ← Firebase folder (empty placeholder)
-├── fonts/
-│   ├── CormorantGaramond-Light.ttf
-│   └── CormorantGaramond-LightItalic.ttf
-├── Screens/
-│   ├── LuniferAuth.swift        ← Sign in screen (email + Google)
-│   ├── LuniferDashboard.swift   ← Main dashboard (in progress)
-│   ├── LuniferIntro.swift       ← Onboarding intro (3 screens)
-│   └── LuniferSurvey.swift      ← Setup survey (5-6 steps)
-├── Utils/
-│   └── Utils.swift
-├── ContentView.swift            ← Root navigation (AppScreen enum)
-├── GoogleService-Info.plist     ← Firebase config (NEVER commit to git)
-├── Info.plist                   ← App permissions live here
-├── LuniferApp.swift             ← App entry point, FirebaseApp.configure()
-└── Assets.xcassets/
-```
+## Location Permission Flow
+Current behavior in `LuniferSurvey.swift`:
+- Commute auto mode requests `When In Use` first
+- If the user grants `authorizedWhenInUse`, Lunifer shows its own upgrade alert and then requests `Always`
+- If the user denies location once, Lunifer shows an alert explaining `Always` is required
+- If the user tries again after denial, Lunifer opens a Settings redirect flow because iOS will not re-show the system prompt
 
----
+## Dashboard Status
+`LuniferDashboard.swift` currently does the following:
+- Shows tomorrow's calculated alarm time
+- Lets the user expand the alarm row
+- Allows manual override with a wheel-style `DatePicker`
+- Includes a `Sound` row inside the expanded alarm dropdown — shows the currently selected sound name
+- Opens `SoundSettingsView` (fully implemented) from the Sound row
+- Opens `LuniferSettings` from the gear button
+- Stores enable / disable state with `@AppStorage("luniferEnabled")`
+- Stores selected alarm sound with `@AppStorage("selectedAlarmSound")`, defaulting to `"DeafultAlarm.wav"`
 
-## App Navigation Flow
+`SoundSettingsView` (defined in `LuniferDashboard.swift`):
+- Lists all 7 bundled sounds via `SoundOption.all`
+- Tapping a row selects it (purple checkmark) and previews it via `AVAudioPlayer`
+- Selection persisted via `@AppStorage("selectedAlarmSound")`
 
-```
-AppScreen enum in ContentView.swift controls all navigation:
+`SoundOption` struct (defined in `LuniferDashboard.swift`):
+- Maps filenames to display names
+- `SoundOption.displayName(for:)` used by the dashboard Sound row
 
-Intro (3 screens)
-  → Auth (email/password + Google Sign In)
-    → Survey (5-6 steps)
-      → Dashboard (main screen — in progress)
-```
+Available sounds and their filenames:
+- Default Alarm → `DeafultAlarm.wav`
+- Alarm Clock → `Alarm Clock.mp3`
+- Church Bells → `Church Bells.wav`
+- Crystal Bowl → `Crystal Bowl Rythym audio .m4a`
+- Space → `Space.wav`
+- Twin Alarm Bell → `Twin Alarm Bell.wav`
+- Clock Alarm → `microsammy-clock-alarm-8761.mp3`
 
----
+Important limitation:
+- The dashboard alarm calculation is still rule-based and mostly hardcoded around a `9:00 AM` target, routine duration, and commute duration
+- It is not yet fully driven by real calendar events or the selected wake days
 
-## Screens Summary
+## Settings Status
+`LuniferSettings.swift` currently contains:
+- Root settings screen
+- Snooze time control
+- Sign out action
+- Navigation to `AboutYouSettingsView`
 
-### LuniferIntro.swift
-- 3 onboarding screens with animations
-- Uses Cormorant Garamond font (bundled in Xcode)
-- Dark purple background theme throughout
+`AboutYouSettingsView` currently supports editing:
+- Age
+- Lifestyle
+- Calendar
 
-### LuniferAuth.swift
-- Email/password sign in and sign up
-- Google Sign In (working, uses embedded base64 Google G logo)
-- REVERSED_CLIENT_ID set in URL Schemes in Info tab
-- GIDClientID set in Info.plist
+Behavior:
+- Each field shows a `Change` action
+- Tapping `Change` expands inline controls
+- Changes are written back to `SurveyAnswers`
+- Age, lifestyle, and calendar changes are saved to defaults
 
-### LuniferSurvey.swift
-Survey steps:
-- Step 0: Age (number input)
-- Step 1: Lifestyle (student / WFH / commuter / not working)
-- Step 2: Calendar (Apple / Google / Outlook / none) — 2x2 grid
-- Step 3: Sleep duration (time picker with auto toggle)
-- Step 4: Morning routine duration (time picker)
-- Step 5: Commute duration (only shown if lifestyle = student or commuter)
+Not currently present:
+- A rebuilt Sleep settings detail screen
+- Additional settings pages beyond About You and the basic Sound screen
 
-On finish: saves to Firestore, calls onFinish() to navigate to Dashboard.
+## Auth / Firebase Status
+- Email/password auth exists
+- Google Sign-In exists
+- Survey results are written to Firestore
+- Existing code writes survey data with `Firestore.firestore().collection("users").document(uid).setData(data)`
+- Current data is written directly to `users/{uid}`, not to a nested `profile` document
 
-### LuniferDashboard.swift
-- Currently in progress
-- Should show: today's calculated alarm time, next calendar event, sleep stats
+## Alarm / Calendar Status
+- AlarmKit authorization and monitoring are integrated
+- The app can schedule alarms through `LuniferAlarm.shared`
+- Calendar authorization can be requested from the survey when a calendar option is selected
+- `CalendarManager` exists, but the dashboard is not yet using first-event-tomorrow scheduling end-to-end
 
----
+## Design / UI Notes
+- The app uses a dark purple visual style
+- Headings typically use `Cormorant Garamond`
+- Body text typically uses `DM Sans`
+- `LuniferBackground()` / `Color.luniferBg` and `StarsView()` are reused across major screens
 
-## Engine Files
+## Known Gaps
+- Wake-day selection is collected but not yet used in dashboard alarm calculation
+- Selected alarm sound is stored in `@AppStorage` but not yet passed to AlarmKit when scheduling — wiring `selectedAlarmSound` into `LuniferAlarm.shared.scheduleAlarm` is still needed
+- Settings coverage is partial after recent rebuilding
+- There are duplicated / evolving flows across survey, dashboard, and settings that still need consolidation
 
-### LuniferAlarm.swift
-- Uses Apple's **AlarmKit** framework (iOS 26+)
-- Bypasses silent mode and Do Not Disturb natively — no special Apple entitlement needed
-- `LuniferAlarmMetadata` — attached to every alarm, carries wake time + context for ML
-- `LuniferAlarm.shared.scheduleAlarm(for:)` — call this with the calculated wake time
-- `LuniferAlarm.shared.startMonitoring()` — add `.task {}` to ContentView to start this
-- `AlarmBehaviourLogger` — logs snooze/dismiss/fired events to Firestore for ML model
-- Info.plist needs: `NSAlarmKitUsageDescription`
-
-### CalendarManager.swift
-- Uses Apple's **EventKit** framework
-- Reads all calendar events regardless of source (Apple, Google, Outlook)
-  — works because iOS syncs all calendars into the native Calendar app
-- `requestAccess()` — triggers iOS calendar permission popup
-- `firstEventTomorrow()` — returns the first non-all-day event tomorrow
-- `calculateAlarmTime(routineMinutes:commuteMinutes:)` — subtracts buffer from event time
-- Info.plist needs: `NSCalendarsFullAccessUsageDescription`
-
----
-
-## Firebase Setup
-
-- FirebaseApp.configure() is in LuniferApp.swift init()
-- Auth: email/password + Google Sign In both working
-- Firestore: used to save survey answers and alarm behaviour events
-- Firestore path for survey data: `users/{userID}/profile`
-- Firestore path for alarm events: `users/{userID}/alarmEvents/{autoID}`
-- GoogleService-Info.plist is in .gitignore — never commit this file
-
----
-
-## Git Rules
-- `GoogleService-Info.plist` is in `.gitignore` — never stage or commit it
-- `.DS_Store` is in `.gitignore`
-- Always create the `react` branch snapshot before pushing breaking changes to `main`
-- Repo is set to **Private** on GitHub
-
----
-
-## ML Plan (not yet built)
-
-### Phase 1 — Rule-based engine (build next)
-File to create: `Engine/LuniferEngine.swift`
-
-Formula:
-```
-alarmTime = firstCalendarEvent - routineMinutes - commuteMinutes
-```
-
-Age-based sleep baseline:
-- 13-17 → 9h
-- 18-25 → 8h
-- 26-64 → 8h
-- 65+   → 7.5h
-
-Lifestyle adjustment:
-- Student         → +0.25h
-- Work from home  → -0.25h
-- Not working     → -0.25h
-
-Hard limits: min 6h, max 10h sleep
-
-### Phase 2 — Behaviour learning (after ~2 weeks of data)
-- Adjust alarm ±5-10 min based on snooze/dismiss patterns
-- Weight recent behaviour more than older behaviour
-- Day-of-week awareness (Monday vs Friday patterns)
-
-### Phase 3 — ML model (after ~30 days of data per user)
-- Model: XGBoost (gradient boosted tree)
-- Inputs: day of week, bedtime, sleep debt, calendar pressure, snooze history
-- Output: recommended alarm time
-- Training: server-side via Firebase Functions (Python)
-- Inference: on-device via Core ML
-- Data source: `users/{userID}/alarmEvents` in Firestore
-
----
-
-## Design System
-
-- **Background:** Dark purple gradient (#1a0838 → #080512)
-- **Accent:** Purple (#8B5CF6 / rgba 0.55, 0.35, 0.95)
-- **Text primary:** White / near-white
-- **Text secondary:** Purple-tinted grey
-- **Fonts:** Cormorant Garamond (headings), DM Sans (body — not yet bundled)
-- **Corner radius:** 16px buttons, 12px cards
-- **All screens are dark mode only**
-
----
-
-## What's Done
-- [x] Intro screens (3 screens with animations)
-- [x] Auth screen (email + Google Sign In)
-- [x] Survey (all steps, saves to Firestore)
-- [x] Firebase Auth configured and working
-- [x] Google Sign In working
-- [x] LuniferAlarm.swift (AlarmKit, iOS 26)
-- [x] CalendarManager.swift (EventKit)
-- [x] AlarmBehaviourLogger (Firestore logging stub)
-- [x] App icon designed (clock on dark purple, 1024x1024)
-- [x] Git branches set up (main + react)
-- [x] .gitignore configured
-
-## What's Next (priority order)
-- [ ] Add `.task { await LuniferAlarm.shared.startMonitoring() }` to ContentView
-- [ ] Add `NSAlarmKitUsageDescription` to Info.plist
-- [ ] Add `NSCalendarsFullAccessUsageDescription` to Info.plist
-- [ ] Build `LuniferEngine.swift` — rule-based alarm calculation
-- [ ] Connect real Firebase Auth UID to AlarmBehaviourLogger
-- [ ] Bundle DM Sans font in Xcode
-- [ ] HealthKit integration (detect wake before alarm)
-- [ ] ML model training pipeline in Firebase Functions (long-term)
-
----
+## Practical Guidance For Future Sessions
+- Do not assume `Claude.md` is authoritative without checking code first
+- `LuniferSurvey.swift` currently contains both the survey UI and the `SurveyAnswers` / `TimeValue` models
+- `LuniferSettings` must receive `@Binding var answers: SurveyAnswers`
+- `LuniferDashboard` is the entry point to both Settings and the basic Sound page
+- If you change survey fields, update:
+  - `SurveyAnswers`
+  - survey step logic / `totalSteps`
+  - validation in `canNext`
+  - Firestore payload in `handleFinish()`
+  - any settings screens that edit those answers

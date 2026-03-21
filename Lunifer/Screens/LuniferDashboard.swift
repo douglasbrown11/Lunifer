@@ -1,16 +1,18 @@
 import SwiftUI
 import FirebaseAuth
+import AVFoundation
 
 // ── MARK: Dashboard ──────────────────────────────────────────
 
 struct LuniferDashboard: View {
     @Binding var answers: SurveyAnswers
-    var onSignOut: (() -> Void)? = nil
     @State private var showSettings = false
+    @State private var showSound = false
     @State private var alarmExpanded = false
     @State private var overrideTime = Date()
     @State private var overrideActive = false
     @AppStorage("luniferEnabled") private var luniferEnabled: Bool = true
+    @AppStorage("selectedAlarmSound") private var selectedAlarmSound: String = "DeafultAlarm.wav"
 
     private var wakeUpTime: String { // calculate wakeup time based off of survey questions
         if overrideActive {
@@ -193,6 +195,34 @@ struct LuniferDashboard: View {
                                 .labelsHidden()
                                 .colorScheme(.dark)
                                 .frame(maxWidth: .infinity)
+
+                            Button {
+                                showSound = true
+                            } label: {
+                                HStack {
+                                    Text("Sound")
+                                        .font(.custom("DM Sans", size: 14))
+                                        .foregroundColor(Color.white.opacity(0.85))
+                                    Spacer()
+                                    Text(SoundOption.displayName(for: selectedAlarmSound))
+                                        .font(.custom("DM Sans", size: 13))
+                                        .foregroundColor(Color.white.opacity(0.4))
+                                    Image(systemName: "chevron.right")
+                                        .font(.system(size: 13, weight: .light))
+                                        .foregroundColor(Color.white.opacity(0.35))
+                                }
+                                .padding(.horizontal, 16)
+                                .padding(.vertical, 14)
+                                .background(
+                                    RoundedRectangle(cornerRadius: 12)
+                                        .fill(Color.white.opacity(0.04))
+                                        .overlay(
+                                            RoundedRectangle(cornerRadius: 12)
+                                                .stroke(Color.white.opacity(0.08), lineWidth: 1)
+                                        )
+                                )
+                            }
+                            .buttonStyle(.plain)
                         }
                         .padding(.vertical, 12)
                         .padding(.horizontal, 45)
@@ -215,6 +245,7 @@ struct LuniferDashboard: View {
                 } // end if luniferEnabled
             }
             .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .center)
+            .offset(y: -32)
 
             // ── Unified toggle button — travels from bottom to center ──
             if !alarmExpanded {
@@ -254,12 +285,124 @@ struct LuniferDashboard: View {
         }
         .frame(maxWidth: .infinity, maxHeight: .infinity)
         .sheet(isPresented: $showSettings) {
-            LuniferSettings(answers: $answers, onSignOut: onSignOut)
+            LuniferSettings(answers: $answers)
+        }
+        .sheet(isPresented: $showSound) {
+            SoundSettingsView()
         }
     }
 }
 
+struct SoundOption {
+    let displayName: String
+    let filename: String
+
+    static let all: [SoundOption] = [
+        SoundOption(displayName: "Default Alarm",      filename: "DeafultAlarm.wav"),
+        SoundOption(displayName: "Alarm Clock",        filename: "Alarm Clock.mp3"),
+        SoundOption(displayName: "Church Bells",       filename: "Church Bells.wav"),
+        SoundOption(displayName: "Crystal Bowl",       filename: "Crystal Bowl Rythym audio .m4a"),
+        SoundOption(displayName: "Space",              filename: "Space.wav"),
+        SoundOption(displayName: "Twin Alarm Bell",    filename: "Twin Alarm Bell.wav"),
+        SoundOption(displayName: "Clock Alarm",        filename: "microsammy-clock-alarm-8761.mp3"),
+    ]
+
+    static func displayName(for filename: String) -> String {
+        all.first { $0.filename == filename }?.displayName ?? filename
+    }
+}
+
+struct SoundSettingsView: View {
+    @Environment(\.dismiss) private var dismiss
+    @AppStorage("selectedAlarmSound") private var selectedAlarmSound: String = "DeafultAlarm.wav"
+    @State private var audioPlayer: AVAudioPlayer?
+
+    var body: some View {
+        NavigationStack {
+            ZStack(alignment: .top) {
+                Color.luniferBg.ignoresSafeArea()
+                StarsView()
+
+                VStack(spacing: 0) {
+                    // ── Header ────────────────────────────────
+                    HStack {
+                        Button { dismiss() } label: {
+                            Image(systemName: "chevron.left")
+                                .font(.system(size: 16, weight: .light))
+                                .foregroundColor(Color.white.opacity(0.75))
+                                .frame(width: 36, height: 36)
+                        }
+                        Spacer()
+                        Text("Sound")
+                            .font(.custom("Cormorant Garamond", size: 28).weight(.light))
+                            .foregroundColor(Color.white.opacity(0.9))
+                        Spacer()
+                        Color.clear.frame(width: 36, height: 36)
+                    }
+                    .padding(.horizontal, 24)
+                    .padding(.top, 24)
+                    .padding(.bottom, 20)
+
+                    // ── Sound list ────────────────────────────
+                    VStack(spacing: 0) {
+                        ForEach(SoundOption.all, id: \.filename) { option in
+                            Button {
+                                selectedAlarmSound = option.filename
+                                preview(option.filename)
+                            } label: {
+                                HStack {
+                                    Text(option.displayName)
+                                        .font(.custom("DM Sans", size: 15))
+                                        .foregroundColor(Color.white.opacity(0.85))
+                                    Spacer()
+                                    if selectedAlarmSound == option.filename {
+                                        Image(systemName: "checkmark")
+                                            .font(.system(size: 13, weight: .medium))
+                                            .foregroundColor(Color(red: 0.706, green: 0.588, blue: 0.902))
+                                    }
+                                }
+                                .padding(.horizontal, 24)
+                                .padding(.vertical, 16)
+                            }
+                            .buttonStyle(.plain)
+
+                            if option.filename != SoundOption.all.last?.filename {
+                                Rectangle()
+                                    .fill(Color.white.opacity(0.07))
+                                    .frame(height: 1)
+                                    .padding(.horizontal, 24)
+                            }
+                        }
+                    }
+                    .background(
+                        RoundedRectangle(cornerRadius: 14)
+                            .fill(Color.white.opacity(0.04))
+                            .overlay(
+                                RoundedRectangle(cornerRadius: 14)
+                                    .stroke(Color.white.opacity(0.08), lineWidth: 1)
+                            )
+                    )
+                    .padding(.horizontal, 24)
+
+                    Spacer()
+                }
+            }
+            .toolbar(.hidden, for: .navigationBar)
+        }
+    }
+
 // ── MARK: Preview ─────────────────────────────────────────────
+
+
+    private func preview(_ filename: String) {
+        audioPlayer?.stop()
+        guard let url = Bundle.main.url(forResource: (filename as NSString).deletingPathExtension,
+                                        withExtension: (filename as NSString).pathExtension) else { return }
+        audioPlayer = try? AVAudioPlayer(contentsOf: url)
+        audioPlayer?.play()
+    }
+}
+
 
 #Preview {
     LuniferDashboard(answers: .constant({
@@ -272,4 +415,3 @@ struct LuniferDashboard: View {
         return a
     }()))
 }
-

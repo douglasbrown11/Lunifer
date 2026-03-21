@@ -24,9 +24,7 @@ struct ContentView: View {
                     screen = .dashboard
                 })
             case .dashboard:
-                LuniferDashboard(answers: $surveyAnswers, onSignOut: {
-                    screen = .intro
-                })
+                LuniferDashboard(answers: $surveyAnswers)
             }
         }
         .frame(maxWidth: .infinity, maxHeight: .infinity)
@@ -37,6 +35,9 @@ struct ContentView: View {
                 surveyAnswers = saved
                 screen = .dashboard
             }
+        }
+        .onChange(of: surveyCompleted) { _, completed in
+            if !completed { screen = .intro }
         }
         .task {
             await LuniferAlarm.shared.startMonitoring()

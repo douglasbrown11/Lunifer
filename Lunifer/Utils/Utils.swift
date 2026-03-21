@@ -31,7 +31,7 @@ func generateStars(count: Int = 60) -> [StarParticle] {
             x: CGFloat.random(in: 0...1),
             y: CGFloat.random(in: 0...1),
             size: CGFloat.random(in: 0.5...2.0),
-            opacity: Double.random(in: 0.05...0.3),
+            opacity: Double.random(in: 0.15...0.6),
             duration: Double.random(in: 3...8),
             delay: Double.random(in: 0...5)
         )
@@ -54,7 +54,7 @@ struct StarsView: View {
                         x: star.x * geo.size.width,
                         y: star.y * geo.size.height
                     )
-                    .opacity(twinkle ? star.opacity : 0.05)
+                    .opacity(twinkle ? star.opacity : 0.1)
                     .animation(
                         Animation.easeInOut(duration: star.duration)
                             .repeatForever(autoreverses: true)

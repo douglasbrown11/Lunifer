@@ -1,7 +1,7 @@
 import CoreLocation
 import Combine
 
-final class LocationManager: NSObject, ObservableObject {
+final class LocationManager: NSObject, ObservableObject { // final = prevents class from being subclassed
     private let manager = CLLocationManager()
     @Published var authorizationStatus: CLAuthorizationStatus = .notDetermined
 
@@ -13,6 +13,10 @@ final class LocationManager: NSObject, ObservableObject {
 
     func requestAlwaysAuthorization() {
         manager.requestAlwaysAuthorization()
+    }
+
+    func requestWhenInUseAuthorization() {
+        manager.requestWhenInUseAuthorization()
     }
 }
 

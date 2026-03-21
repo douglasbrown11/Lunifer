@@ -7,6 +7,13 @@
 	objects = {
 
 /* Begin PBXBuildFile section */
+		A3AB40112F6E25DA0077BA25 /* Alarm Clock.mp3 in Resources */ = {isa = PBXBuildFile; fileRef = A3AB400A2F6E25DA0077BA25 /* Alarm Clock.mp3 */; };
+		A3AB40122F6E25DA0077BA25 /* DeafultAlarm.wav in Resources */ = {isa = PBXBuildFile; fileRef = A3AB400D2F6E25DA0077BA25 /* DeafultAlarm.wav */; };
+		A3AB40132F6E25DA0077BA25 /* Crystal Bowl Rythym audio .m4a in Resources */ = {isa = PBXBuildFile; fileRef = A3AB400C2F6E25DA0077BA25 /* Crystal Bowl Rythym audio .m4a */; };
+		A3AB40142F6E25DA0077BA25 /* Church Bells.wav in Resources */ = {isa = PBXBuildFile; fileRef = A3AB400B2F6E25DA0077BA25 /* Church Bells.wav */; };
+		A3AB40152F6E25DA0077BA25 /* Twin Alarm Bell.wav in Resources */ = {isa = PBXBuildFile; fileRef = A3AB40102F6E25DA0077BA25 /* Twin Alarm Bell.wav */; };
+		A3AB40162F6E25DA0077BA25 /* microsammy-clock-alarm-8761.mp3 in Resources */ = {isa = PBXBuildFile; fileRef = A3AB400E2F6E25DA0077BA25 /* microsammy-clock-alarm-8761.mp3 */; };
+		A3AB40172F6E25DA0077BA25 /* Space.wav in Resources */ = {isa = PBXBuildFile; fileRef = A3AB400F2F6E25DA0077BA25 /* Space.wav */; };
 		A3CF23F52F61D9CA00E6A310 /* FirebaseAI in Frameworks */ = {isa = PBXBuildFile; productRef = A3CF23F42F61D9CA00E6A310 /* FirebaseAI */; };
 		A3CF23F72F61D9CA00E6A310 /* FirebaseAuth in Frameworks */ = {isa = PBXBuildFile; productRef = A3CF23F62F61D9CA00E6A310 /* FirebaseAuth */; };
 		A3CF23F92F61D9CA00E6A310 /* FirebaseFirestore in Frameworks */ = {isa = PBXBuildFile; productRef = A3CF23F82F61D9CA00E6A310 /* FirebaseFirestore */; };
@@ -32,27 +39,21 @@
 /* End PBXContainerItemProxy section */
 
 /* Begin PBXFileReference section */
+		A3AB400A2F6E25DA0077BA25 /* Alarm Clock.mp3 */ = {isa = PBXFileReference; lastKnownFileType = audio.mp3; path = "Alarm Clock.mp3"; sourceTree = "<group>"; };
+		A3AB400B2F6E25DA0077BA25 /* Church Bells.wav */ = {isa = PBXFileReference; lastKnownFileType = audio.wav; path = "Church Bells.wav"; sourceTree = "<group>"; };
+		A3AB400C2F6E25DA0077BA25 /* Crystal Bowl Rythym audio .m4a */ = {isa = PBXFileReference; lastKnownFileType = file; path = "Crystal Bowl Rythym audio .m4a"; sourceTree = "<group>"; };
+		A3AB400D2F6E25DA0077BA25 /* DeafultAlarm.wav */ = {isa = PBXFileReference; lastKnownFileType = audio.wav; path = DeafultAlarm.wav; sourceTree = "<group>"; };
+		A3AB400E2F6E25DA0077BA25 /* microsammy-clock-alarm-8761.mp3 */ = {isa = PBXFileReference; lastKnownFileType = audio.mp3; path = "microsammy-clock-alarm-8761.mp3"; sourceTree = "<group>"; };
+		A3AB400F2F6E25DA0077BA25 /* Space.wav */ = {isa = PBXFileReference; lastKnownFileType = audio.wav; path = Space.wav; sourceTree = "<group>"; };
+		A3AB40102F6E25DA0077BA25 /* Twin Alarm Bell.wav */ = {isa = PBXFileReference; lastKnownFileType = audio.wav; path = "Twin Alarm Bell.wav"; sourceTree = "<group>"; };
 		A3CF237B2F61D1D200E6A310 /* Lunifer.app */ = {isa = PBXFileReference; explicitFileType = wrapper.application; includeInIndex = 0; path = Lunifer.app; sourceTree = BUILT_PRODUCTS_DIR; };
 		A3CF23882F61D1D400E6A310 /* LuniferTests.xctest */ = {isa = PBXFileReference; explicitFileType = wrapper.cfbundle; includeInIndex = 0; path = LuniferTests.xctest; sourceTree = BUILT_PRODUCTS_DIR; };
 		A3CF23922F61D1D400E6A310 /* LuniferUITests.xctest */ = {isa = PBXFileReference; explicitFileType = wrapper.cfbundle; includeInIndex = 0; path = LuniferUITests.xctest; sourceTree = BUILT_PRODUCTS_DIR; };
 /* End PBXFileReference section */
 
-/* Begin PBXFileSystemSynchronizedBuildFileExceptionSet section */
-		A3CF23FF2F61E14800E6A310 /* Exceptions for "Lunifer" folder in "Lunifer" target */ = {
-			isa = PBXFileSystemSynchronizedBuildFileExceptionSet;
-			membershipExceptions = (
-				Info.plist,
-			);
-			target = A3CF237A2F61D1D200E6A310 /* Lunifer */;
-		};
-/* End PBXFileSystemSynchronizedBuildFileExceptionSet section */
-
 /* Begin PBXFileSystemSynchronizedRootGroup section */
 		A3CF237D2F61D1D200E6A310 /* Lunifer */ = {
 			isa = PBXFileSystemSynchronizedRootGroup;
-			exceptions = (
-				A3CF23FF2F61E14800E6A310 /* Exceptions for "Lunifer" folder in "Lunifer" target */,
-			);
 			path = Lunifer;
 			sourceTree = "<group>";
 		};
@@ -98,10 +99,25 @@
 /* End PBXFrameworksBuildPhase section */
 
 /* Begin PBXGroup section */
+		A3AB40092F6E259A0077BA25 /* Sounds */ = {
+			isa = PBXGroup;
+			children = (
+				A3AB400A2F6E25DA0077BA25 /* Alarm Clock.mp3 */,
+				A3AB400B2F6E25DA0077BA25 /* Church Bells.wav */,
+				A3AB400C2F6E25DA0077BA25 /* Crystal Bowl Rythym audio .m4a */,
+				A3AB400D2F6E25DA0077BA25 /* DeafultAlarm.wav */,
+				A3AB400E2F6E25DA0077BA25 /* microsammy-clock-alarm-8761.mp3 */,
+				A3AB400F2F6E25DA0077BA25 /* Space.wav */,
+				A3AB40102F6E25DA0077BA25 /* Twin Alarm Bell.wav */,
+			);
+			path = Sounds;
+			sourceTree = "<group>";
+		};
 		A3CF23722F61D1D200E6A310 = {
 			isa = PBXGroup;
 			children = (
 				A3CF237D2F61D1D200E6A310 /* Lunifer */,
+				A3AB40092F6E259A0077BA25 /* Sounds */,
 				A3CF238B2F61D1D400E6A310 /* LuniferTests */,
 				A3CF23952F61D1D400E6A310 /* LuniferUITests */,
 				A3CF237C2F61D1D200E6A310 /* Products */,
@@ -247,6 +263,13 @@
 			isa = PBXResourcesBuildPhase;
 			buildActionMask = 2147483647;
 			files = (
+				A3AB40112F6E25DA0077BA25 /* Alarm Clock.mp3 in Resources */,
+				A3AB40122F6E25DA0077BA25 /* DeafultAlarm.wav in Resources */,
+				A3AB40132F6E25DA0077BA25 /* Crystal Bowl Rythym audio .m4a in Resources */,
+				A3AB40142F6E25DA0077BA25 /* Church Bells.wav in Resources */,
+				A3AB40152F6E25DA0077BA25 /* Twin Alarm Bell.wav in Resources */,
+				A3AB40162F6E25DA0077BA25 /* microsammy-clock-alarm-8761.mp3 in Resources */,
+				A3AB40172F6E25DA0077BA25 /* Space.wav in Resources */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};

@@ -2,6 +2,7 @@ import SwiftUI
 import FirebaseFirestore
 import FirebaseAuth
 import CoreLocation
+import UIKit
 
 // ── MARK: Models ─────────────────────────────────────────────
 
@@ -14,6 +15,7 @@ struct TimeValue: Codable {
 struct SurveyAnswers: Codable {
     var age: String        = "18"
     var lifestyle: String? = nil
+    var wakeDays: [String] = ["mon", "tue", "wed", "thu", "fri"]
     var calendar: String?  = nil
     var sleep   = TimeValue(hours: 8, minutes: 0,  auto: false)
     var routine = TimeValue(hours: 1, minutes: 0,  auto: false)
@@ -86,6 +88,37 @@ struct OptionCard<Content: View>: View {
         }
         .buttonStyle(.plain)
         .animation(.easeInOut(duration: 0.15), value: isSelected)
+    }
+}
+
+private struct WeekdayButton: View {
+    let label: String
+    let isSelected: Bool
+    let action: () -> Void
+
+    var body: some View {
+        Button(action: action) {
+            Text(label)
+                .font(.custom("DM Sans", size: 15).weight(.medium))
+                .foregroundColor(isSelected ? Color.white.opacity(0.95) : Color.white.opacity(0.45))
+                .frame(width: 38, height: 38)
+                .background(
+                    Circle()
+                        .fill(isSelected
+                              ? Color(red: 0.627, green: 0.471, blue: 1.0).opacity(0.22)
+                              : Color.white.opacity(0.03))
+                        .overlay(
+                            Circle()
+                                .stroke(
+                                    isSelected
+                                    ? Color(red: 0.627, green: 0.471, blue: 1.0).opacity(0.75)
+                                    : Color.white.opacity(0.08),
+                                    lineWidth: 1.5
+                                )
+                        )
+                )
+        }
+        .buttonStyle(.plain)
     }
 }
 
@@ -218,6 +251,7 @@ struct LuniferSurvey: View {
         @AppStorage("surveyCompleted") private var surveyCompleted = false
 
         @EnvironmentObject private var calendarManager: CalendarManager
+        @Environment(\.openURL) private var openURL
 
         @StateObject private var locationManager = LocationManager()
 
@@ -226,19 +260,23 @@ struct LuniferSurvey: View {
         @State private var saveError: String? = nil
         @State private var answers   = SurveyAnswers()
         @State private var showLocationDeniedAlert = false
+        @State private var showLocationUpgradeAlert = false
+        @State private var showLocationSettingsAlert = false
+        @State private var hasShownLocationDeniedAlert = false
         
         private var showCommute: Bool {
             answers.lifestyle == "student" || answers.lifestyle == "commuter"
         }
-        private var totalSteps: Int  { showCommute ? 6 : 5 }
+        private var totalSteps: Int  { showCommute ? 7 : 6 }
         private var isLastStep: Bool { step == totalSteps - 1 }
         
         private var canNext: Bool {
             switch step {
             case 0: return !answers.age.isEmpty && (Int(answers.age) ?? 0) > 0
             case 1: return answers.lifestyle != nil
-            case 2: return answers.calendar  != nil
-            case 5: // commute step
+            case 2: return !answers.wakeDays.isEmpty
+            case 3: return answers.calendar  != nil
+            case 6: // commute step
                 if answers.commute.auto {
                     return locationManager.authorizationStatus == .authorizedAlways
                 } else {
@@ -319,12 +357,38 @@ struct LuniferSurvey: View {
                 }
             }
             .frame(maxWidth: .infinity, maxHeight: .infinity)
-            .alert("Location Access Required", isPresented: $showLocationDeniedAlert) {
+            .alert("Always Allow Location Access Required", isPresented: $showLocationDeniedAlert) {
                 Button("OK") {
+                    hasShownLocationDeniedAlert = true
                     answers.commute.auto = false
+                    answers.commute.hours = 0
+                    answers.commute.minutes = 0
                 }
             } message: {
                 Text("In order for Lunifer to learn this, you must select \"Always Allow\" so Lunifer can track your commute.")
+            }
+            .alert("Turn On Location Access in Settings", isPresented: $showLocationSettingsAlert) {
+                Button("Not Now", role: .cancel) {
+                    answers.commute.auto = false
+                }
+                Button("Open Settings") {
+                    answers.commute.auto = false
+                    if let settingsURL = URL(string: UIApplication.openSettingsURLString) {
+                        openURL(settingsURL)
+                    }
+                }
+            } message: {
+                Text("Location access was previously denied. iOS will not show the permission prompt again. Open Settings and change Location to \"Always\" to let Lunifer learn your commute.")
+            }
+            .alert("Allow Always to Learn Your Commute", isPresented: $showLocationUpgradeAlert) {
+                Button("Not Now", role: .cancel) {
+                    answers.commute.auto = false
+                }
+                Button("Continue") {
+                    locationManager.requestAlwaysAuthorization()
+                }
+            } message: {
+                Text("You selected \"Allow While Using App.\" To let Lunifer automatically learn your commute, please choose \"Always Allow\" on the next prompt.")
             }
         }
         
@@ -335,15 +399,16 @@ struct LuniferSurvey: View {
             switch step {
             case 0: stepAge
             case 1: stepLifestyle
-            case 2: stepCalendar
-            case 3: stepSleep
-            case 4: stepRoutine
-            case 5: stepCommute
+            case 2: stepWakeDays
+            case 3: stepCalendar
+            case 4: stepSleep
+            case 5: stepRoutine
+            case 6: stepCommute
             default: EmptyView()
             }
         }
         
-        // Step 0 — Age
+        // Step 0 — Age Question
         private var stepAge: some View {
             VStack(spacing: 0) {
                 Text("How old are you?")
@@ -384,7 +449,7 @@ struct LuniferSurvey: View {
         }
         
         
-        // Step 1 — Lifestyle
+        // Step 1 — Lifestyle - Commute or Not question
         private var stepLifestyle: some View {
             VStack(alignment: .center, spacing: 0) {
                 Text("Which of these best describes you?")
@@ -419,7 +484,52 @@ struct LuniferSurvey: View {
             }
         }
 
-        // Step 2 — Calendar
+        // Step 2 — Wake-up days
+        private var stepWakeDays: some View {
+            let weekdays = [
+                ("mon", "M"),
+                ("tue", "T"),
+                ("wed", "W"),
+                ("thu", "T"),
+                ("fri", "F"),
+                ("sat", "S"),
+                ("sun", "S")
+            ]
+
+            return VStack(alignment: .center, spacing: 0) {
+                Text("What days of the week should Lunifer to wake you up?")
+                    .font(.custom("Cormorant Garamond", size: 22))
+                    .fixedSize(horizontal: false, vertical: true)
+                    .multilineTextAlignment(.center)
+                    .fontWeight(.light)
+                    .foregroundColor(Color.white.opacity(0.95))
+                    .frame(maxWidth: .infinity, alignment: .center)
+                    .padding(.bottom, 16)
+                    .padding(.horizontal, 40)
+
+                HStack(spacing: 10) {
+                    ForEach(weekdays, id: \.0) { id, label in
+                        WeekdayButton(label: label, isSelected: answers.wakeDays.contains(id)) {
+                            toggleWakeDay(id)
+                        }
+                    }
+                }
+                .padding(.bottom, 14)
+                .padding(.horizontal, 16)
+
+                if answers.wakeDays.isEmpty {
+                    Text("Select at least one day to continue.")
+                        .font(.custom("DM Sans", size: 13))
+                        .foregroundColor(Color.white.opacity(0.35))
+                        .padding(.horizontal, 32)
+                        .padding(.bottom, 24)
+                } else {
+                    Spacer().frame(height: 24)
+                }
+            }
+        }
+
+        // Step 3 — Calendar Question
         private var stepCalendar: some View {
             VStack(alignment: .center, spacing: 0) {
                 Text("Which calendar do you use?")
@@ -495,7 +605,7 @@ struct LuniferSurvey: View {
             }
         }
         
-        // Step 3 — Sleep
+        // Step 4 — Sleep
         private var stepSleep: some View {
             VStack(alignment: .center, spacing: 0) {
                 Text("How long do you sleep to feel your best?")
@@ -514,7 +624,7 @@ struct LuniferSurvey: View {
             }
         }
         
-        // Step 4 — Morning routine
+        // Step 5 — Morning routine
         private var stepRoutine: some View {
             VStack(alignment: .center, spacing: 0) {
                 Text("How long does your morning routine take?")
@@ -533,7 +643,7 @@ struct LuniferSurvey: View {
             }
         }
         
-        // Step 5 — Commute (student / commuter only)
+        // Step 6 — Commute (student / commuter only)
         private var stepCommute: some View {
             VStack(alignment: .center, spacing: 0) {
                 Text("How long is your commute?")
@@ -549,14 +659,19 @@ struct LuniferSurvey: View {
                                 autoLabel: "Let Lunifer calculate this from my location")
                 .padding(.horizontal, 40)
                 .onChange(of: answers.commute.auto) { _, isAuto in
-                    if isAuto { locationManager.requestAlwaysAuthorization() }
+                    guard isAuto else { return }
+                    requestCommuteAuthorizationIfNeeded()
                 }
                 .onAppear {
-                    if answers.commute.auto { locationManager.requestAlwaysAuthorization() }
+                    if answers.commute.auto {
+                        requestCommuteAuthorizationIfNeeded()
+                    }
                 }
                 .onChange(of: locationManager.authorizationStatus) { _, status in
                     guard answers.commute.auto else { return }
-                    if status != .notDetermined && status != .authorizedAlways {
+                    if status == .authorizedWhenInUse {
+                        showLocationUpgradeAlert = true
+                    } else if status == .denied || status == .restricted {
                         showLocationDeniedAlert = true
                     }
                 }
@@ -591,6 +706,37 @@ struct LuniferSurvey: View {
         private func goBack() {
             if step > 0 { step -= 1 }
         }
+
+        private func toggleWakeDay(_ day: String) {
+            if answers.wakeDays.contains(day) {
+                answers.wakeDays.removeAll { $0 == day }
+            } else {
+                let orderedDays = ["mon", "tue", "wed", "thu", "fri", "sat", "sun"]
+                answers.wakeDays.append(day)
+                answers.wakeDays.sort {
+                    (orderedDays.firstIndex(of: $0) ?? 0) < (orderedDays.firstIndex(of: $1) ?? 0)
+                }
+            }
+        }
+
+        private func requestCommuteAuthorizationIfNeeded() {
+            switch locationManager.authorizationStatus {
+            case .notDetermined:
+                locationManager.requestWhenInUseAuthorization()
+            case .authorizedWhenInUse:
+                showLocationUpgradeAlert = true
+            case .authorizedAlways:
+                break
+            case .denied, .restricted:
+                if hasShownLocationDeniedAlert {
+                    showLocationSettingsAlert = true
+                } else {
+                    showLocationDeniedAlert = true
+                }
+            @unknown default:
+                break
+            }
+        }
         
         // ── MARK: Firestore save ─────────────────────────────────
         // Mirrors handleFinish() in luniferSurvey.jsx exactly
@@ -607,6 +753,7 @@ struct LuniferSurvey: View {
                 let data: [String: Any] = [
                     "age":       Int(answers.age) ?? 0,
                     "lifestyle": answers.lifestyle ?? "",
+                    "wakeDays":  answers.wakeDays,
                     "calendar":  answers.calendar  ?? "",
                     "sleep":   ["hours": answers.sleep.hours,
                                 "minutes": answers.sleep.minutes,
