@@ -31,6 +31,8 @@
 	<string>7167900619-kt1j2i37t8cvkuo9afdnvhro643f05th.apps.googleusercontent.com</string>
 	<key>LSRequiresIPhoneOS</key>
 	<true/>
+	<key>NSMotionUsageDescription</key>
+	<string>Lunifer uses motion data to detect when you fall asleep so it can calculate your optimal wake-up time.</string>
 	<key>NSAlarmKitUsageDescription</key>
 	<string>Lunifer sets a wake-up alarm for you automatically each night based on your schedule.</string>
 	<key>NSCalendarsFullAccessUsageDescription</key>
@@ -39,17 +41,25 @@
 	<string>Lunifer needs your location at all times to automatically calculate your commute and adjust your alarm accordingly.</string>
 	<key>NSLocationWhenInUseUsageDescription</key>
 	<string>Lunifer uses your location to calculate your commute time so it can set the right wake-up alarm.</string>
-	<key>UIApplicationSceneManifest</key>
-	<dict>
-		<key>UIApplicationSupportsMultipleScenes</key>
-		<false/>
-	</dict>
 	<key>UIAppFonts</key>
 	<array>
 		<string>CormorantGaramond-LightItalic.ttf</string>
 		<string>CormorantGaramond-Light.ttf</string>
 		<string>DMSans-Regular.ttf</string>
 		<string>DMSans-Medium.ttf</string>
+	</array>
+	<key>UIApplicationSceneManifest</key>
+	<dict>
+		<key>UIApplicationSupportsMultipleScenes</key>
+		<false/>
+	</dict>
+	<key>BGTaskSchedulerPermittedIdentifiers</key>
+	<array>
+		<string>com.lunifer.sleepAnalysis</string>
+	</array>
+	<key>UIBackgroundModes</key>
+	<array>
+		<string>processing</string>
 	</array>
 	<key>UILaunchScreen</key>
 	<dict/>

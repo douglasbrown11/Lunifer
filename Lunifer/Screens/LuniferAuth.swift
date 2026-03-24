@@ -117,7 +117,7 @@ private struct FloatingMoon: View {
 struct LuniferAuth: View {
     var onSignedIn: () -> Void = {}
 
-    @State private var mode: AuthMode = .signIn
+    @State private var mode: AuthMode = .create
     @State private var email = ""
     @State private var password = ""
     @State private var loading = false
@@ -127,7 +127,7 @@ struct LuniferAuth: View {
 
     var body: some View {
         ZStack {
-            LuniferBackground()
+            LuniferBackground(showStars: false)
 
             ScrollView {
                 VStack(spacing: 0) {

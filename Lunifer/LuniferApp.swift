@@ -1,6 +1,7 @@
 import SwiftUI
 import Firebase
 import GoogleSignIn
+import BackgroundTasks
 
 // "@main" tells Swift this is where the app starts — only one struct in the
 // entire project can have this attribute.
@@ -12,11 +13,19 @@ struct LuniferApp: App {
     // for as long as the app is running.
     @StateObject private var calendarManager = CalendarManager()
 
-    // "init" runs once, the moment the app launches — before any UI appears.
-    // This is where Firebase must be configured so it's ready before anything
-    // tries to use auth or Firestore.
     init() {
         FirebaseApp.configure()
+
+        // Register the background task handler for overnight sleep analysis.
+        // iOS will call this handler when it wakes the app in the background.
+        SleepTracker.registerBackgroundTask()
+
+        // One-time migration: scrub any sleep history entries whose duration
+        // falls outside the realistic 3–12 hour range.  These are artefacts
+        // from early development runs where the retroactive analysis window
+        // had no prior baseline, causing false long-duration entries to be
+        // written to UserDefaults.
+        SleepHistoryManager.shared.purgeBadEntries()
     }
 
     // "body" defines what the app actually shows on screen.

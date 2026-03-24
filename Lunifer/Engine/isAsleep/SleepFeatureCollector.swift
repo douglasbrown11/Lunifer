@@ -1,80 +1,77 @@
 import Foundation
+import UIKit
 import Combine
 import CoreMotion
 import UserNotifications
 
 // ─────────────────────────────────────────────────────────────
-// SleepFeatureCollector
+// SleepFeatureCollector (Background-Safe)
 // ─────────────────────────────────────────────────────────────
-// Continuously collects the raw signals that the sleep prediction
-// model needs. Each signal maps to one feature variable:
+// Collects the raw signals needed for sleep prediction.
 //
-//   Feature                        Source
-//   ─────────────────────────────  ──────────────────────────
-//   isStationary                   CMMotionActivityManager
-//   stationaryDurationMinutes      time since last non-stationary
-//   timeSinceLastInteraction       app lifecycle / NotificationCenter
-//   timeOfDay                      system clock (fractional hours)
-//   unlockCountLast30Min           Darwin notify (screen lock)
+// KEY DESIGN: This collector works even when the app is suspended.
+// Instead of relying on real-time timers (which iOS kills in background),
+// it persists interaction timestamps to UserDefaults and queries
+// CoreMotion's historical activity buffer when the app wakes up.
+//
+// TWO MODES OF OPERATION:
+//
+//   1. FOREGROUND (app is open):
+//      - Tracks interactions live via app lifecycle notifications
+//      - CoreMotion delivers real-time stationary updates
+//      - All features update on a 60-second timer
+//
+//   2. BACKGROUND / RETROACTIVE (app was suspended):
+//      - On wake-up, queries CoreMotion for historical activity
+//      - Reads persisted last-interaction timestamp from UserDefaults
+//      - Reconstructs what happened while the app was asleep
+//
+// Feature variables:
+//   isStationary                   CoreMotion (live or historical)
+//   stationaryDurationMinutes      derived from motion history
+//   timeSinceLastInteraction       persisted timestamps + lifecycle
+//   timeOfDay                      system clock
+//   unlockCountLast30Min           persisted interaction log
 //   isSleepFocusActive             UNNotificationSettings
-//   dayOfWeek                      system clock (1=Sun … 7=Sat)
-//   historicalAvgSleepOnset        rolling average from SleepTracker
-//
-// This class does NOT make predictions — it just keeps the data
-// fresh so SleepPredictionModel can read a snapshot at any time.
+//   dayOfWeek                      system clock
+//   historicalAvgSleepOnset        rolling average (UserDefaults)
 
 @MainActor
 final class SleepFeatureCollector: ObservableObject {
 
     // MARK: - Published feature values
 
-    /// True when CoreMotion says the device is stationary.
     @Published private(set) var isStationary: Bool = false
-
-    /// Minutes the device has been continuously stationary.
     @Published private(set) var stationaryDurationMinutes: Double = 0
-
-    /// Minutes since the user last interacted with the phone
-    /// (app foregrounded, screen unlocked, etc.).
     @Published private(set) var timeSinceLastInteractionMinutes: Double = 0
-
-    /// Current time of day as fractional hours (0.0 – 24.0).
-    /// Example: 11:30 PM = 23.5
     @Published private(set) var timeOfDay: Double = 0
-
-    /// Number of screen unlock events in the last 30 minutes.
     @Published private(set) var unlockCountLast30Min: Int = 0
-
-    /// True when the user has a Focus mode active that silences
-    /// notifications (Sleep Focus, Do Not Disturb, etc.).
     @Published private(set) var isSleepFocusActive: Bool = false
-
-    /// Day of week: 1 = Sunday, 2 = Monday … 7 = Saturday.
     @Published private(set) var dayOfWeek: Int = 1
-
-    /// Rolling average sleep-onset time as fractional hours.
-    /// Starts at nil until we have at least one night of data.
     @Published var historicalAvgSleepOnset: Double? = nil
 
     // MARK: - Private state
 
     private let motionActivityManager = CMMotionActivityManager()
     private var stationarySince: Date? = nil
-    private var lastInteractionDate: Date = Date()
-    private var recentUnlockTimestamps: [Date] = []
     private var refreshTimer: Timer?
     private var cancellables = Set<AnyCancellable>()
 
+    // UserDefaults keys for persisted state
+    private let lastInteractionKey = "lunifer_last_interaction"
+    private let interactionLogKey = "lunifer_interaction_log"
+    private let historicalKey = "lunifer_avg_sleep_onset"
+
     // MARK: - Lifecycle
 
-    /// Call once when the app launches (e.g. from ContentView .task).
-    /// Starts all listeners and a 60-second refresh timer.
+    /// Call once when the app launches. Starts live listeners
+    /// and loads any persisted state from before the app was suspended.
     func startCollecting() {
+        loadPersistedState()
         startMotionUpdates()
         observeAppLifecycle()
-        loadHistoricalAverage()
 
-        // Refresh computed features every 60 seconds
+        // Refresh computed features every 60 seconds while foregrounded
         refreshTimer = Timer.scheduledTimer(
             withTimeInterval: 60,
             repeats: true
@@ -84,11 +81,9 @@ final class SleepFeatureCollector: ObservableObject {
             }
         }
 
-        // Initial snapshot
         refreshDerivedFeatures()
     }
 
-    /// Call when the app is terminating or the collector is no longer needed.
     func stopCollecting() {
         motionActivityManager.stopActivityUpdates()
         refreshTimer?.invalidate()
@@ -96,8 +91,7 @@ final class SleepFeatureCollector: ObservableObject {
         cancellables.removeAll()
     }
 
-    /// Returns a snapshot of all current feature values in a struct
-    /// that the prediction model can consume.
+    /// Returns a snapshot of all current feature values.
     func currentFeatures() -> SleepFeatures {
         SleepFeatures(
             isStationary: isStationary,
@@ -111,11 +105,105 @@ final class SleepFeatureCollector: ObservableObject {
         )
     }
 
-    // MARK: - CoreMotion: Stationary detection
+    // ─────────────────────────────────────────────────────────
+    // MARK: - Retroactive analysis (called from background task)
+    // ─────────────────────────────────────────────────────────
+    // This is the key method for background operation. When the app
+    // wakes up (via BGProcessingTask or user opening the app), this
+    // queries CoreMotion's historical buffer to figure out what
+    // happened while the app was suspended.
+
+    /// Queries CoreMotion for historical motion activity between two dates.
+    /// Returns an array of (date, isStationary) pairs at ~5-minute resolution.
+    nonisolated func queryMotionHistory(from start: Date, to end: Date) async -> [MotionSample] {
+        guard CMMotionActivityManager.isActivityAvailable() else { return [] }
+
+        let manager = CMMotionActivityManager()
+        return await withCheckedContinuation { (continuation: CheckedContinuation<[MotionSample], Never>) in
+            manager.queryActivityStarting(
+                from: start,
+                to: end,
+                to: .main
+            ) { activities, error in
+                guard let activities, error == nil else {
+                    continuation.resume(returning: [])
+                    return
+                }
+
+                let samples = activities.map { activity in
+                    MotionSample(
+                        date: activity.startDate,
+                        isStationary: activity.stationary,
+                        confidence: activity.confidence
+                    )
+                }
+                continuation.resume(returning: samples)
+            }
+        }
+    }
+
+    /// Reconstructs features for a specific point in time using
+    /// persisted data and CoreMotion history. Used for retroactive
+    /// sleep analysis when the app was suspended overnight.
+    func reconstructFeatures(at date: Date, motionHistory: [MotionSample]) -> SleepFeatures {
+        let cal = Calendar.current
+        let hour = cal.component(.hour, from: date)
+        let minute = cal.component(.minute, from: date)
+
+        // Find motion state at this time
+        let relevantMotion = motionHistory
+            .filter { $0.date <= date }
+            .last
+
+        let stationary = relevantMotion?.isStationary ?? true
+
+        // Calculate how long the device had been stationary at this point
+        var stationaryMinutes: Double = 0
+        if stationary {
+            // Walk backward through motion history to find when stationary began
+            let earlier = motionHistory.filter { $0.date <= date }.reversed()
+            var stationaryStart = date
+            for sample in earlier {
+                if sample.isStationary {
+                    stationaryStart = sample.date
+                } else {
+                    break
+                }
+            }
+            stationaryMinutes = date.timeIntervalSince(stationaryStart) / 60.0
+        }
+
+        // Get interaction history from persisted log
+        let interactionLog = loadInteractionLog()
+        let lastInteraction = interactionLog
+            .filter { $0 <= date }
+            .max() ?? date.addingTimeInterval(-8 * 3600) // fallback: 8 hours ago
+
+        let timeSinceInteraction = date.timeIntervalSince(lastInteraction) / 60.0
+
+        // Count interactions in the 30 minutes before this timestamp
+        let window = date.addingTimeInterval(-30 * 60)
+        let recentInteractions = interactionLog.filter { $0 >= window && $0 <= date }
+
+        return SleepFeatures(
+            isStationary: stationary,
+            stationaryDurationMinutes: stationaryMinutes,
+            timeSinceLastInteractionMinutes: timeSinceInteraction,
+            timeOfDay: Double(hour) + Double(minute) / 60.0,
+            unlockCountLast30Min: recentInteractions.count,
+            isSleepFocusActive: false, // can't determine retroactively
+            dayOfWeek: cal.component(.weekday, from: date),
+            historicalAvgSleepOnset: historicalAvgSleepOnset
+        )
+    }
+
+    // ─────────────────────────────────────────────────────────
+    // MARK: - CoreMotion: live stationary detection
+    // ─────────────────────────────────────────────────────────
 
     private func startMotionUpdates() {
         guard CMMotionActivityManager.isActivityAvailable() else {
-            print("⚠️ SleepFeatureCollector: Motion activity not available on this device")
+            print("⚠️ SleepFeatureCollector: Motion activity not available")
             return
         }
 
@@ -132,25 +220,24 @@ final class SleepFeatureCollector: ObservableObject {
         isStationary = activity.stationary
 
         if isStationary && !wasStationary {
-            // Just became stationary — start the clock
             stationarySince = Date()
         } else if !isStationary {
-            // User moved — reset
             stationarySince = nil
             stationaryDurationMinutes = 0
         }
 
-        // Update duration if still stationary
         if isStationary, let since = stationarySince {
             stationaryDurationMinutes = Date().timeIntervalSince(since) / 60.0
         }
     }
 
-    // MARK: - App lifecycle: last interaction tracking
+    // ─────────────────────────────────────────────────────────
+    // MARK: - App lifecycle: persisted interaction tracking
+    // ─────────────────────────────────────────────────────────
+    // Every interaction is saved to UserDefaults so we can
+    // reconstruct the timeline even after the app was suspended.
 
     private func observeAppLifecycle() {
-        // Track when the user brings the app to the foreground
-        // Each foreground event counts as a "phone interaction"
         NotificationCenter.default.publisher(for: UIApplication.didBecomeActiveNotification)
             .sink { [weak self] _ in
                 Task { @MainActor [weak self] in
@@ -159,64 +246,84 @@ final class SleepFeatureCollector: ObservableObject {
             }
             .store(in: &cancellables)
 
-        // Track when the app goes to background (screen locked or switched away)
         NotificationCenter.default.publisher(for: UIApplication.willResignActiveNotification)
             .sink { [weak self] _ in
                 Task { @MainActor [weak self] in
-                    // Log as an unlock event (user was actively using phone)
-                    self?.recordUnlockEvent()
+                    self?.recordInteraction()
                 }
             }
             .store(in: &cancellables)
     }
 
     private func recordInteraction() {
-        lastInteractionDate = Date()
-        recordUnlockEvent()
-        timeSinceLastInteractionMinutes = 0
-    }
-
-    private func recordUnlockEvent() {
         let now = Date()
-        recentUnlockTimestamps.append(now)
 
-        // Prune timestamps older than 30 minutes
-        let cutoff = now.addingTimeInterval(-30 * 60)
-        recentUnlockTimestamps.removeAll { $0 < cutoff }
-        unlockCountLast30Min = recentUnlockTimestamps.count
+        // Persist the last interaction timestamp
+        UserDefaults.standard.set(now.timeIntervalSince1970, forKey: lastInteractionKey)
+
+        // Append to the interaction log (kept for 24 hours)
+        var log = loadInteractionLog()
+        log.append(now)
+
+        // Prune entries older than 24 hours
+        let cutoff = now.addingTimeInterval(-24 * 3600)
+        log.removeAll { $0 < cutoff }
+        saveInteractionLog(log)
+
+        // Update live features
+        timeSinceLastInteractionMinutes = 0
+        let window = now.addingTimeInterval(-30 * 60)
+        unlockCountLast30Min = log.filter { $0 >= window }.count
     }
 
+    // ─────────────────────────────────────────────────────────
+    // MARK: - Persisted interaction log (UserDefaults)
+    // ─────────────────────────────────────────────────────────
+
+    private func loadInteractionLog() -> [Date] {
+        let timestamps = UserDefaults.standard.array(forKey: interactionLogKey) as? [Double] ?? []
+        return timestamps.map { Date(timeIntervalSince1970: $0) }
+    }
+
+    private func saveInteractionLog(_ log: [Date]) {
+        let timestamps = log.map { $0.timeIntervalSince1970 }
+        UserDefaults.standard.set(timestamps, forKey: interactionLogKey)
+    }
+
+    // ─────────────────────────────────────────────────────────
     // MARK: - Focus mode detection
+    // ─────────────────────────────────────────────────────────
 
     private func checkSleepFocusStatus() {
         UNUserNotificationCenter.current().getNotificationSettings { [weak self] settings in
             Task { @MainActor [weak self] in
-                // When a Focus mode that silences notifications is active,
-                // the notification setting will show as .disabled or the
-                // alertSetting will be .disabled. This isn't a perfect 1:1
-                // map to "Sleep Focus" specifically, but it catches DND,
-                // Sleep Focus, and custom Focus modes that silence alerts.
                 let silenced = settings.alertSetting == .disabled
                 self?.isSleepFocusActive = silenced
             }
         }
     }
 
-    // MARK: - Derived / time-based features
+    // ─────────────────────────────────────────────────────────
+    // MARK: - Derived features refresh
+    // ─────────────────────────────────────────────────────────
 
     private func refreshDerivedFeatures() {
         let now = Date()
         let cal = Calendar.current
 
-        // Time since last interaction
-        timeSinceLastInteractionMinutes = now.timeIntervalSince(lastInteractionDate) / 60.0
+        // Time since last interaction (read from persisted timestamp)
+        let lastInteractionTS = UserDefaults.standard.double(forKey: lastInteractionKey)
+        if lastInteractionTS > 0 {
+            let lastInteraction = Date(timeIntervalSince1970: lastInteractionTS)
+            timeSinceLastInteractionMinutes = now.timeIntervalSince(lastInteraction) / 60.0
+        }
 
-        // Stationary duration (keep ticking if still stationary)
+        // Stationary duration
         if isStationary, let since = stationarySince {
             stationaryDurationMinutes = now.timeIntervalSince(since) / 60.0
         }
 
-        // Time of day as fractional hours
+        // Time of day
         let hour = cal.component(.hour, from: now)
         let minute = cal.component(.minute, from: now)
         timeOfDay = Double(hour) + Double(minute) / 60.0
@@ -224,34 +331,41 @@ final class SleepFeatureCollector: ObservableObject {
         // Day of week
         dayOfWeek = cal.component(.weekday, from: now)
 
-        // Prune old unlock timestamps
-        let cutoff = now.addingTimeInterval(-30 * 60)
-        recentUnlockTimestamps.removeAll { $0 < cutoff }
-        unlockCountLast30Min = recentUnlockTimestamps.count
+        // Unlock count from persisted log
+        let log = loadInteractionLog()
+        let window = now.addingTimeInterval(-30 * 60)
+        unlockCountLast30Min = log.filter { $0 >= window }.count
 
         // Focus mode
         checkSleepFocusStatus()
     }
 
-    // MARK: - Historical average persistence
+    // ─────────────────────────────────────────────────────────
+    // MARK: - Persisted state loading
+    // ─────────────────────────────────────────────────────────
 
-    private let historicalKey = "lunifer_avg_sleep_onset"
-
-    /// Load the stored historical average from UserDefaults.
-    private func loadHistoricalAverage() {
+    private func loadPersistedState() {
+        // Historical average
         let stored = UserDefaults.standard.double(forKey: historicalKey)
         if stored > 0 {
             historicalAvgSleepOnset = stored
         }
+
+        // Last interaction date
+        let lastTS = UserDefaults.standard.double(forKey: lastInteractionKey)
+        if lastTS > 0 {
+            timeSinceLastInteractionMinutes = Date().timeIntervalSince(
+                Date(timeIntervalSince1970: lastTS)
+            ) / 60.0
+        }
     }
 
-    /// Called by SleepTracker when a new sleep-onset is detected.
-    /// Updates the rolling average and persists it.
+    // ─────────────────────────────────────────────────────────
+    // MARK: - Historical average
+    // ─────────────────────────────────────────────────────────
+
     func updateHistoricalAverage(newOnsetHour: Double) {
         if let current = historicalAvgSleepOnset {
-            // Exponential moving average with alpha = 0.3
-            // Recent nights matter more than old ones, but the average
-            // stays stable. alpha = 0.3 means ~70% old data, ~30% new night.
             historicalAvgSleepOnset = current * 0.7 + newOnsetHour * 0.3
         } else {
             historicalAvgSleepOnset = newOnsetHour
@@ -261,18 +375,26 @@ final class SleepFeatureCollector: ObservableObject {
 }
 
 // ─────────────────────────────────────────────────────────────
-// SleepFeatures — A snapshot of all features at one moment
+// MotionSample — a single point from CoreMotion history
 // ─────────────────────────────────────────────────────────────
-// This struct is what gets passed to SleepPredictionModel.
-// It's a plain value type — no side effects, easy to test.
+
+struct MotionSample {
+    let date: Date
+    let isStationary: Bool
+    let confidence: CMMotionActivityConfidence
+}
+
+// ─────────────────────────────────────────────────────────────
+// SleepFeatures — snapshot of all features at one moment
+// ─────────────────────────────────────────────────────────────
 
 struct SleepFeatures {
     let isStationary: Bool
     let stationaryDurationMinutes: Double
     let timeSinceLastInteractionMinutes: Double
-    let timeOfDay: Double                       // 0.0 – 24.0
+    let timeOfDay: Double
     let unlockCountLast30Min: Int
     let isSleepFocusActive: Bool
-    let dayOfWeek: Int                          // 1 = Sun … 7 = Sat
-    let historicalAvgSleepOnset: Double?         // nil if no history yet
+    let dayOfWeek: Int
+    let historicalAvgSleepOnset: Double?
 }

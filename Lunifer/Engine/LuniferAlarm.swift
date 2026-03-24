@@ -2,6 +2,8 @@ import Foundation
 import Combine
 import AlarmKit
 import SwiftUI
+import FirebaseFirestore
+import FirebaseAuth
 
 // ─────────────────────────────────────────────────────────────
 // SECTION 1: ALARM METADATA
@@ -182,6 +184,65 @@ class LuniferAlarm: ObservableObject {
     }
 
     // ─────────────────────────────────────────────────────────
+    // SECTION 4b: ADDED ALARM
+    // ─────────────────────────────────────────────────────────
+    // Schedules a second, independently managed alarm set by the user.
+    // Stored separately from the main Lunifer alarm so cancelling
+    // one does not affect the other.
+
+    @Published var addedAlarmID: UUID? = nil
+
+    func scheduleAddedAlarm(for date: Date) async {
+        if !isAuthorized { await requestAuthorization() }
+        guard isAuthorized else { return }
+
+        // Cancel any previously added alarm first
+        await cancelAddedAlarm()
+
+        let alert = AlarmPresentation.Alert(
+            title: "Added Alarm",
+            secondaryButton: AlarmButton(
+                text: "Snooze",
+                textColor: Color(red: 0.75, green: 0.65, blue: 1.0),
+                systemImageName: "clock.arrow.circlepath"
+            ),
+            secondaryButtonBehavior: .countdown
+        )
+
+        let attributes = AlarmAttributes<LuniferAlarmMetadata>(
+            presentation: AlarmPresentation(alert: alert),
+            metadata: LuniferAlarmMetadata(
+                scheduledWakeTime: date,
+                calendarEventTitle: "",
+                routineMinutes: 0,
+                commuteMinutes: 0
+            ),
+            tintColor: Color(red: 0.55, green: 0.35, blue: 0.95)
+        )
+
+        let id = UUID()
+        do {
+            let _ = try await manager.schedule(
+                id: id,
+                configuration: .alarm(
+                    schedule: .fixed(date),
+                    attributes: attributes
+                )
+            )
+            addedAlarmID = id
+            print("✅ Added alarm set for \(date.formatted(date: .omitted, time: .shortened))")
+        } catch {
+            print("❌ Failed to schedule added alarm: \(error.localizedDescription)")
+        }
+    }
+
+    func cancelAddedAlarm() async {
+        guard let id = addedAlarmID else { return }
+        try? manager.cancel(id: id)
+        addedAlarmID = nil
+    }
+
+    // ─────────────────────────────────────────────────────────
     // SECTION 5: CANCELLING THE ALARM
     // ─────────────────────────────────────────────────────────
     // Cancels all active Lunifer alarms.
@@ -266,91 +327,112 @@ class LuniferAlarm: ObservableObject {
 // ─────────────────────────────────────────────────────────────
 // SECTION 7: BEHAVIOUR LOGGER
 // ─────────────────────────────────────────────────────────────
-// This class records what the user does with their alarm every day.
-// Every snooze, every dismiss, every time they wake up before the alarm —
-// all of it gets saved to Firestore as a data point.
+// Records inferences about the user's alarm behaviour — not raw events,
+// but derived conclusions about whether the alarm was well-timed.
 //
-// Over time this builds a picture of the user's real sleep behaviour,
-// which is what the ML model uses to personalise the alarm time.
+// Instead of storing every individual tap, we accumulate state across
+// one alarm session (fire → snoozes → final dismiss) and then save
+// a single inference document to Firestore when the session ends.
 //
-// Example data after 30 days:
-//   Monday + snoozed 3 times = alarm was too early on Mondays
-//   Friday + dismissed immediately = alarm time was perfect on Fridays
-//   Tuesday + woke before alarm = alarm was too late on Tuesdays
+// The inference answers: "Was this alarm set at the right time?"
 //
-// The ML model reads all of this and adjusts future alarm times accordingly.
+//   snoozeCount == 0 → alarm was on time
+//   snoozeCount 1–2  → alarm was slightly early
+//   snoozeCount 3+   → alarm was too early
+//   wokeBeforeAlarm  → alarm was too late (or sleep need was lower)
+//
+// Over 30+ nights this gives the ML model a clean signal to personalise
+// future alarm times by day of week and sleep pattern.
 
 class AlarmBehaviourLogger {
 
-    // Another singleton — one shared logger for the whole app
     static let shared = AlarmBehaviourLogger()
 
-    // Called when a new alarm is scheduled for the night
+    // ── Session state ─────────────────────────────────────────
+    // Tracks the current alarm session from fire → dismiss.
+
+    private var scheduledWakeTime: Date? = nil
+    private var alarmFiredAt: Date?      = nil
+    private var snoozeCount: Int         = 0
+
+    // ── Lifecycle hooks ───────────────────────────────────────
+
+    /// Called when a new alarm is scheduled for the night.
     func logScheduled(for date: Date) {
-        write(["type": "scheduled", "wakeTime": date, "dayOfWeek": dayOfWeek(date)])
+        scheduledWakeTime = date
+        alarmFiredAt      = nil
+        snoozeCount       = 0
+        print("📅 Alarm scheduled for \(date.formatted(date: .omitted, time: .shortened))")
     }
 
-    // Called when the alarm actually fires (goes off)
+    /// Called when the alarm fires. Starts a new session.
     func logAlarmFired(at date: Date) {
-        write(["type": "alarm_fired", "timestamp": date, "dayOfWeek": dayOfWeek(date)])
+        alarmFiredAt = date
+        snoozeCount  = 0
+        print("🔔 Alarm fired at \(date.formatted(date: .omitted, time: .shortened))")
     }
 
-    // Called when the user taps Snooze
-    // More snoozes = alarm was too early = ML should push it later
+    /// Called each time the user taps Snooze.
     func logSnooze(at date: Date) {
-        write(["type": "snooze", "timestamp": date, "dayOfWeek": dayOfWeek(date)])
+        snoozeCount += 1
+        print("😴 Snooze #\(snoozeCount) at \(date.formatted(date: .omitted, time: .shortened))")
     }
 
-    // Called when the user taps Dismiss without snoozing
-    // Clean dismiss = good alarm time = ML should keep it similar
+    /// Called when the user taps Dismiss. Finalises the session
+    /// and saves the inference to Firestore.
     func logDismiss(at date: Date) {
-        write(["type": "dismiss", "timestamp": date, "dayOfWeek": dayOfWeek(date)])
+        saveInference(outcome: "dismissed", at: date)
+        resetSession()
     }
 
-    // Called when HealthKit detects the user woke up before the alarm
-    // (we'll build this when we add HealthKit integration later)
-    // Woke before alarm = alarm was too late = ML should move it earlier
+    /// Called when the user woke before the alarm fired.
+    /// (Used when HealthKit integration is added later.)
     func logWokeBeforeAlarm(at date: Date) {
-        write(["type": "woke_before_alarm", "timestamp": date, "dayOfWeek": dayOfWeek(date)])
+        saveInference(outcome: "woke_before_alarm", at: date)
+        resetSession()
     }
 
-    // ── Private helpers ──────────────────────────────────────
+    // ── Inference logic ───────────────────────────────────────
 
-    // Returns the day of week as a number (1 = Sunday, 2 = Monday... 7 = Saturday)
-    // The ML model uses this because alarm behaviour differs by day
-    // (e.g. people snooze more on Mondays than Fridays)
-    private func dayOfWeek(_ date: Date) -> Int {
-        Calendar.current.component(.weekday, from: date)
+    /// Derives a conclusion about alarm accuracy and saves it to Firestore.
+    /// This single document per morning is what the ML model reads.
+    private func saveInference(outcome: String, at date: Date) {
+        guard let uid = Auth.auth().currentUser?.uid else { return }
+
+        // Derive how well the alarm was timed from snooze behaviour
+        let assessment: String
+        switch (outcome, snoozeCount) {
+        case ("woke_before_alarm", _): assessment = "too_late"
+        case (_, 0):                   assessment = "on_time"
+        case (_, 1...2):               assessment = "slightly_early"
+        default:                       assessment = "too_early"
+        }
+
+        var inference: [String: Any] = [
+            "date":        date,
+            "dayOfWeek":   Calendar.current.component(.weekday, from: date),
+            "snoozeCount": snoozeCount,
+            "outcome":     outcome,
+            "assessment":  assessment  // The key signal for the ML model
+        ]
+        if let scheduled = scheduledWakeTime { inference["scheduledWakeTime"] = scheduled }
+        if let fired     = alarmFiredAt      { inference["alarmFiredAt"]      = fired     }
+
+        Firestore.firestore()
+            .collection("users").document(uid)
+            .collection("alarmInferences")
+            .addDocument(data: inference) { error in
+                if let error {
+                    print("❌ Failed to save alarm inference: \(error.localizedDescription)")
+                } else {
+                    print("✅ Alarm inference saved — assessment: \(assessment), snoozes: \(self.snoozeCount)")
+                }
+            }
     }
 
-    // Saves the data to Firestore (Firebase's database)
-    // Right now it just prints to the console — uncomment the Firestore
-    // lines below once you're ready to wire up the database
-    private func write(_ data: [String: Any]) {
-
-        // TODO: Replace this with the real Firebase Auth user ID
-        // You'll get this from FirebaseAuth.auth().currentUser?.uid
-        // let userID = "placeholder_user_id"  // TODO: replace with FirebaseAuth.auth().currentUser?.uid
-
-        // ── Firestore write (uncomment when ready) ──
-        // This saves the event to: users/{userID}/alarmEvents/{autoID}
-        // Each event is a separate document in Firestore
-        //
-        // import FirebaseFirestore  ← add this at the top of the file
-        //
-        // let db = Firestore.firestore()
-        // db.collection("users")
-        //   .document(userID)
-        //   .collection("alarmEvents")
-        //   .addDocument(data: data) { error in
-        //       if let error = error {
-        //           print("❌ Failed to save alarm event: \(error)")
-        //       } else {
-        //           print("✅ Alarm event saved to Firestore")
-        //       }
-        //   }
-
-        // For now, just print to the Xcode console so we can see what's being logged
-        print("📊 Alarm event: \(data["type"] ?? "") at \(data["timestamp"] ?? data["wakeTime"] ?? "")")
+    private func resetSession() {
+        scheduledWakeTime = nil
+        alarmFiredAt      = nil
+        snoozeCount       = 0
     }
 }

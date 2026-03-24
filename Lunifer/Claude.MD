@@ -1,6 +1,6 @@
 # Lunifer — Project Context
 > Read this file at the start of every Claude Code session.
-> Last updated: March 2026
+> Last updated: project structure refresh
 
 ## What is Lunifer?
 Lunifer is an iOS alarm app that calculates a wake-up time for the next day from the user's onboarding answers and lets the user review or override that time from the dashboard. The long-term direction is still an adaptive sleep / alarm assistant, but the current app is primarily a SwiftUI prototype with onboarding, auth, survey, dashboard, settings, and AlarmKit integration.
@@ -19,20 +19,24 @@ Lunifer is an iOS alarm app that calculates a wake-up time for the next day from
 - `LuniferAlarmScreen` is presented with `fullScreenCover` when an alarm is alerting
 
 ## Project File Layout
-All source files live under `Sounds/Lunifer/` (project was restructured from the original `Lunifer/` path).
-`INFOPLIST_FILE` in `project.pbxproj` points to `Sounds/Lunifer/Info.plist`.
+- App source currently lives under `Lunifer/Lunifer/`
+- Dashboard files live under `Lunifer/Lunifer/Screens/Dashboard/`
+- Bundled alarm sounds live under the project-root `Lunifer/Sounds/`
 
 ## Current Folder Summary
 - `Engine/CalendarManager.swift`: EventKit authorization and calendar event access
 - `Engine/LocationManager.swift`: Core Location authorization status tracking
 - `Engine/LuniferAlarm.swift`: AlarmKit scheduling and alarm behavior logging hooks
+- `Engine/isAsleep/*`: sleep duration heuristics, feature collection, prediction, and tracking
 - `Screens/Intro/*`: onboarding intro flow
-- `Screens/Survey/LuniferSurvey.swift`: onboarding survey, survey models, weekday selector, location permission flow
+- `Screens/Survey/LuniferSurvey.swift`: survey flow UI and step sequencing
+- `Screens/Survey/SurveyObjects.swift`: shared survey UI pieces such as calendar icons and `TimeScalePicker`
 - `Screens/LuniferAuth.swift`: auth UI
-- `Screens/LuniferDashboard.swift`: main dashboard, calculated alarm display, override time, settings, sound picker
-- `Screens/LuniferSettings.swift`: settings root plus About You editor
-- `Utils/Utils.swift`: shared colors / background utilities
-- `Sounds/` (project root, not inside `Sounds/Lunifer/`): 7 audio files bundled as app resources
+- `Screens/Dashboard/LuniferMain.swift`: main dashboard, alarm page, rest page, sound picker sheet, and sleep insights paging container
+- `Screens/Dashboard/SleepInsights.swift`: recommended sleep duration card and 7-day sleep history chart
+- `Screens/Dashboard/LuniferSettings.swift`: settings root, About You, Wake Days, and Notifications screens
+- `Utils/Utils.swift`: shared colors, background utilities, and reusable visual helpers
+- `Sounds/` (project root): bundled alarm audio resources
 
 ## Survey Status
 `SurveyAnswers` currently contains:
@@ -50,14 +54,15 @@ Current survey step order in `LuniferSurvey.swift`:
 3. Wake days
 4. Calendar
 5. Sleep duration
-6. Morning routine duration
+6. Morning routine duration, skipped for `not_working`
 7. Commute duration, only for `student` or `commuter`
 
 Notes:
 - `wakeDays` defaults to `["mon", "tue", "wed", "thu", "fri"]`
 - The wake-day screen uses 7 circular weekday buttons
 - Survey answers are saved to Firestore and also saved locally with `answers.saveToDefaults()`
-- Firestore payload currently includes `wakeDays`
+- `SurveyAnswers.saveToFirestore()` currently syncs `age`, `lifestyle`, `calendar`, `routine`, `commute`, and `updatedAt`
+- Sleep and wake-day values are persisted locally, but are not currently included in `SurveyAnswers.saveToFirestore()`
 
 ## Location Permission Flow
 Current behavior in `LuniferSurvey.swift`:
@@ -67,22 +72,30 @@ Current behavior in `LuniferSurvey.swift`:
 - If the user tries again after denial, Lunifer opens a Settings redirect flow because iOS will not re-show the system prompt
 
 ## Dashboard Status
-`LuniferDashboard.swift` currently does the following:
+`LuniferMain.swift` currently does the following:
+- Uses a horizontal `TabView` with two pages: `SleepInsights` on the left and the main dashboard/rest view on the right
 - Shows tomorrow's calculated alarm time
 - Lets the user expand the alarm row
 - Allows manual override with a wheel-style `DatePicker`
-- Includes a `Sound` row inside the expanded alarm dropdown — shows the currently selected sound name
-- Opens `SoundSettingsView` (fully implemented) from the Sound row
+- Includes a `Sound` row inside the expanded alarm dropdown and shows the currently selected sound name
 - Opens `LuniferSettings` from the gear button
+- Supports an additional manually added alarm via the top-left add alarm control
+- Switches to a rest-period page when upcoming wake days indicate time off after today's alarm window
+- Starts `SleepTracker.shared.startTracking()` and `BatteryAlarmNotification.shared.startMonitoring()` from the dashboard task
 - Stores enable / disable state with `@AppStorage("luniferEnabled")`
 - Stores selected alarm sound with `@AppStorage("selectedAlarmSound")`, defaulting to `"DeafultAlarm.wav"`
 
-`SoundSettingsView` (defined in `LuniferDashboard.swift`):
+`SoundSettingsView` (defined in `LuniferMain.swift`):
 - Lists all 7 bundled sounds via `SoundOption.all`
 - Tapping a row selects it (purple checkmark) and previews it via `AVAudioPlayer`
 - Selection persisted via `@AppStorage("selectedAlarmSound")`
 
-`SoundOption` struct (defined in `LuniferDashboard.swift`):
+`SleepInsights.swift` currently:
+- Shows a recommended sleep duration card based on either the user's selected sleep duration or the age-based baseline from `SleepDurationModel`
+- Opens a sheet to edit the sleep duration using `TimeScalePicker`
+- Shows a 7-day sleep history chart backed by `SleepHistoryManager.shared.recentHistory(days: 7)`
+
+`SoundOption` struct (defined in `LuniferMain.swift`):
 - Maps filenames to display names
 - `SoundOption.displayName(for:)` used by the dashboard Sound row
 
@@ -102,8 +115,11 @@ Important limitation:
 ## Settings Status
 `LuniferSettings.swift` currently contains:
 - Root settings screen
+- Notifications settings
+- Wake Days settings
 - Snooze time control
 - Sign out action
+- Delete account action
 - Navigation to `AboutYouSettingsView`
 
 `AboutYouSettingsView` currently supports editing:
@@ -119,7 +135,7 @@ Behavior:
 
 Not currently present:
 - A rebuilt Sleep settings detail screen
-- Additional settings pages beyond About You and the basic Sound screen
+- Additional settings pages beyond About You, Wake Days, Notifications, and the basic Sound screen
 
 ## Auth / Firebase Status
 - Email/password auth exists
@@ -133,6 +149,7 @@ Not currently present:
 - The app can schedule alarms through `LuniferAlarm.shared`
 - Calendar authorization can be requested from the survey when a calendar option is selected
 - `CalendarManager` exists, but the dashboard is not yet using first-event-tomorrow scheduling end-to-end
+- The main dashboard logic is still largely rule-based around a `9:00 AM` target, routine duration, and commute duration, with wake days used mainly for rest-period handling
 
 ## Design / UI Notes
 - The app uses a dark purple visual style
@@ -141,7 +158,7 @@ Not currently present:
 - `LuniferBackground()` / `Color.luniferBg` and `StarsView()` are reused across major screens
 
 ## Known Gaps
-- Wake-day selection is collected but not yet used in dashboard alarm calculation
+- Wake-day selection now affects rest-period handling, but not a full calendar-driven alarm calculation
 - Selected alarm sound is stored in `@AppStorage` but not yet passed to AlarmKit when scheduling — wiring `selectedAlarmSound` into `LuniferAlarm.shared.scheduleAlarm` is still needed
 - Settings coverage is partial after recent rebuilding
 - There are duplicated / evolving flows across survey, dashboard, and settings that still need consolidation
@@ -149,8 +166,9 @@ Not currently present:
 ## Practical Guidance For Future Sessions
 - Do not assume `Claude.md` is authoritative without checking code first
 - `LuniferSurvey.swift` currently contains both the survey UI and the `SurveyAnswers` / `TimeValue` models
+- `SurveyObjects.swift` contains shared survey view components, while `LuniferSurvey.swift` still defines `SurveyAnswers` and `TimeValue`
 - `LuniferSettings` must receive `@Binding var answers: SurveyAnswers`
-- `LuniferDashboard` is the entry point to both Settings and the basic Sound page
+- `LuniferMain` is the dashboard entry point to Settings, Sound, Sleep Insights, and the rest-period page
 - If you change survey fields, update:
   - `SurveyAnswers`
   - survey step logic / `totalSteps`

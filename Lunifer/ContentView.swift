@@ -24,7 +24,7 @@ struct ContentView: View {
                     screen = .dashboard
                 })
             case .dashboard:
-                LuniferDashboard(answers: $surveyAnswers)
+                LuniferMain(answers: $surveyAnswers)
             }
         }
         .frame(maxWidth: .infinity, maxHeight: .infinity)

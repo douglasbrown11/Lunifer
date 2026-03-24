@@ -70,6 +70,8 @@ struct StarsView: View {
 // ── MARK: Background ────────────────────────────────────────
 
 struct LuniferBackground: View {
+    var showStars: Bool = true
+
     var body: some View {
         ZStack {
             Color.luniferBg.ignoresSafeArea()
@@ -95,7 +97,9 @@ struct LuniferBackground: View {
             .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .bottomTrailing)
             .offset(x: 60, y: 60)
 
-            StarsView()
+            if showStars {
+                StarsView()
+            }
         }
     }
 }

@@ -33,6 +33,29 @@ struct SurveyAnswers: Codable {
             UserDefaults.standard.set(data, forKey: "surveyAnswers")
         }
     }
+
+    /// Syncs the current answers to Firestore under the logged-in user's document.
+    /// Uses merge: true so only changed fields are overwritten, not the whole document.
+    func saveToFirestore() {
+        guard let uid = Auth.auth().currentUser?.uid else { return }
+        let data: [String: Any] = [
+            "age":       Int(age) ?? 0,
+            "lifestyle": lifestyle ?? "",
+            "calendar":  calendar ?? "",
+            "routine":   ["hours": routine.hours, "minutes": routine.minutes, "auto": routine.auto],
+            "commute":   ["hours": commute.hours, "minutes": commute.minutes, "auto": commute.auto],
+            "updatedAt": Date()
+        ]
+        Firestore.firestore()
+            .collection("users").document(uid)
+            .setData(data, merge: true) { error in
+                if let error {
+                    print("❌ Failed to sync settings to Firestore: \(error.localizedDescription)")
+                } else {
+                    print("✅ Settings synced to Firestore")
+                }
+            }
+    }
 }
 
 // ── MARK: Step indicator ─────────────────────────────────────
@@ -267,7 +290,16 @@ struct LuniferSurvey: View {
         private var showCommute: Bool {
             answers.lifestyle == "student" || answers.lifestyle == "commuter"
         }
-        private var totalSteps: Int  { showCommute ? 7 : 6 }
+        /// Morning routine step is skipped for users who are not working.
+        private var showRoutine: Bool {
+            answers.lifestyle != "not_working"
+        }
+        private var totalSteps: Int {
+            var count = 5  // age, lifestyle, wakeDays, calendar, sleep — always shown
+            if showRoutine { count += 1 }
+            if showCommute { count += 1 }
+            return count
+        }
         private var isLastStep: Bool { step == totalSteps - 1 }
         
         private var canNext: Bool {
@@ -469,7 +501,18 @@ struct LuniferSurvey: View {
                         ("not_working", "I'm not working right now"),
                     ], id: \.0) { id, label in
                         OptionCard(isSelected: answers.lifestyle == id) {
+                            let previous = answers.lifestyle
                             answers.lifestyle = id
+                            // If switching TO not_working, zero out routine so the skipped
+                            // step doesn't silently subtract time from the alarm calculation.
+                            if id == "not_working" {
+                                answers.routine = TimeValue(hours: 0, minutes: 0, auto: false)
+                            }
+                            // If switching AWAY FROM not_working, restore the routine default
+                            // so the newly-visible step starts at a sensible value.
+                            if previous == "not_working" && id != "not_working" {
+                                answers.routine = TimeValue(hours: 1, minutes: 0, auto: false)
+                            }
                         } content: {
                             Text(label)
                                 .font(.custom("DM Sans", size: 14))
