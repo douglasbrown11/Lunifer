@@ -1,6 +1,8 @@
 import SwiftUI
+import UIKit
 import FirebaseAuth
 import FirebaseFirestore
+import GoogleSignIn
 
 // ── MARK: Settings (root) ─────────────────────────────────────
 
@@ -14,6 +16,8 @@ struct LuniferSettings: View {
     @State private var isDeletingAccount = false
     @State private var showDeleteErrorAlert = false
     @State private var deleteErrorMessage = ""
+    @State private var showPasswordPrompt = false
+    @State private var reauthPassword = ""
 
     private var userEmail: String {
         Auth.auth().currentUser?.email ?? "—"
@@ -138,8 +142,6 @@ struct LuniferSettings: View {
                                 .alert("Are you sure you want to sign out?", isPresented: $showSignOutAlert) {
                                     Button("Yes", role: .destructive) {
                                         try? Auth.auth().signOut()
-                                        surveyCompleted = false
-                                        UserDefaults.standard.removeObject(forKey: "surveyAnswers")
                                         dismiss()
                                     }
                                     Button("No", role: .cancel) { }
@@ -172,11 +174,20 @@ struct LuniferSettings: View {
                                 )
                                 .alert("Delete Account", isPresented: $showDeleteAlert) {
                                     Button("Delete", role: .destructive) {
-                                        Task { await deleteAccount() }
+                                        Task { await startDeletion() }
                                     }
                                     Button("Cancel", role: .cancel) { }
                                 } message: {
                                     Text("This will permanently delete your account and all your data. This cannot be undone.")
+                                }
+                                .alert("Enter your password to confirm", isPresented: $showPasswordPrompt) {
+                                    SecureField("Password", text: $reauthPassword)
+                                    Button("Delete Account", role: .destructive) {
+                                        Task { await reauthenticateAndDelete(password: reauthPassword) }
+                                    }
+                                    Button("Cancel", role: .cancel) { reauthPassword = ""; isDeletingAccount = false }
+                                } message: {
+                                    Text("For security, please re-enter your password to delete your account.")
                                 }
                                 .alert("Couldn't Delete Account", isPresented: $showDeleteErrorAlert) {
                                     Button("OK", role: .cancel) { }
@@ -197,57 +208,146 @@ struct LuniferSettings: View {
     }
 
     // ── Account deletion ──────────────────────────────────────────
-    // Deletes the user's Firestore data first, then removes the
-    // Firebase Auth account, and finally clears local storage.
+    // Step 1: Determine auth provider and reauthenticate before deleting.
+    // Step 2: Delete Auth account first (requires recent login), then
+    //         Firestore data, then clear local storage.
 
-    private func deleteAccount() async {
-        guard let user = Auth.auth().currentUser else { return }
+    /// Determines how the user signed in and triggers the appropriate
+    /// reauthentication flow before deletion.
+    private func startDeletion() async {
+        guard let user = Auth.auth().currentUser else {
+            deleteErrorMessage = "No signed-in user found. Please sign in and try again."
+            showDeleteErrorAlert = true
+            return
+        }
         isDeletingAccount = true
 
+        let providers = user.providerData.map { $0.providerID }
+
+        if providers.contains("google.com") {
+            // Google users: reauthenticate via Google Sign-In prompt
+            await reauthenticateWithGoogle()
+        } else {
+            // Email/password users: show password prompt
+            reauthPassword = ""
+            showPasswordPrompt = true
+        }
+    }
+
+    /// Reauthenticates an email/password user, then deletes.
+    private func reauthenticateAndDelete(password: String) async {
+        guard let user = Auth.auth().currentUser,
+              let email = user.email else {
+            isDeletingAccount = false
+            deleteErrorMessage = "Unable to verify your account. Please try again."
+            showDeleteErrorAlert = true
+            return
+        }
+
+        do {
+            let credential = EmailAuthProvider.credential(withEmail: email, password: password)
+            try await user.reauthenticate(with: credential)
+            await performDeletion(user: user)
+        } catch {
+            isDeletingAccount = false
+            reauthPassword = ""
+            let nsError = error as NSError
+            if nsError.code == AuthErrorCode.wrongPassword.rawValue {
+                deleteErrorMessage = "Incorrect password. Please try again."
+            } else {
+                deleteErrorMessage = nsError.localizedDescription
+            }
+            showDeleteErrorAlert = true
+            print("❌ Reauthentication failed: \(nsError.localizedDescription)")
+        }
+    }
+
+    /// Reauthenticates a Google user via the Google Sign-In prompt, then deletes.
+    private func reauthenticateWithGoogle() async {
+        do {
+            guard let windowScene = UIApplication.shared.connectedScenes
+                .compactMap({ $0 as? UIWindowScene })
+                .first(where: { $0.activationState == .foregroundActive }),
+                  let window = windowScene.windows.first(where: { $0.isKeyWindow }),
+                  let rootVC = window.rootViewController else {
+                isDeletingAccount = false
+                deleteErrorMessage = "Unable to present sign in. Please try again."
+                showDeleteErrorAlert = true
+                return
+            }
+            var presentingVC = rootVC
+            while let presented = presentingVC.presentedViewController {
+                presentingVC = presented
+            }
+
+            let result = try await GIDSignIn.sharedInstance.signIn(withPresenting: presentingVC)
+            guard let idToken = result.user.idToken?.tokenString else {
+                isDeletingAccount = false
+                deleteErrorMessage = "Something went wrong. Please try again."
+                showDeleteErrorAlert = true
+                return
+            }
+
+            let credential = GoogleAuthProvider.credential(
+                withIDToken: idToken,
+                accessToken: result.user.accessToken.tokenString
+            )
+            guard let user = Auth.auth().currentUser else {
+                isDeletingAccount = false
+                return
+            }
+            try await user.reauthenticate(with: credential)
+            await performDeletion(user: user)
+        } catch {
+            isDeletingAccount = false
+            let nsError = error as NSError
+            // Google Sign-In cancellation
+            if nsError.domain.contains("GIDSignIn") && nsError.code == -5 {
+                return  // user cancelled, just reset silently
+            }
+            deleteErrorMessage = nsError.localizedDescription
+            showDeleteErrorAlert = true
+            print("❌ Google reauthentication failed: \(nsError.localizedDescription)")
+        }
+    }
+
+    /// After successful reauthentication, deletes Firestore data first,
+    /// then deletes the Auth account, then clears local storage.
+    private func performDeletion(user: User) async {
         let db  = Firestore.firestore()
         let uid = user.uid
-
-        // Remove Firestore user document and subcollections
-        // (Firestore doesn't auto-delete subcollections, so we delete
-        //  the known ones explicitly before removing the parent doc.)
         let userDoc = db.collection("users").document(uid)
 
         do {
-            // Delete known subcollection documents
+            // Delete Firestore data first so the UI promise of removing
+            // account data is upheld before the auth account is removed.
             for sub in ["sleepHistory", "alarmInferences"] {
                 let snap = try await userDoc.collection(sub).getDocuments()
                 for doc in snap.documents {
                     try await doc.reference.delete()
                 }
             }
-
-            // Delete the parent user document
             try await userDoc.delete()
 
-            // Delete Firebase Auth account
+            // Delete Firebase Auth account after cloud data cleanup succeeds.
             try await user.delete()
 
             // Clear local storage
-            surveyCompleted = false
-            UserDefaults.standard.removeObject(forKey: "surveyAnswers")
-            UserDefaults.standard.removeObject(forKey: "lunifer_battery_drain_samples")
-            UserDefaults.standard.removeObject(forKey: "lunifer_battery_last_check_time")
-            UserDefaults.standard.removeObject(forKey: "lunifer_battery_last_check_level")
-            UserDefaults.standard.removeObject(forKey: "lunifer_battery_last_warned_alarm")
+            clearLocalAccountData()
 
+            isDeletingAccount = false
             dismiss()
         } catch let nsError as NSError {
             isDeletingAccount = false
-            // Firebase error code 17014 = requiresRecentLogin.
-            // This happens when the session is more than a few minutes old.
-            if nsError.code == 17014 {
-                deleteErrorMessage = "For security, please sign out and sign back in before deleting your account."
-            } else {
-                deleteErrorMessage = nsError.localizedDescription
-            }
+            deleteErrorMessage = nsError.localizedDescription
             showDeleteErrorAlert = true
             print("❌ Account deletion failed: \(nsError.localizedDescription)")
         }
+    }
+
+    private func clearLocalAccountData() {
+        AccountDataManager.shared.clearLocalAccountData()
+        surveyCompleted = false
     }
 }
 

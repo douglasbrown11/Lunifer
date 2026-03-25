@@ -22,39 +22,17 @@ struct SurveyAnswers: Codable {
     var commute = TimeValue(hours: 0, minutes: 30, auto: false)
 
     static func loadFromDefaults() -> SurveyAnswers? {
-        guard let data = UserDefaults.standard.data(forKey: "surveyAnswers"),
-              let answers = try? JSONDecoder().decode(SurveyAnswers.self, from: data)
-        else { return nil }
-        return answers
+        SurveyAnswersStore.shared.loadFromDefaults()
     }
 
     func saveToDefaults() {
-        if let data = try? JSONEncoder().encode(self) {
-            UserDefaults.standard.set(data, forKey: "surveyAnswers")
-        }
+        SurveyAnswersStore.shared.saveToDefaults(self)
     }
 
     /// Syncs the current answers to Firestore under the logged-in user's document.
     /// Uses merge: true so only changed fields are overwritten, not the whole document.
     func saveToFirestore() {
-        guard let uid = Auth.auth().currentUser?.uid else { return }
-        let data: [String: Any] = [
-            "age":       Int(age) ?? 0,
-            "lifestyle": lifestyle ?? "",
-            "calendar":  calendar ?? "",
-            "routine":   ["hours": routine.hours, "minutes": routine.minutes, "auto": routine.auto],
-            "commute":   ["hours": commute.hours, "minutes": commute.minutes, "auto": commute.auto],
-            "updatedAt": Date()
-        ]
-        Firestore.firestore()
-            .collection("users").document(uid)
-            .setData(data, merge: true) { error in
-                if let error {
-                    print("❌ Failed to sync settings to Firestore: \(error.localizedDescription)")
-                } else {
-                    print("✅ Settings synced to Firestore")
-                }
-            }
+        SurveyAnswersStore.shared.syncProfile(self)
     }
 }
 
@@ -785,38 +763,16 @@ struct LuniferSurvey: View {
         // Mirrors handleFinish() in luniferSurvey.jsx exactly
         
         private func handleFinish() {
-            guard let uid = Auth.auth().currentUser?.uid else {
+            guard Auth.auth().currentUser?.uid != nil else {
                 saveError = "Not signed in. Please sign in and try again."
                 return
             }
             Task { @MainActor in
                 saving    = true
                 saveError = nil
-                
-                let data: [String: Any] = [
-                    "age":       Int(answers.age) ?? 0,
-                    "lifestyle": answers.lifestyle ?? "",
-                    "wakeDays":  answers.wakeDays,
-                    "calendar":  answers.calendar  ?? "",
-                    "sleep":   ["hours": answers.sleep.hours,
-                                "minutes": answers.sleep.minutes,
-                                "auto": answers.sleep.auto],
-                    "routine": ["hours": answers.routine.hours,
-                                "minutes": answers.routine.minutes,
-                                "auto": answers.routine.auto],
-                    "commute": ["hours": answers.commute.hours,
-                                "minutes": answers.commute.minutes,
-                                "auto": answers.commute.auto],
-                    "createdAt": Date(),
-                ]
-                
+
                 do {
-                    try await withCheckedThrowingContinuation { (cont: CheckedContinuation<Void, Error>) in
-                        Firestore.firestore().collection("users").document(uid).setData(data) { error in
-                            if let error { cont.resume(throwing: error) }
-                            else         { cont.resume() }
-                        }
-                    }
+                    try await SurveyAnswersStore.shared.saveInitialProfile(answers)
                     answers.saveToDefaults()
                     surveyCompleted = true
                     await LuniferAlarm.shared.requestAuthorization()

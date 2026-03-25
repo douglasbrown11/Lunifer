@@ -25,7 +25,7 @@ struct LuniferApp: App {
         // from early development runs where the retroactive analysis window
         // had no prior baseline, causing false long-duration entries to be
         // written to UserDefaults.
-        SleepHistoryManager.shared.purgeBadEntries()
+        SleepHistoryStore.shared.purgeBadEntries()
     }
 
     // "body" defines what the app actually shows on screen.

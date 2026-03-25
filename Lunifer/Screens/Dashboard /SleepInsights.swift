@@ -44,11 +44,12 @@ struct SleepInsights: View {
                             showChangeSheet = true
                         } label: {
                             Text("change")
-                                .font(.custom("DM Sans", size: 12))
-                                .foregroundColor(Color.white.opacity(0.35))
+                                .font(.custom("DM Sans", size: 18))
+                                .foregroundColor(Color.white.opacity(0.95))
                         }
                         .buttonStyle(.plain)
                         Spacer()
+                        
                     }
 
                     Text("SLEEP")
@@ -57,7 +58,7 @@ struct SleepInsights: View {
                         .kerning(2.5)
 
                     Text(SleepDurationModel.formatted(recommendedHours))
-                        .font(.custom("Libre Franklin", size: 56).weight(.light))
+                        .font(.custom("Libre Franklin", size: 51).weight(.light))
                         .foregroundColor(Color.white.opacity(0.95))
 
                     Text("recommended for you")
@@ -74,7 +75,7 @@ struct SleepInsights: View {
                                 .stroke(Color.white.opacity(0.08), lineWidth: 1)
                         )
                 )
-                .padding(.horizontal, 24)
+                .padding(.horizontal, 75)
 
                 Spacer().frame(height: 36)
 
@@ -129,7 +130,7 @@ struct SleepInsights: View {
 }
 
 // ─────────────────────────────────────────────────────────────
-// SleepEditSheet
+// SleepEditSheet after clicking "change"
 // ─────────────────────────────────────────────────────────────
 
 private struct SleepEditSheet: View {

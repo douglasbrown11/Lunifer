@@ -57,10 +57,7 @@ final class SleepFeatureCollector: ObservableObject {
     private var refreshTimer: Timer?
     private var cancellables = Set<AnyCancellable>()
 
-    // UserDefaults keys for persisted state
-    private let lastInteractionKey = "lunifer_last_interaction"
-    private let interactionLogKey = "lunifer_interaction_log"
-    private let historicalKey = "lunifer_avg_sleep_onset"
+    private let trackingStore = SleepTrackingStore.shared
 
     // MARK: - Lifecycle
 
@@ -257,18 +254,8 @@ final class SleepFeatureCollector: ObservableObject {
 
     private func recordInteraction() {
         let now = Date()
-
-        // Persist the last interaction timestamp
-        UserDefaults.standard.set(now.timeIntervalSince1970, forKey: lastInteractionKey)
-
-        // Append to the interaction log (kept for 24 hours)
-        var log = loadInteractionLog()
-        log.append(now)
-
-        // Prune entries older than 24 hours
-        let cutoff = now.addingTimeInterval(-24 * 3600)
-        log.removeAll { $0 < cutoff }
-        saveInteractionLog(log)
+        trackingStore.recordInteraction(at: now)
+        let log = loadInteractionLog()
 
         // Update live features
         timeSinceLastInteractionMinutes = 0
@@ -281,13 +268,11 @@ final class SleepFeatureCollector: ObservableObject {
     // ─────────────────────────────────────────────────────────
 
     private func loadInteractionLog() -> [Date] {
-        let timestamps = UserDefaults.standard.array(forKey: interactionLogKey) as? [Double] ?? []
-        return timestamps.map { Date(timeIntervalSince1970: $0) }
+        trackingStore.loadInteractionLog()
     }
 
     private func saveInteractionLog(_ log: [Date]) {
-        let timestamps = log.map { $0.timeIntervalSince1970 }
-        UserDefaults.standard.set(timestamps, forKey: interactionLogKey)
+        trackingStore.saveInteractionLog(log)
     }
 
     // ─────────────────────────────────────────────────────────
@@ -312,9 +297,7 @@ final class SleepFeatureCollector: ObservableObject {
         let cal = Calendar.current
 
         // Time since last interaction (read from persisted timestamp)
-        let lastInteractionTS = UserDefaults.standard.double(forKey: lastInteractionKey)
-        if lastInteractionTS > 0 {
-            let lastInteraction = Date(timeIntervalSince1970: lastInteractionTS)
+        if let lastInteraction = trackingStore.lastInteractionDate() {
             timeSinceLastInteractionMinutes = now.timeIntervalSince(lastInteraction) / 60.0
         }
 
@@ -346,16 +329,14 @@ final class SleepFeatureCollector: ObservableObject {
 
     private func loadPersistedState() {
         // Historical average
-        let stored = UserDefaults.standard.double(forKey: historicalKey)
-        if stored > 0 {
+        if let stored = trackingStore.historicalAverageSleepOnset() {
             historicalAvgSleepOnset = stored
         }
 
         // Last interaction date
-        let lastTS = UserDefaults.standard.double(forKey: lastInteractionKey)
-        if lastTS > 0 {
+        if let lastInteraction = trackingStore.lastInteractionDate() {
             timeSinceLastInteractionMinutes = Date().timeIntervalSince(
-                Date(timeIntervalSince1970: lastTS)
+                lastInteraction
             ) / 60.0
         }
     }
@@ -370,7 +351,7 @@ final class SleepFeatureCollector: ObservableObject {
         } else {
             historicalAvgSleepOnset = newOnsetHour
         }
-        UserDefaults.standard.set(historicalAvgSleepOnset ?? 0, forKey: historicalKey)
+        trackingStore.setHistoricalAverageSleepOnset(historicalAvgSleepOnset)
     }
 }
 

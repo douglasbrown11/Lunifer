@@ -63,8 +63,7 @@ final class SleepTracker: ObservableObject {
     private var consecutiveAwakeCount = 0
     private let wakeConsecutiveThreshold = 2
 
-    // Tracks when we last ran retroactive analysis so we don't repeat
-    private let lastAnalysisKey = "lunifer_last_retroactive_analysis"
+    private let trackingStore = SleepTrackingStore.shared
 
     // ─────────────────────────────────────────────────────────
     // MARK: - Lifecycle
@@ -181,10 +180,9 @@ final class SleepTracker: ObservableObject {
         let now = Date()
 
         // Figure out where to start: last analysis time or 12 hours ago
-        let lastAnalysisTS = UserDefaults.standard.double(forKey: lastAnalysisKey)
         let analysisStart: Date
-        if lastAnalysisTS > 0 {
-            analysisStart = Date(timeIntervalSince1970: lastAnalysisTS)
+        if let lastAnalysisDate = trackingStore.lastRetroactiveAnalysisDate() {
+            analysisStart = lastAnalysisDate
         } else {
             analysisStart = now.addingTimeInterval(-12 * 3600)
         }
@@ -220,7 +218,7 @@ final class SleepTracker: ObservableObject {
         processRetroPredictions(retroPredictions)
 
         // Mark this analysis as complete
-        UserDefaults.standard.set(now.timeIntervalSince1970, forKey: lastAnalysisKey)
+        trackingStore.setLastRetroactiveAnalysisDate(now)
     }
 
     /// Runs the sleep onset / wake state machine over a batch
@@ -393,16 +391,7 @@ final class SleepTracker: ObservableObject {
     // ─────────────────────────────────────────────────────────
 
     private func logSleepEvent(type: String, at date: Date) {
-        var log = UserDefaults.standard.array(forKey: "lunifer_sleep_log") as? [[String: Any]] ?? []
-        log.append([
-            "type": type,
-            "timestamp": date.timeIntervalSince1970,
-            "dayOfWeek": Calendar.current.component(.weekday, from: date)
-        ])
-        if log.count > 180 {
-            log = Array(log.suffix(180))
-        }
-        UserDefaults.standard.set(log, forKey: "lunifer_sleep_log")
+        trackingStore.appendSleepEvent(type: type, at: date)
     }
 
     // ─────────────────────────────────────────────────────────

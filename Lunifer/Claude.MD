@@ -1,6 +1,6 @@
 # Lunifer — Project Context
 > Read this file at the start of every Claude Code session.
-> Last updated: project structure refresh
+> Last updated: persistence layer refactor
 
 ## What is Lunifer?
 Lunifer is an iOS alarm app that calculates a wake-up time for the next day from the user's onboarding answers and lets the user review or override that time from the dashboard. The long-term direction is still an adaptive sleep / alarm assistant, but the current app is primarily a SwiftUI prototype with onboarding, auth, survey, dashboard, settings, and AlarmKit integration.
@@ -9,7 +9,7 @@ Lunifer is an iOS alarm app that calculates a wake-up time for the next day from
 - Language: Swift / SwiftUI
 - Backend: Firebase Auth + Firestore + Google Sign-In
 - Apple frameworks in use: AlarmKit, EventKit, CoreLocation, AVFoundation
-- App state: local survey answers are persisted in `UserDefaults`; sound preference persisted in `@AppStorage`
+- App state is now split between dedicated local stores in `Engine/` plus `@AppStorage` for device preferences
 
 ## Current App Flow
 - `ContentView.swift` controls navigation with `AppScreen`
@@ -24,6 +24,11 @@ Lunifer is an iOS alarm app that calculates a wake-up time for the next day from
 - Bundled alarm sounds live under the project-root `Lunifer/Sounds/`
 
 ## Current Folder Summary
+- `Data/SurveyAnswersStore.swift`: local + Firestore persistence for onboarding/profile answers
+- `Data/SleepHistoryStore.swift`: local + Firestore persistence for completed sleep nights
+- `Data/SleepTrackingStore.swift`: persisted local state used by sleep inference and retroactive analysis
+- `Data/AppPreferencesStore.swift`: centralized app/device preference keys and helpers
+- `Data/AccountDataManager.swift`: clears account-scoped local data on sign out / delete account
 - `Engine/CalendarManager.swift`: EventKit authorization and calendar event access
 - `Engine/LocationManager.swift`: Core Location authorization status tracking
 - `Engine/LuniferAlarm.swift`: AlarmKit scheduling and alarm behavior logging hooks
@@ -60,9 +65,10 @@ Current survey step order in `LuniferSurvey.swift`:
 Notes:
 - `wakeDays` defaults to `["mon", "tue", "wed", "thu", "fri"]`
 - The wake-day screen uses 7 circular weekday buttons
-- Survey answers are saved to Firestore and also saved locally with `answers.saveToDefaults()`
-- `SurveyAnswers.saveToFirestore()` currently syncs `age`, `lifestyle`, `calendar`, `routine`, `commute`, and `updatedAt`
-- Sleep and wake-day values are persisted locally, but are not currently included in `SurveyAnswers.saveToFirestore()`
+- `SurveyAnswers` still exposes `loadFromDefaults()`, `saveToDefaults()`, and `saveToFirestore()`, but those now delegate to `SurveyAnswersStore.shared`
+- Initial survey completion writes the full onboarding payload through `SurveyAnswersStore.saveInitialProfile(_:)`
+- Incremental settings sync still writes `age`, `lifestyle`, `calendar`, `routine`, `commute`, and `updatedAt`
+- Sleep and wake-day values are still persisted locally, but are not currently included in the incremental `saveToFirestore()` path
 
 ## Location Permission Flow
 Current behavior in `LuniferSurvey.swift`:
@@ -94,6 +100,13 @@ Current behavior in `LuniferSurvey.swift`:
 - Shows a recommended sleep duration card based on either the user's selected sleep duration or the age-based baseline from `SleepDurationModel`
 - Opens a sheet to edit the sleep duration using `TimeScalePicker`
 - Shows a 7-day sleep history chart backed by `SleepHistoryManager.shared.recentHistory(days: 7)`
+
+Sleep persistence now works like this:
+- `SleepTracker` detects sleep onset / wake events
+- `SleepFeatureCollector` gathers and reconstructs the raw signals for prediction
+- `SleepTrackingStore` persists the tracking-related local state such as interaction logs, historical average onset, and retroactive-analysis timestamps
+- `SleepHistoryStore` persists completed nights locally and to Firestore
+- `SleepHistoryManager` is now a compatibility wrapper over `SleepHistoryStore`
 
 `SoundOption` struct (defined in `LuniferMain.swift`):
 - Maps filenames to display names
@@ -131,7 +144,7 @@ Behavior:
 - Each field shows a `Change` action
 - Tapping `Change` expands inline controls
 - Changes are written back to `SurveyAnswers`
-- Age, lifestyle, and calendar changes are saved to defaults
+- Age, lifestyle, and calendar changes are saved locally and synced through the survey/store layer
 
 Not currently present:
 - A rebuilt Sleep settings detail screen
@@ -141,7 +154,8 @@ Not currently present:
 - Email/password auth exists
 - Google Sign-In exists
 - Survey results are written to Firestore
-- Existing code writes survey data with `Firestore.firestore().collection("users").document(uid).setData(data)`
+- Existing code still writes survey/profile data directly to `users/{uid}` with `setData(...)`
+- Sleep history writes to `users/{uid}/sleepHistory/{yyyy-mm-dd}`
 - Current data is written directly to `users/{uid}`, not to a nested `profile` document
 
 ## Alarm / Calendar Status
@@ -161,7 +175,8 @@ Not currently present:
 - Wake-day selection now affects rest-period handling, but not a full calendar-driven alarm calculation
 - Selected alarm sound is stored in `@AppStorage` but not yet passed to AlarmKit when scheduling — wiring `selectedAlarmSound` into `LuniferAlarm.shared.scheduleAlarm` is still needed
 - Settings coverage is partial after recent rebuilding
-- There are duplicated / evolving flows across survey, dashboard, and settings that still need consolidation
+- `SurveyAnswers` and `TimeValue` still live inside `LuniferSurvey.swift` rather than a dedicated model file
+- Persistence is cleaner than before, but some wrappers remain for compatibility and the storage layer could still be consolidated further
 
 ## Practical Guidance For Future Sessions
 - Do not assume `Claude.md` is authoritative without checking code first
@@ -169,9 +184,16 @@ Not currently present:
 - `SurveyObjects.swift` contains shared survey view components, while `LuniferSurvey.swift` still defines `SurveyAnswers` and `TimeValue`
 - `LuniferSettings` must receive `@Binding var answers: SurveyAnswers`
 - `LuniferMain` is the dashboard entry point to Settings, Sound, Sleep Insights, and the rest-period page
+- Use `AccountDataManager.shared.clearLocalAccountData()` for account-scoped cleanup instead of removing `UserDefaults` keys in a view
+- Treat the persistence split as:
+  - `SurveyAnswersStore` for onboarding/profile persistence
+  - `SleepHistoryStore` for completed-night history
+  - `SleepTrackingStore` for inferred sleep/tracking state
+  - `AppPreferencesStore` for device preferences and preference keys
 - If you change survey fields, update:
   - `SurveyAnswers`
   - survey step logic / `totalSteps`
   - validation in `canNext`
-  - Firestore payload in `handleFinish()`
+  - `SurveyAnswersStore.saveInitialProfile(_:)`
+  - incremental sync payload in `SurveyAnswersStore.syncProfile(_:)`
   - any settings screens that edit those answers

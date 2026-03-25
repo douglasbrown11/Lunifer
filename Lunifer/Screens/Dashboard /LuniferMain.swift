@@ -278,61 +278,41 @@ struct LuniferMain: View {
                 ? Color(red: 0.4, green: 0.2, blue: 0.6).opacity(0.08)
                 : Color.black.opacity(0.45))
                 .ignoresSafeArea()
-                .animation(.easeInOut(duration: 0.5), value: luniferEnabled)
 
             // ── Top bar: + button (left) and settings (right) ────
-            if luniferEnabled {
-                VStack {
-                    HStack {
-                        // + / Add Alarm button
-                        // First tap: expand + into the "Add Alarm" label.
-                        // Second tap (on the label): open the full-screen sheet.
-                        Button {
-                            if addAlarmTapped {
-                                // Already showing label — open the sheet
-                                addedAlarmPickerTime = Calendar.current.date(
-                                    bySettingHour: 8, minute: 0, second: 0, of: Date()
-                                ) ?? Date()
-                                showAddAlarmSheet = true
-                            } else {
-                                // First tap — just reveal the label
-                                withAnimation(.spring(response: 0.35, dampingFraction: 0.7)) {
-                                    addAlarmTapped = true
-                                }
-                            }
-                        } label: {
-                            if addAlarmTapped {
-                                Text("Add Alarm")
-                                    .font(.custom("DM Sans", size: 13))
-                                    .foregroundColor(Color.white.opacity(0.85))
-                                    .padding(.horizontal, 14)
-                                    .padding(.vertical, 14)
-                                    .background(
-                                        Capsule()
-                                            .fill(Color.white.opacity(0.08))
-                                            .overlay(Capsule().stroke(Color.white.opacity(0.12), lineWidth: 1))
-                                    )
-                            } else {
-                                Image(systemName: "plus")
-                                    .font(.system(size: 20, weight: .light))
-                                    .foregroundColor(Color.white.opacity(0.85))
-                                    .padding(14)
-                                    .background(
-                                        Circle()
-                                            .fill(Color.white.opacity(0.08))
-                                            .overlay(Circle().stroke(Color.white.opacity(0.12), lineWidth: 1))
-                                    )
+            VStack {
+                HStack {
+                    // + / Add Alarm button
+                    // First tap: expand + into the "Add Alarm" label.
+                    // Second tap (on the label): open the full-screen sheet.
+                    Button {
+                        if addAlarmTapped {
+                            // Already showing label — open the sheet
+                            addedAlarmPickerTime = Calendar.current.date(
+                                bySettingHour: 8, minute: 0, second: 0, of: Date()
+                            ) ?? Date()
+                            showAddAlarmSheet = true
+                        } else {
+                            // First tap — just reveal the label
+                            withAnimation(.spring(response: 0.35, dampingFraction: 0.7)) {
+                                addAlarmTapped = true
                             }
                         }
-                        .padding(20)
-                        .padding(.horizontal, 40)
-
-                        Spacer()
-
-                        // Settings button
-                        Button { showSettings = true } label: {
-                            Image(systemName: "gearshape")
-                                .font(.system(size: 22, weight: .regular))
+                    } label: {
+                        if addAlarmTapped {
+                            Text("Add Alarm")
+                                .font(.custom("DM Sans", size: 13))
+                                .foregroundColor(Color.white.opacity(0.85))
+                                .padding(.horizontal, 14)
+                                .padding(.vertical, 14)
+                                .background(
+                                    Capsule()
+                                        .fill(Color.white.opacity(0.08))
+                                        .overlay(Capsule().stroke(Color.white.opacity(0.12), lineWidth: 1))
+                                )
+                        } else {
+                            Image(systemName: "plus")
+                                .font(.system(size: 20, weight: .light))
                                 .foregroundColor(Color.white.opacity(0.85))
                                 .padding(14)
                                 .background(
@@ -340,18 +320,35 @@ struct LuniferMain: View {
                                         .fill(Color.white.opacity(0.08))
                                         .overlay(Circle().stroke(Color.white.opacity(0.12), lineWidth: 1))
                                 )
-                                .padding(20)
-                                .padding(.horizontal, 40)
                         }
                     }
+                    .padding(20)
+                    .padding(.horizontal, 40)
+
                     Spacer()
+
+                    // Settings button
+                    Button { showSettings = true } label: {
+                        Image(systemName: "gearshape")
+                            .font(.system(size: 22, weight: .regular))
+                            .foregroundColor(Color.white.opacity(0.85))
+                            .padding(14)
+                            .background(
+                                Circle()
+                                    .fill(Color.white.opacity(0.08))
+                                    .overlay(Circle().stroke(Color.white.opacity(0.12), lineWidth: 1))
+                            )
+                            .padding(20)
+                            .padding(.horizontal, 40)
+                    }
                 }
-                .transition(.opacity)
+                Spacer()
             }
+            .opacity(luniferEnabled ? 1 : 0)
+            .allowsHitTesting(luniferEnabled)
 
             // ── Wake-up time ──────────────────────────────
             VStack(spacing: 0) {
-                if luniferEnabled {
                 VStack(spacing: 12) {
                     Text("TOMORROW'S ALARM")
                         .font(.custom("DM Sans", size: 11))
@@ -516,11 +513,12 @@ struct LuniferMain: View {
                         }
                         .padding(.horizontal, 60)
                     }
-                    .transition(.opacity.combined(with: .offset(y: 8)))
+                    .offset(y: luniferEnabled ? 0 : 8)
                 }
 
-                } // end if luniferEnabled
             }
+            .opacity(luniferEnabled ? 1 : 0)
+            .allowsHitTesting(luniferEnabled)
             .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .center)
             .offset(y: -32)
             .sheet(isPresented: $showAddAlarmSheet, onDismiss: {

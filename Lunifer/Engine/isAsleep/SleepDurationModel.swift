@@ -199,110 +199,28 @@ struct SleepHistoryEntry: Identifiable {
 final class SleepHistoryManager {
 
     static let shared = SleepHistoryManager()
-    private let storageKey = "lunifer_sleep_history"
+    private let store = SleepHistoryStore.shared
 
     /// Records a completed night of sleep locally and syncs to Firestore.
     func recordNight(date: Date, duration: Double, onset: Date?, wake: Date?) {
-        // ── Local storage ────────────────────────────────────
-        var entries = loadRawEntries()
-        entries.append([
-            "date": date.timeIntervalSince1970,
-            "duration": duration,
-            "onset": onset?.timeIntervalSince1970 ?? 0,
-            "wake": wake?.timeIntervalSince1970 ?? 0
-        ])
-
-        // Keep last 30 nights
-        if entries.count > 30 {
-            entries = Array(entries.suffix(30))
-        }
-        UserDefaults.standard.set(entries, forKey: storageKey)
-
-        // ── Firestore sync ───────────────────────────────────
-        // Each night is stored as a separate document keyed by date (YYYY-MM-DD)
-        // so re-recording the same night safely overwrites rather than duplicates.
-        guard let uid = Auth.auth().currentUser?.uid else { return }
-        let cal = Calendar.current
-        let components = cal.dateComponents([.year, .month, .day], from: date)
-        let dateKey = String(format: "%04d-%02d-%02d",
-                             components.year ?? 0,
-                             components.month ?? 0,
-                             components.day ?? 0)
-
-        var data: [String: Any] = [
-            "date":          date,
-            "durationHours": duration
-        ]
-        if let onset { data["sleepOnset"] = onset }
-        if let wake  { data["wakeTime"]   = wake  }
-
-        Firestore.firestore()
-            .collection("users").document(uid)
-            .collection("sleepHistory").document(dateKey)
-            .setData(data) { error in
-                if let error {
-                    print("❌ Failed to save sleep night to Firestore: \(error.localizedDescription)")
-                } else {
-                    print("✅ Sleep night saved to Firestore (\(dateKey))")
-                }
-            }
+        store.recordNight(date: date, duration: duration, onset: onset, wake: wake)
     }
 
     /// Returns sleep history entries from the last `days` calendar days, most recent first.
     /// Filters by actual date rather than entry count, so stale development entries
     /// don't corrupt the average once real data starts accumulating.
     func recentHistory(days: Int = 7) -> [SleepHistoryEntry] {
-        let raw = loadRawEntries()
-        let cutoff = Calendar.current.date(byAdding: .day, value: -days, to: Date()) ?? Date()
-
-        let entries: [SleepHistoryEntry] = raw.compactMap { dict in
-            guard let dateTS = dict["date"] as? Double,
-                  let duration = dict["duration"] as? Double else { return nil }
-
-            let date = Date(timeIntervalSince1970: dateTS)
-
-            // Only include entries that fall within the requested date window
-            guard date >= cutoff else { return nil }
-
-            let onsetTS = dict["onset"] as? Double ?? 0
-            let wakeTS  = dict["wake"]  as? Double ?? 0
-
-            return SleepHistoryEntry(
-                date: date,
-                durationHours: duration,
-                sleepOnset: onsetTS > 0 ? Date(timeIntervalSince1970: onsetTS) : nil,
-                wakeTime:   wakeTS  > 0 ? Date(timeIntervalSince1970: wakeTS)  : nil
-            )
-        }
-
-        // Sort most-recent first; cap at `days` entries as a safety limit
-        return Array(entries.sorted { $0.date > $1.date }.prefix(days))
+        store.recentHistory(days: days)
     }
 
     /// Average sleep duration over the last N nights. Nil if no data.
     func averageDuration(days: Int = 7) -> Double? {
-        let history = recentHistory(days: days)
-        guard !history.isEmpty else { return nil }
-        let total = history.reduce(0) { $0 + $1.durationHours }
-        return total / Double(history.count)
+        store.averageDuration(days: days)
     }
 
     /// Removes entries whose duration is outside the realistic 3–12 hour band.
     /// Call once at app launch to clear any corrupt data written during development.
     func purgeBadEntries() {
-        var entries = loadRawEntries()
-        let before = entries.count
-        entries = entries.filter { dict in
-            guard let duration = dict["duration"] as? Double else { return false }
-            return duration >= 3.0 && duration <= 12.0
-        }
-        if entries.count < before {
-            UserDefaults.standard.set(entries, forKey: storageKey)
-            print("🧹 Purged \(before - entries.count) corrupt sleep history entries")
-        }
-    }
-
-    private func loadRawEntries() -> [[String: Any]] {
-        UserDefaults.standard.array(forKey: storageKey) as? [[String: Any]] ?? []
+        store.purgeBadEntries()
     }
 }

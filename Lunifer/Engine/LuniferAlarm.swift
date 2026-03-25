@@ -29,7 +29,6 @@ struct LuniferAlarmMetadata: AlarmMetadata {
 // ─────────────────────────────────────────────────────────────
 // This is the main class that controls everything alarm-related.
 //
-// "class" means it's a reference type — one shared instance across the app.
 // "@MainActor" means all UI updates happen on the main thread (required for SwiftUI).
 // "ObservableObject" means SwiftUI views can watch it and update automatically
 //  when something changes (like when an alarm gets scheduled or fires).
@@ -37,13 +36,7 @@ struct LuniferAlarmMetadata: AlarmMetadata {
 @MainActor
 class LuniferAlarm: ObservableObject {
 
-    // "static let shared" means there is only ONE instance of LuniferAlarm
-    // in the whole app. Any file can access it by writing LuniferAlarm.shared
-    // This is called a "singleton" — one shared object everyone uses.
     static let shared = LuniferAlarm()
-
-    // AlarmManager is Apple's AlarmKit object that actually does the scheduling.
-    // We talk to it to set, cancel, and monitor alarms.
     private let manager = AlarmManager.shared
 
     // ── @Published variables ──────────────────────────────────
@@ -63,13 +56,12 @@ class LuniferAlarm: ObservableObject {
     // iOS will show a popup saying "Lunifer wants to schedule alarms" with
     // Allow and Don't Allow buttons.
     // We call this function when the user finishes the survey.
-    //
+    
     // "async" means this function can wait for things (like the user tapping Allow)
     // without freezing the whole app.
 
     func requestAuthorization() async {
-
-        // Check the current permission state and handle each case
+       
         switch manager.authorizationState {
 
         case .notDetermined:
