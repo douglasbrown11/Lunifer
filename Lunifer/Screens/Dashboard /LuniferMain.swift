@@ -262,6 +262,7 @@ struct LuniferMain: View {
         .task {
             await SleepTracker.shared.startTracking()
             BatteryAlarmNotification.shared.startMonitoring()
+            await WakeNotification.shared.schedule(wakeDate: calculatedAlarmDate, answers: answers)
         }
         // Re-evaluate rest period every minute so the midnight transition
         // back to the alarm view happens automatically without a relaunch.
@@ -274,10 +275,7 @@ struct LuniferMain: View {
 
     private var alarmPage: some View {
         ZStack {
-            (luniferEnabled
-                ? Color(red: 0.4, green: 0.2, blue: 0.6).opacity(0.08)
-                : Color.black.opacity(0.45))
-                .ignoresSafeArea()
+            Color.clear.ignoresSafeArea()
 
             // ── Top bar: + button (left) and settings (right) ────
             VStack {
@@ -473,7 +471,10 @@ struct LuniferMain: View {
                 .transition(.opacity)
                 .onChange(of: overrideTime) { _, newTime in
                     guard overrideActive else { return }
-                    Task { await LuniferAlarm.shared.scheduleAlarm(for: newTime) }
+                    Task {
+                        await LuniferAlarm.shared.scheduleAlarm(for: newTime)
+                        await WakeNotification.shared.schedule(wakeDate: newTime, answers: answers)
+                    }
                 }
 
                 // ── Added Alarm card ──────────────────────
@@ -595,9 +596,7 @@ struct LuniferMain: View {
 
     private var restPage: some View {
         ZStack {
-            // Slightly deeper, cooler tint than the alarm page
-            Color(red: 0.04, green: 0.02, blue: 0.10).opacity(0.55)
-                .ignoresSafeArea()
+            Color.clear.ignoresSafeArea()
 
             // ── Settings button ───────────────────────────
             VStack {
