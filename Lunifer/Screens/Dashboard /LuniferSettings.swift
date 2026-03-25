@@ -27,7 +27,7 @@ struct LuniferSettings: View {
         NavigationStack {
             ZStack {
                 Color.luniferBg.ignoresSafeArea()
-                StarsView()
+
 
                 VStack(spacing: 0) {
                     // ── Header ────────────────────────────────
@@ -381,7 +381,6 @@ struct AboutYouSettingsView: View {
     var body: some View {
         ZStack(alignment: .top) {
             Color.luniferBg.ignoresSafeArea()
-            StarsView()
 
             VStack(spacing: 0) {
                 HStack {
@@ -601,7 +600,6 @@ struct WakeDaysSettingsView: View {
     var body: some View {
         ZStack(alignment: .top) {
             Color.luniferBg.ignoresSafeArea()
-            StarsView()
 
             VStack(spacing: 0) {
                 // ── Header ────────────────────────────────
@@ -687,11 +685,11 @@ struct WakeDaysSettingsView: View {
 struct NotificationsSettingsView: View {
     @Environment(\.dismiss) private var dismiss
     @AppStorage("batteryAlertEnabled") private var batteryAlertEnabled: Bool = true
+    @AppStorage("wakeReminderEnabled") private var wakeReminderEnabled: Bool = true
 
     var body: some View {
         ZStack(alignment: .top) {
             Color.luniferBg.ignoresSafeArea()
-            StarsView()
 
             VStack(spacing: 0) {
                 // ── Header ────────────────────────────────
@@ -733,6 +731,32 @@ struct NotificationsSettingsView: View {
                         }
                         .padding(.horizontal, 16)
                         .padding(.vertical, 16)
+
+                        Divider()
+                            .background(Color.white.opacity(0.08))
+                            .padding(.leading, 16)
+
+                        // ── Alarm set alert row ───────────
+                        HStack(spacing: 12) {
+                            VStack(alignment: .leading, spacing: 4) {
+                                Text("Alarm Set Alert")
+                                    .font(.custom("DM Sans", size: 14))
+                                    .foregroundColor(Color.white.opacity(0.85))
+                                Text("Alert me when my alarm is set for the next day 3 hours before bedtime")
+                                    .font(.custom("DM Sans", size: 12))
+                                    .foregroundColor(Color.white.opacity(0.35))
+                                    .fixedSize(horizontal: false, vertical: true)
+                            }
+                            Spacer()
+                            Toggle("", isOn: $wakeReminderEnabled)
+                                .labelsHidden()
+                                .tint(Color(red: 0.627, green: 0.471, blue: 1.0))
+                        }
+                        .padding(.horizontal, 16)
+                        .padding(.vertical, 16)
+                        .onChange(of: wakeReminderEnabled) { _, enabled in
+                            if !enabled { WakeNotification.shared.cancel() }
+                        }
                     }
                     .background(
                         RoundedRectangle(cornerRadius: 12)
