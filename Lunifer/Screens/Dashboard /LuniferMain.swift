@@ -2,6 +2,8 @@ import SwiftUI
 import FirebaseAuth
 import AVFoundation
 import Combine
+import CoreMotion
+import UIKit
 
 // ── MARK: Dashboard ──────────────────────────────────────────
 
@@ -25,6 +27,9 @@ struct LuniferMain: View {
     @State private var addedAlarmPickerTime = Date()
     @AppStorage("addedAlarmActive") private var addedAlarmActive: Bool = false
     @AppStorage("addedAlarmTimestamp")  private var addedAlarmTimestamp: Double = 0
+    @AppStorage("addedAlarmLabel") private var addedAlarmLabel: String = ""
+    @State private var showMotionDeniedAlert = false
+    @State private var showAlarmDeniedAlert = false
 
     private var addedAlarmDate: Date {
         Date(timeIntervalSince1970: addedAlarmTimestamp)
@@ -48,7 +53,7 @@ struct LuniferMain: View {
             f.dateFormat = "h:mm"
             return f.string(from: overrideTime)
         }
-        let targetMinutes = 9 * 60
+        let targetMinutes = 8 * 60
         let routineMinutes = answers.routine.auto
             ? 60
             : answers.routine.hours * 60 + answers.routine.minutes
@@ -72,7 +77,7 @@ struct LuniferMain: View {
             f.dateFormat = "a"
             return f.string(from: overrideTime)
         }
-        let targetMinutes = 9 * 60
+        let targetMinutes = 8 * 60
         let routineMinutes = answers.routine.auto
             ? 60
             : answers.routine.hours * 60 + answers.routine.minutes
@@ -88,7 +93,7 @@ struct LuniferMain: View {
     }
 
     private var calculatedAlarmDate: Date {
-        let targetMinutes = 9 * 60
+        let targetMinutes = 8 * 60
         let routineMinutes = answers.routine.auto
             ? 60
             : answers.routine.hours * 60 + answers.routine.minutes
@@ -146,7 +151,7 @@ struct LuniferMain: View {
         for _ in 0..<8 {
             if answers.wakeDays.contains(weekdayID(for: check)) {
                 // Re-derive wake minutes (same formula as wakeUpTime / wakeUpPeriod)
-                let targetMinutes  = 9 * 60
+                let targetMinutes  = 8 * 60
                 let routineMins    = answers.routine.auto ? 60 : answers.routine.hours * 60 + answers.routine.minutes
                 let commuteMins: Int = (answers.lifestyle == "student" || answers.lifestyle == "commuter")
                     ? (answers.commute.auto ? 30 : answers.commute.hours * 60 + answers.commute.minutes)
@@ -262,13 +267,57 @@ struct LuniferMain: View {
         .task {
             await SleepTracker.shared.startTracking()
             BatteryAlarmNotification.shared.startMonitoring()
+            LuniferAlarm.shared.startAdaptiveRescheduling()
             await WakeNotification.shared.schedule(wakeDate: calculatedAlarmDate, answers: answers)
+            // Request alarm authorization — waits for the user to respond
+            await LuniferAlarm.shared.requestAuthorization()
+            checkAlarmAuthorization()
+            // Small delay so the motion permission prompt has time to resolve
+            // before we check the result
+            try? await Task.sleep(nanoseconds: 500_000_000)
+            checkMotionAuthorization()
         }
         // Re-evaluate rest period every minute so the midnight transition
         // back to the alarm view happens automatically without a relaunch.
         .onReceive(Timer.publish(every: 60, on: .main, in: .common).autoconnect()) { date in
             ticker = date
         }
+        // Re-check both authorizations each time the user returns to the app
+        // (e.g. coming back from iOS Settings after granting access).
+        .onReceive(NotificationCenter.default.publisher(for: UIApplication.didBecomeActiveNotification)) { _ in
+            checkAlarmAuthorization()
+            checkMotionAuthorization()
+        }
+        .alert("Alarm Access Required", isPresented: $showAlarmDeniedAlert) {
+            Button("Open Settings") {
+                if let url = URL(string: UIApplication.openSettingsURLString) {
+                    UIApplication.shared.open(url)
+                }
+            }
+        } message: {
+            Text("Lunifer needs Alarm access to wake you up. Please tap Open Settings and allow it under Alarms & Reminders.")
+        }
+        .alert("Motion & Fitness Access Required", isPresented: $showMotionDeniedAlert) {
+            Button("Open Settings") {
+                if let url = URL(string: UIApplication.openSettingsURLString) {
+                    UIApplication.shared.open(url)
+                }
+            }
+        } message: {
+            Text("Lunifer needs Motion & Fitness access to accurately track your sleep. Please tap Open Settings and allow it under Motion & Fitness.")
+        }
+    }
+
+    private func checkAlarmAuthorization() {
+        showAlarmDeniedAlert = LuniferAlarm.shared.authorizationDenied
+    }
+
+    // Checks CoreMotion authorization and surfaces the alert if denied.
+    // Called on first load and every time the app returns to the foreground
+    // so the loop continues until the user grants access.
+    private func checkMotionAuthorization() {
+        let status = CMMotionActivityManager.authorizationStatus()
+        showMotionDeniedAlert = (status == .denied)
     }
 
     // ── MARK: Alarm page (extracted from old body) ───────
@@ -488,6 +537,14 @@ struct LuniferMain: View {
                             .padding(.horizontal, 60)
                             .padding(.top, 20)
 
+                        if !addedAlarmLabel.isEmpty {
+                            Text(addedAlarmLabel)
+                                .font(.custom("DM Sans", size: 13))
+                                .foregroundColor(Color.white.opacity(0.45))
+                                .frame(maxWidth: .infinity, alignment: .leading)
+                                .padding(.horizontal, 60)
+                        }
+
                         HStack(spacing: 0) {
                             HStack(alignment: .lastTextBaseline, spacing: 5) {
                                 Text(addedAlarmDisplayString)
@@ -496,7 +553,7 @@ struct LuniferMain: View {
                                     .monospacedDigit()
                                 Text(addedAlarmPeriod)
                                     .font(.custom("Libre Franklin", size: 40).weight(.light))
-                                    .foregroundColor(Color.white.opacity(0.50))
+                                    .foregroundColor(Color.white.opacity(0.80))
                             }
                             Spacer()
                             Button {
@@ -657,6 +714,7 @@ struct AddAlarmSheet: View {
     let onCancel: () -> Void
 
     @AppStorage("addedAlarmSound") private var addedAlarmSound: String = "DeafultAlarm.wav"
+    @AppStorage("addedAlarmLabel") private var addedAlarmLabel: String = ""
 
     var body: some View {
         NavigationStack {
@@ -699,6 +757,32 @@ struct AddAlarmSheet: View {
                         .frame(maxWidth: .infinity)
                         .padding(.horizontal, 24)
                         .padding(.vertical, 8)
+
+                    // ── Label row ─────────────────────────────
+                    HStack {
+                        Text("Label")
+                            .font(.custom("DM Sans", size: 15))
+                            .foregroundColor(Color.white.opacity(0.85))
+                        Spacer()
+                        TextField("Optional", text: $addedAlarmLabel)
+                            .font(.custom("DM Sans", size: 14))
+                            .foregroundColor(Color.white.opacity(0.55))
+                            .multilineTextAlignment(.trailing)
+                            .tint(Color(red: 0.627, green: 0.471, blue: 1.0))
+                            .submitLabel(.done)
+                    }
+                    .padding(.horizontal, 20)
+                    .padding(.vertical, 16)
+                    .background(
+                        RoundedRectangle(cornerRadius: 14)
+                            .fill(Color.white.opacity(0.04))
+                            .overlay(
+                                RoundedRectangle(cornerRadius: 14)
+                                    .stroke(Color.white.opacity(0.08), lineWidth: 1)
+                            )
+                    )
+                    .padding(.horizontal, 24)
+                    .padding(.bottom, 10)
 
                     // ── Sound row ─────────────────────────────
                     NavigationLink(destination: AddedAlarmSoundView()) {

@@ -309,6 +309,43 @@ struct LuniferIntro: View {
 }
 
 
+// ── MARK: Returning User Splash ─────────────────────────────
+// Shown to users who have already completed onboarding when they
+// open the app. Mirrors the SplashScreen moon + wordmark, then
+// auto-advances to the dashboard after a short pause.
+// Tapping anywhere skips the wait immediately.
+
+struct ReturningUserSplash: View {
+    let onFinish: () -> Void
+
+    @State private var appeared = false
+
+    var body: some View {
+        ZStack {
+            LuniferBackground()
+
+            VStack(spacing: 0) {
+                Spacer()
+
+                MoonView()
+
+                Spacer()
+            }
+            .opacity(appeared ? 1 : 0)
+            .animation(.easeIn(duration: 0.9), value: appeared)
+        }
+        .frame(maxWidth: .infinity, maxHeight: .infinity)
+        .contentShape(Rectangle())
+        .onTapGesture { onFinish() }
+        .task {
+            appeared = true
+            try? await Task.sleep(nanoseconds: 3_000_000_000)
+            onFinish()
+        }
+    }
+}
+
+
 // ── MARK: Preview ───────────────────────────────────────────
 
 #Preview("Lunifer Intro", traits: .portrait) {

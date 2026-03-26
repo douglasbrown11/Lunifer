@@ -20,6 +20,11 @@ private func friendlyAuthError(_ error: Error) -> String {
         return "Sign in was cancelled."
     }
 
+    // Microsoft / ASWebAuthenticationSession cancellation
+    if nsError.domain == "com.apple.AuthenticationServices.WebAuthenticationSession" && nsError.code == 1 {
+        return "Sign in was cancelled."
+    }
+
     switch nsError.code {
     case AuthErrorCode.emailAlreadyInUse.rawValue:
         return "An account with this email already exists."
@@ -34,23 +39,9 @@ private func friendlyAuthError(_ error: Error) -> String {
     case AuthErrorCode.tooManyRequests.rawValue:
         return "Too many attempts. Please try again later."
     default:
-        return "Something went wrong. Please try again."
+        return "Error [\(nsError.domain) \(nsError.code)]: \(nsError.localizedDescription)"
     }
 }
-
-// ── MARK: Google logo ────────────────────────────────────────
-
-
-private struct GoogleLogoView: View {
-    var body: some View {
-        Image("GoogleLogo")
-            .resizable()
-            .scaledToFit()
-            .frame(width: 20, height: 20)
-    }
-}
-    
-
 
 // ── MARK: Input field ────────────────────────────────────────
 
@@ -94,21 +85,6 @@ private struct LuniferInputField: View {
         .contentShape(Rectangle())
         .onTapGesture { focused = true }
         .animation(.easeInOut(duration: 0.2), value: focused)
-    }
-}
-
-// ── MARK: Floating moon ──────────────────────────────────────
-
-private struct FloatingMoon: View {
-    @State private var floating = false
-
-    var body: some View {
-        Image(systemName: "moon.stars.fill")
-            .font(.system(size: 28))
-            .foregroundColor(Color.white.opacity(0.85))
-            .offset(y: floating ? -8 : 0)
-            .animation(.easeInOut(duration: 3).repeatForever(autoreverses: true), value: floating)
-            .onAppear { floating = true }
     }
 }
 
@@ -231,6 +207,24 @@ struct LuniferAuth: View {
                         )
                     }
                     .disabled(loading)
+                    .padding(.bottom, 12)
+
+                    // ── Outlook button ───────────────────────
+                    Button { handleMicrosoftSignIn() } label: {
+                        HStack(spacing: 10) {
+                            MicrosoftLogoView()
+                            Text("Continue with Outlook")
+                                .font(.custom("DM Sans", size: 15))
+                                .foregroundColor(Color.white.opacity(0.8))
+                        }
+                        .frame(maxWidth: .infinity)
+                        .frame(height: 50)
+                        .background(
+                            RoundedRectangle(cornerRadius: 12)
+                                .fill(Color.white.opacity(0.06))
+                        )
+                    }
+                    .disabled(loading)
                     .padding(.bottom, 24)
 
                     // ── Toggle mode ──────────────────────────
@@ -277,6 +271,67 @@ struct LuniferAuth: View {
                 } else {
                     try await Auth.auth().signIn(withEmail: email, password: password)
                 }
+                onSignedIn()
+            } catch {
+                errorMessage = friendlyAuthError(error)
+            }
+            loading = false
+        }
+    }
+
+    // ── MARK: Microsoft sign-in ──────────────────────────────
+    // SETUP REQUIRED before this works:
+    //   1. Firebase Console → Authentication → Sign-in method → Add provider → Microsoft
+    //      Paste in your Azure Application (client) ID and set the redirect URI.
+    //   2. Azure Portal → App registrations → New registration
+    //      • Supported account types: "Accounts in any org + personal Microsoft accounts"
+    //      • Redirect URI: the custom scheme Firebase gives you (e.g. msauth.<bundle-id>://auth)
+    //      • Add API permission: Calendars.Read (Microsoft Graph, Delegated)
+    //   3. In Azure, copy the Application (client) ID into Firebase Console.
+
+    private func handleMicrosoftSignIn() {
+        Task { @MainActor in
+            loading = true
+            errorMessage = nil
+
+            guard let windowScene = UIApplication.shared.connectedScenes
+                .compactMap({ $0 as? UIWindowScene })
+                .first(where: { $0.activationState == .foregroundActive }),
+                  let window = windowScene.windows.first(where: { $0.isKeyWindow }),
+                  let rootVC = window.rootViewController else {
+                errorMessage = "Unable to present sign in. Please try again."
+                loading = false
+                return
+            }
+            var presentingVC = rootVC
+            while let presented = presentingVC.presentedViewController {
+                presentingVC = presented
+            }
+
+            let provider = OAuthProvider(providerID: "microsoft.com")
+            provider.scopes = ["email", "profile", "openid"]
+            // prompt=select_account forces the account picker even if already signed in
+            provider.customParameters = ["prompt": "select_account"]
+
+            do {
+                // Firebase presents Microsoft's OAuth web page via ASWebAuthenticationSession.
+                // The callback fires after the user signs in or cancels.
+                let credential = try await withCheckedThrowingContinuation { (continuation: CheckedContinuation<AuthCredential, Error>) in
+                    provider.getCredentialWith(presentingVC as? AuthUIDelegate) { credential, error in
+                        if let error {
+                            continuation.resume(throwing: error)
+                        } else if let credential {
+                            continuation.resume(returning: credential)
+                        } else {
+                            continuation.resume(throwing: NSError(
+                                domain: "LuniferAuth",
+                                code: -1,
+                                userInfo: [NSLocalizedDescriptionKey: "No credential returned."]
+                            ))
+                        }
+                    }
+                }
+                try await Auth.auth().signIn(with: credential)
                 onSignedIn()
             } catch {
                 errorMessage = friendlyAuthError(error)
