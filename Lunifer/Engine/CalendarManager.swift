@@ -157,6 +157,19 @@ final class CalendarManager: ObservableObject {
             .first
     }
 
+    /// The earliest non-all-day event tomorrow, or nil if none.
+    /// This is the primary input for Lunifer's calendar-driven alarm calculation.
+    var firstEventTomorrow: CalendarEvent? {
+        let cal = Calendar.current
+        guard let tomorrow = cal.date(byAdding: .day, value: 1, to: cal.startOfDay(for: Date())),
+              let dayEnd   = cal.date(byAdding: .day, value: 1, to: tomorrow) else { return nil }
+
+        return (todayEvents + upcomingEvents)
+            .filter { !$0.isAllDay && $0.startDate >= tomorrow && $0.startDate < dayEnd }
+            .sorted { $0.startDate < $1.startDate }
+            .first
+    }
+
     // MARK: Private Helpers
 
     private func fetchEKEvents(from start: Date, to end: Date) -> [EKEvent] {

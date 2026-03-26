@@ -2,7 +2,7 @@ import SwiftUI
 import FirebaseAuth
 
 enum AppScreen {
-    case intro, auth, survey, dashboard
+    case intro, auth, survey, splash, dashboard
 }
 
 struct ContentView: View {
@@ -24,8 +24,14 @@ struct ContentView: View {
                     surveyAnswers = answers
                     screen = .dashboard
                 })
+            case .splash:
+                ReturningUserSplash(onFinish: {
+                    withAnimation(.easeInOut(duration: 0.7)) { screen = .dashboard }
+                })
+                .transition(.opacity)
             case .dashboard:
                 LuniferMain(answers: $surveyAnswers)
+                    .transition(.opacity)
             }
         }
         .frame(maxWidth: .infinity, maxHeight: .infinity)
@@ -34,7 +40,7 @@ struct ContentView: View {
                 authStateHandle = Auth.auth().addStateDidChangeListener { _, user in
                     if user != nil, surveyCompleted, let saved = SurveyAnswers.loadFromDefaults() {
                         surveyAnswers = saved
-                        screen = .dashboard
+                        screen = .splash
                     } else if user == nil, surveyCompleted {
                         screen = .auth
                     }
@@ -45,7 +51,7 @@ struct ContentView: View {
                Auth.auth().currentUser != nil,
                let saved = SurveyAnswers.loadFromDefaults() {
                 surveyAnswers = saved
-                screen = .dashboard
+                screen = .splash
             }
         }
         .onDisappear {
