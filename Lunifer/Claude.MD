@@ -198,3 +198,7 @@ Not currently present:
   - `SurveyAnswersStore.saveInitialProfile(_:)`
   - incremental sync payload in `SurveyAnswersStore.syncProfile(_:)`
   - any settings screens that edit those answers
+- If you add, remove, or rename any `@AppStorage` / `UserDefaults` key anywhere in the codebase, you MUST also:
+  - Add or remove the corresponding static key in `AppPreferencesStore.Keys` (`Data/AppPreferencesStore.swift`)
+  - If the value is account-scoped (i.e. it should be wiped on sign out or account deletion), add a reset call inside the appropriate reset method in `AppPreferencesStore` and make sure `AccountDataManager.clearLocalAccountData()` calls it
+  - If the value is sensitive or user-specific (e.g. location, personal preferences), ensure it is cleared on sign out so it does not leak to a subsequent user on the same device
