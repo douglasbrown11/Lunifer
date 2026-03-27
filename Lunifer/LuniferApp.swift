@@ -47,7 +47,7 @@ struct LuniferApp: App {
                 // the app a URL — this passes it to Google Sign In to complete the flow.
                 .onOpenURL { url in
                     GIDSignIn.sharedInstance.handle(url)
-                    Auth.auth().canHandle(url)
+                    _ = Auth.auth().canHandle(url)
                 }
         }
     }
