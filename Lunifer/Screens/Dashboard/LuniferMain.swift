@@ -265,6 +265,11 @@ struct LuniferMain: View {
             SoundSettingsView()
         }
         .task {
+            // Clear a stale added alarm card if its fire time has already passed.
+            if addedAlarmActive && addedAlarmDate < Date() {
+                addedAlarmActive = false
+                addedAlarmTimestamp = 0
+            }
             await SleepTracker.shared.startTracking()
             BatteryAlarmNotification.shared.startMonitoring()
             LuniferAlarm.shared.startAdaptiveRescheduling()
@@ -335,8 +340,10 @@ struct LuniferMain: View {
                     Button {
                         if addAlarmTapped {
                             // Already showing label — open the sheet
+                            // Default to 1 hour from now so the picker always starts
+                            // at a valid future time rather than a fixed 8:00 AM.
                             addedAlarmPickerTime = Calendar.current.date(
-                                bySettingHour: 8, minute: 0, second: 0, of: Date()
+                                byAdding: .hour, value: 1, to: Date()
                             ) ?? Date()
                             showAddAlarmSheet = true
                         } else {
@@ -552,7 +559,7 @@ struct LuniferMain: View {
                                     .foregroundColor(Color.white.opacity(0.80))
                                     .monospacedDigit()
                                 Text(addedAlarmPeriod)
-                                    .font(.custom("Libre Franklin", size: 40).weight(.light))
+                                    .font(.custom("Libre Franklin", size: 37).weight(.light))
                                     .foregroundColor(Color.white.opacity(0.80))
                             }
                             Spacer()

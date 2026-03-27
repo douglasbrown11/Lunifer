@@ -39,7 +39,7 @@ private func friendlyAuthError(_ error: Error) -> String {
     case AuthErrorCode.tooManyRequests.rawValue:
         return "Too many attempts. Please try again later."
     default:
-        return "Error [\(nsError.domain) \(nsError.code)]: \(nsError.localizedDescription)"
+        return "Something went wrong. Please try again."
     }
 }
 
