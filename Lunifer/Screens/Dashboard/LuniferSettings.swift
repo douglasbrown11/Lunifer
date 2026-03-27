@@ -2,6 +2,7 @@ import SwiftUI
 import UIKit
 import MapKit
 import CoreLocation
+import Combine
 import FirebaseAuth
 import FirebaseFirestore
 import GoogleSignIn
@@ -335,28 +336,14 @@ struct AboutYouSettingsView: View {
     @State private var editingField: String? = nil
 
     // ── Home location persistence ─────────────────────────────
-    @AppStorage("homeLatitude")    private var homeLatitude: Double = 0
-    @AppStorage("homeLongitude")   private var homeLongitude: Double = 0
-    @AppStorage("homeLocationSet") private var homeLocationSet: Bool = false
+    @AppStorage("homeLocationSet")  private var homeLocationSet: Bool = false
     @AppStorage("homeLocationName") private var homeLocationName: String = ""
-    @State private var homeMapPosition: MapCameraPosition = .automatic
-    @State private var isGeocodingHome: Bool = false
+    @State private var showHomeSheet = false
 
     private var homeLocationDisplayName: String {
         if homeLocationSet && !homeLocationName.isEmpty { return homeLocationName }
         if homeLocationSet { return "Location set" }
         return "Learning your location..."
-    }
-
-    private func reverseGeocode(coordinate: CLLocationCoordinate2D) {
-        isGeocodingHome = true
-        CLGeocoder().reverseGeocodeLocation(CLLocation(latitude: coordinate.latitude, longitude: coordinate.longitude)) { placemarks, _ in
-            isGeocodingHome = false
-            if let p = placemarks?.first {
-                let name = [p.locality, p.administrativeArea].compactMap { $0 }.joined(separator: ", ")
-                homeLocationName = name.isEmpty ? "Unknown location" : name
-            }
-        }
     }
 
     private var lifestyleLabel: String {
@@ -432,6 +419,12 @@ struct AboutYouSettingsView: View {
             }
         }
         .toolbar(.hidden, for: .navigationBar)
+        .sheet(isPresented: $showHomeSheet) {
+            HomeLocationSheet()
+                .presentationDetents([.large])
+                .presentationDragIndicator(.hidden)
+                .presentationBackground(Color(red: 0.06, green: 0.03, blue: 0.14))
+        }
         .onChange(of: answers.age) { _, _ in
             answers.saveToDefaults()
             answers.saveToFirestore()
@@ -448,88 +441,29 @@ struct AboutYouSettingsView: View {
 
     @ViewBuilder
     private func homeLocationRow() -> some View {
-        VStack(spacing: 0) {
-            HStack {
-                Text("Home")
-                    .font(.custom("DM Sans", size: 14))
-                    .foregroundColor(Color.white.opacity(0.45))
+        HStack {
+            Text("Home")
+                .font(.custom("DM Sans", size: 14))
+                .foregroundColor(Color.white.opacity(0.45))
 
-                Text(homeLocationDisplayName)
-                    .font(.custom("DM Sans", size: 14))
-                    .foregroundColor(homeLocationSet ? Color.white.opacity(0.85) : Color.white.opacity(0.35))
-                    .padding(.leading, 12)
-
-                Spacer()
-
-                Button {
-                    withAnimation(.easeInOut(duration: 0.25)) {
-                        if editingField == "home" {
-                            editingField = nil
-                        } else {
-                            editingField = "home"
-                            if homeLocationSet {
-                                homeMapPosition = .region(MKCoordinateRegion(
-                                    center: CLLocationCoordinate2D(latitude: homeLatitude, longitude: homeLongitude),
-                                    span: MKCoordinateSpan(latitudeDelta: 0.05, longitudeDelta: 0.05)
-                                ))
-                            }
-                        }
-                    }
-                } label: {
-                    Text(editingField == "home" ? "Done" : (homeLocationSet ? "Change" : "Set"))
-                        .font(.custom("DM Sans", size: 13))
-                        .foregroundColor(Color(red: 0.627, green: 0.471, blue: 1.0))
-                }
+            Text(homeLocationDisplayName)
+                .font(.custom("DM Sans", size: 14))
+                .foregroundColor(homeLocationSet ? Color.white.opacity(0.85) : Color.white.opacity(0.35))
                 .padding(.leading, 12)
+
+            Spacer()
+
+            Button {
+                showHomeSheet = true
+            } label: {
+                Text(homeLocationSet ? "Change" : "Set")
+                    .font(.custom("DM Sans", size: 13))
+                    .foregroundColor(Color(red: 0.627, green: 0.471, blue: 1.0))
             }
-            .padding(.horizontal, 16)
-            .padding(.vertical, 14)
-
-            if editingField == "home" {
-                Divider()
-                    .background(Color.white.opacity(0.06))
-
-                VStack(spacing: 8) {
-                    Text("Tap the map to set your home location")
-                        .font(.custom("DM Sans", size: 12))
-                        .foregroundColor(Color.white.opacity(0.4))
-                        .frame(maxWidth: .infinity, alignment: .leading)
-                        .padding(.horizontal, 4)
-
-                    MapReader { proxy in
-                        Map(position: $homeMapPosition) {
-                            if homeLocationSet {
-                                Marker("Home", coordinate: CLLocationCoordinate2D(latitude: homeLatitude, longitude: homeLongitude))
-                                    .tint(Color(red: 0.627, green: 0.471, blue: 1.0))
-                            }
-                        }
-                        .frame(height: 200)
-                        .clipShape(RoundedRectangle(cornerRadius: 10))
-                        .onTapGesture { screenPoint in
-                            if let coord = proxy.convert(screenPoint, from: .local) {
-                                homeLatitude = coord.latitude
-                                homeLongitude = coord.longitude
-                                homeLocationSet = true
-                                homeMapPosition = .region(MKCoordinateRegion(
-                                    center: coord,
-                                    span: MKCoordinateSpan(latitudeDelta: 0.05, longitudeDelta: 0.05)
-                                ))
-                                reverseGeocode(coordinate: coord)
-                            }
-                        }
-                    }
-
-                    if isGeocodingHome {
-                        Text("Finding location...")
-                            .font(.custom("DM Sans", size: 12))
-                            .foregroundColor(Color.white.opacity(0.4))
-                    }
-                }
-                .padding(.horizontal, 16)
-                .padding(.vertical, 12)
-                .transition(.opacity.combined(with: .offset(y: -6)))
-            }
+            .padding(.leading, 12)
         }
+        .padding(.horizontal, 16)
+        .padding(.vertical, 14)
     }
 
     @ViewBuilder
@@ -674,6 +608,257 @@ struct AboutYouSettingsView: View {
                 .transition(.opacity.combined(with: .offset(y: -6)))
             }
         }
+    }
+}
+
+// ── MARK: Home Location Search Completer ───────────────────────
+
+final class HomeLocationSearchCompleter: NSObject, ObservableObject, MKLocalSearchCompleterDelegate {
+    @Published var results: [MKLocalSearchCompletion] = []
+    @Published var searchText: String = "" {
+        didSet { completer.queryFragment = searchText }
+    }
+
+    private let completer = MKLocalSearchCompleter()
+
+    override init() {
+        super.init()
+        completer.delegate = self
+        completer.resultTypes = .address
+    }
+
+    func completerDidUpdateResults(_ completer: MKLocalSearchCompleter) {
+        results = completer.results
+    }
+
+    func completer(_ completer: MKLocalSearchCompleter, didFailWithError error: Error) {
+        results = []
+    }
+}
+
+// ── MARK: Home Location Sheet ──────────────────────────────────
+
+struct HomeLocationSheet: View {
+    @Environment(\.dismiss) private var dismiss
+
+    @AppStorage("homeLatitude")    private var homeLatitude: Double = 0
+    @AppStorage("homeLongitude")   private var homeLongitude: Double = 0
+    @AppStorage("homeLocationSet") private var homeLocationSet: Bool = false
+    @AppStorage("homeLocationName") private var homeLocationName: String = ""
+
+    @StateObject private var completer = HomeLocationSearchCompleter()
+    @State private var mapPosition: MapCameraPosition = .automatic
+    @State private var selectedCoordinate: CLLocationCoordinate2D? = nil
+    @State private var selectedAddress: String = ""
+    @FocusState private var searchFocused: Bool
+
+    var body: some View {
+        ZStack {
+            Color(red: 0.06, green: 0.03, blue: 0.14).ignoresSafeArea()
+
+            VStack(spacing: 0) {
+                // ── Handle ────────────────────────────────
+                RoundedRectangle(cornerRadius: 2)
+                    .fill(Color.white.opacity(0.15))
+                    .frame(width: 36, height: 4)
+                    .padding(.top, 10)
+                    .padding(.bottom, 14)
+
+                // ── Title ─────────────────────────────────
+                Text("Set Home Location")
+                    .font(.custom("Cormorant Garamond", size: 26).weight(.light))
+                    .foregroundColor(Color.white.opacity(0.9))
+                    .padding(.bottom, 14)
+
+                Rectangle()
+                    .fill(Color.white.opacity(0.95))
+                    .frame(height: 1)
+                    .padding(.horizontal, 32)
+                    .padding(.bottom, 14)
+
+                // ── Search bar ────────────────────────────
+                HStack(spacing: 10) {
+                    Image(systemName: "magnifyingglass")
+                        .font(.system(size: 14, weight: .light))
+                        .foregroundColor(Color.white.opacity(0.35))
+                    TextField("Search address...", text: $completer.searchText)
+                        .font(.custom("DM Sans", size: 14))
+                        .foregroundColor(Color.white.opacity(0.85))
+                        .tint(Color(red: 0.627, green: 0.471, blue: 1.0))
+                        .focused($searchFocused)
+                        .submitLabel(.search)
+                    if !completer.searchText.isEmpty {
+                        Button {
+                            completer.searchText = ""
+                            selectedCoordinate = nil
+                            selectedAddress = ""
+                        } label: {
+                            Image(systemName: "xmark.circle.fill")
+                                .font(.system(size: 14))
+                                .foregroundColor(Color.white.opacity(0.3))
+                        }
+                    }
+                }
+                .padding(.horizontal, 14)
+                .padding(.vertical, 11)
+                .background(
+                    RoundedRectangle(cornerRadius: 10)
+                        .fill(Color.white.opacity(0.07))
+                        .overlay(RoundedRectangle(cornerRadius: 10).stroke(Color.white.opacity(0.1), lineWidth: 1))
+                )
+                .padding(.horizontal, 16)
+                .padding(.bottom, 8)
+
+                // ── Suggestions ───────────────────────────
+                if !completer.results.isEmpty && !completer.searchText.isEmpty {
+                    ScrollView(showsIndicators: false) {
+                        VStack(spacing: 0) {
+                            ForEach(Array(completer.results.prefix(4).enumerated()), id: \.offset) { index, result in
+                                Button {
+                                    selectSuggestion(result)
+                                } label: {
+                                    HStack(spacing: 10) {
+                                        Image(systemName: "mappin")
+                                            .font(.system(size: 11, weight: .light))
+                                            .foregroundColor(Color.white.opacity(0.25))
+                                            .frame(width: 16)
+                                        VStack(alignment: .leading, spacing: 2) {
+                                            Text(result.title)
+                                                .font(.custom("DM Sans", size: 13))
+                                                .foregroundColor(Color.white.opacity(0.85))
+                                                .lineLimit(1)
+                                                .frame(maxWidth: .infinity, alignment: .leading)
+                                            if !result.subtitle.isEmpty {
+                                                Text(result.subtitle)
+                                                    .font(.custom("DM Sans", size: 11))
+                                                    .foregroundColor(Color.white.opacity(0.35))
+                                                    .lineLimit(1)
+                                            }
+                                        }
+                                    }
+                                    .padding(.horizontal, 14)
+                                    .padding(.vertical, 10)
+                                }
+                                .buttonStyle(.plain)
+                                if index < min(completer.results.count, 4) - 1 {
+                                    Divider()
+                                        .background(Color.white.opacity(0.05))
+                                        .padding(.leading, 40)
+                                }
+                            }
+                        }
+                        .background(
+                            RoundedRectangle(cornerRadius: 10)
+                                .fill(Color.white.opacity(0.04))
+                                .overlay(RoundedRectangle(cornerRadius: 10).stroke(Color.white.opacity(0.08), lineWidth: 1))
+                        )
+                        .padding(.horizontal, 16)
+                    }
+                    .frame(maxHeight: 180)
+                    .padding(.bottom, 8)
+                }
+
+                // ── Map ───────────────────────────────────
+                ZStack(alignment: .bottom) {
+                    Map(position: $mapPosition) {
+                        if let coord = selectedCoordinate {
+                            Marker("Home", coordinate: coord)
+                                .tint(Color(red: 0.627, green: 0.471, blue: 1.0))
+                        }
+                    }
+                    .colorScheme(.dark)
+                    .ignoresSafeArea(edges: .bottom)
+
+                    if selectedCoordinate != nil {
+                        VStack(spacing: 0) {
+                            LinearGradient(
+                                colors: [
+                                    Color(red: 0.06, green: 0.03, blue: 0.14).opacity(0),
+                                    Color(red: 0.06, green: 0.03, blue: 0.14).opacity(0.96)
+                                ],
+                                startPoint: .top, endPoint: .bottom
+                            )
+                            .frame(height: 56)
+
+                            VStack(spacing: 8) {
+                                if !selectedAddress.isEmpty {
+                                    Text(selectedAddress)
+                                        .font(.custom("DM Sans", size: 12))
+                                        .foregroundColor(Color.white.opacity(0.55))
+                                        .multilineTextAlignment(.center)
+                                        .padding(.horizontal, 24)
+                                }
+                                Button {
+                                    confirmLocation()
+                                } label: {
+                                    Text("Confirm Home")
+                                        .font(.custom("DM Sans", size: 15).weight(.medium))
+                                        .foregroundColor(.white)
+                                        .frame(maxWidth: .infinity)
+                                        .frame(height: 52)
+                                        .background(
+                                            RoundedRectangle(cornerRadius: 14)
+                                                .fill(LinearGradient(
+                                                    colors: [
+                                                        Color(red: 0.471, green: 0.314, blue: 0.863).opacity(0.9),
+                                                        Color(red: 0.314, green: 0.196, blue: 0.706).opacity(0.9)
+                                                    ],
+                                                    startPoint: .topLeading,
+                                                    endPoint: .bottomTrailing
+                                                ))
+                                        )
+                                }
+                                .buttonStyle(.plain)
+                                .padding(.horizontal, 16)
+                                .padding(.bottom, 36)
+                            }
+                            .background(Color(red: 0.06, green: 0.03, blue: 0.14).opacity(0.96))
+                        }
+                        .transition(.opacity)
+                    }
+                }
+            }
+        }
+        .onAppear {
+            if homeLocationSet {
+                let coord = CLLocationCoordinate2D(latitude: homeLatitude, longitude: homeLongitude)
+                selectedCoordinate = coord
+                selectedAddress = homeLocationName
+                completer.searchText = homeLocationName
+                mapPosition = .region(MKCoordinateRegion(
+                    center: coord,
+                    span: MKCoordinateSpan(latitudeDelta: 0.05, longitudeDelta: 0.05)
+                ))
+            } else {
+                mapPosition = .userLocation(fallback: .automatic)
+            }
+        }
+    }
+
+    private func selectSuggestion(_ result: MKLocalSearchCompletion) {
+        searchFocused = false
+        let request = MKLocalSearch.Request(completion: result)
+        MKLocalSearch(request: request).start { response, _ in
+            guard let item = response?.mapItems.first else { return }
+            let coord = item.placemark.coordinate
+            selectedCoordinate = coord
+            selectedAddress = [result.title, result.subtitle].filter { !$0.isEmpty }.joined(separator: ", ")
+            withAnimation {
+                mapPosition = .region(MKCoordinateRegion(
+                    center: coord,
+                    span: MKCoordinateSpan(latitudeDelta: 0.05, longitudeDelta: 0.05)
+                ))
+            }
+        }
+    }
+
+    private func confirmLocation() {
+        guard let coord = selectedCoordinate else { return }
+        homeLatitude = coord.latitude
+        homeLongitude = coord.longitude
+        homeLocationSet = true
+        homeLocationName = selectedAddress
+        dismiss()
     }
 }
 
