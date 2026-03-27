@@ -14,7 +14,8 @@ struct LuniferMain: View {
     @State private var currentPage: Int = 1
     @State private var alarmExpanded = false
     @State private var overrideTime = Date()
-    @State private var overrideActive = false
+    @AppStorage("overrideActive") private var overrideActive: Bool = false
+    @AppStorage("overrideTimestamp") private var overrideTimestamp: Double = 0
     @AppStorage("luniferEnabled") private var luniferEnabled: Bool = true
     @AppStorage("selectedAlarmSound") private var selectedAlarmSound: String = "DeafultAlarm.wav"
     /// Ticks every minute so rest-period checks re-evaluate automatically,
@@ -265,6 +266,16 @@ struct LuniferMain: View {
             SoundSettingsView()
         }
         .task {
+            // Restore persisted override time, or clear it if the alarm has already passed.
+            if overrideActive && overrideTimestamp > 0 {
+                let savedTime = Date(timeIntervalSince1970: overrideTimestamp)
+                if savedTime < Date() {
+                    overrideActive = false
+                    overrideTimestamp = 0
+                } else {
+                    overrideTime = savedTime
+                }
+            }
             // Clear a stale added alarm card if its fire time has already passed.
             if addedAlarmActive && addedAlarmDate < Date() {
                 addedAlarmActive = false
@@ -445,7 +456,9 @@ struct LuniferMain: View {
                     .onTapGesture {
                         withAnimation(.easeInOut(duration: 0.3)) {
                             if !alarmExpanded {
-                                overrideTime = calculatedAlarmDate
+                                if !overrideActive {
+                                    overrideTime = calculatedAlarmDate
+                                }
                                 overrideActive = true
                             }
                             alarmExpanded.toggle()
@@ -527,6 +540,7 @@ struct LuniferMain: View {
                 .transition(.opacity)
                 .onChange(of: overrideTime) { _, newTime in
                     guard overrideActive else { return }
+                    overrideTimestamp = newTime.timeIntervalSince1970
                     Task {
                         await LuniferAlarm.shared.scheduleAlarm(for: newTime)
                         await WakeNotification.shared.schedule(wakeDate: newTime, answers: answers)
