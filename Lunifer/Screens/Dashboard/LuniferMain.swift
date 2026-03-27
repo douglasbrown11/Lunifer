@@ -280,6 +280,7 @@ struct LuniferMain: View {
             if addedAlarmActive && addedAlarmDate < Date() {
                 addedAlarmActive = false
                 addedAlarmTimestamp = 0
+                addedAlarmLabel = ""
             }
             await SleepTracker.shared.startTracking()
             BatteryAlarmNotification.shared.startMonitoring()
@@ -581,6 +582,7 @@ struct LuniferMain: View {
                                 withAnimation(.easeInOut(duration: 0.25)) {
                                     addedAlarmActive = false
                                 }
+                                addedAlarmLabel = ""
                                 Task { await LuniferAlarm.shared.cancelAddedAlarm() }
                             } label: {
                                 Image(systemName: "xmark")
