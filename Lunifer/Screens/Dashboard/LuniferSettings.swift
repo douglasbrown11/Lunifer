@@ -1,5 +1,7 @@
 import SwiftUI
 import UIKit
+import MapKit
+import CoreLocation
 import FirebaseAuth
 import FirebaseFirestore
 import GoogleSignIn
@@ -9,7 +11,6 @@ import GoogleSignIn
 struct LuniferSettings: View {
     @Binding var answers: SurveyAnswers
     @Environment(\.dismiss) private var dismiss
-    @AppStorage("snoozeMinutes") private var snoozeMinutes: Int = 5
     @AppStorage("surveyCompleted") private var surveyCompleted = false
     @State private var showSignOutAlert = false
     @State private var showDeleteAlert = false
@@ -66,31 +67,6 @@ struct LuniferSettings: View {
                                 WakeDaysSettingsView(answers: $answers)
                             } label: {
                                 settingsNavRow(title: "Wake Days")
-                            }
-
-                            // ── Snooze inline ─────────────────
-                            SettingsSection(title: "Snooze Time") {
-                                VStack(spacing: 12) {
-                                    HStack {
-                                        Spacer()
-                                        Text("\(snoozeMinutes) min")
-                                            .font(.custom("DM Sans", size: 14))
-                                            .foregroundColor(Color(red: 0.706, green: 0.588, blue: 0.902))
-                                            .monospacedDigit()
-                                    }
-                                    Slider(value: Binding(
-                                        get: { Double(snoozeMinutes) },
-                                        set: { snoozeMinutes = Int($0.rounded()) }
-                                    ), in: 1...30, step: 1)
-                                    .tint(Color(red: 0.627, green: 0.471, blue: 1.0))
-                                    HStack {
-                                        Text("1 min")
-                                        Spacer()
-                                        Text("30 min")
-                                    }
-                                    .font(.custom("DM Sans", size: 11))
-                                    .foregroundColor(Color.white.opacity(0.2))
-                                }
                             }
 
                             // ── Account ───────────────────────
@@ -358,6 +334,31 @@ struct AboutYouSettingsView: View {
     @Environment(\.dismiss) private var dismiss
     @State private var editingField: String? = nil
 
+    // ── Home location persistence ─────────────────────────────
+    @AppStorage("homeLatitude")    private var homeLatitude: Double = 0
+    @AppStorage("homeLongitude")   private var homeLongitude: Double = 0
+    @AppStorage("homeLocationSet") private var homeLocationSet: Bool = false
+    @AppStorage("homeLocationName") private var homeLocationName: String = ""
+    @State private var homeMapPosition: MapCameraPosition = .automatic
+    @State private var isGeocodingHome: Bool = false
+
+    private var homeLocationDisplayName: String {
+        if homeLocationSet && !homeLocationName.isEmpty { return homeLocationName }
+        if homeLocationSet { return "Location set" }
+        return "Learning your location..."
+    }
+
+    private func reverseGeocode(coordinate: CLLocationCoordinate2D) {
+        isGeocodingHome = true
+        CLGeocoder().reverseGeocodeLocation(CLLocation(latitude: coordinate.latitude, longitude: coordinate.longitude)) { placemarks, _ in
+            isGeocodingHome = false
+            if let p = placemarks?.first {
+                let name = [p.locality, p.administrativeArea].compactMap { $0 }.joined(separator: ", ")
+                homeLocationName = name.isEmpty ? "Unknown location" : name
+            }
+        }
+    }
+
     private var lifestyleLabel: String {
         switch answers.lifestyle {
         case "student": return "Student"
@@ -412,6 +413,10 @@ struct AboutYouSettingsView: View {
                             .background(Color.white.opacity(0.08))
                             .padding(.leading, 16)
                         aboutYouRow(label: "Calendar", value: calendarLabel, field: "calendar")
+                        Divider()
+                            .background(Color.white.opacity(0.08))
+                            .padding(.leading, 16)
+                        homeLocationRow()
                     }
                     .background(
                         RoundedRectangle(cornerRadius: 12)
@@ -438,6 +443,92 @@ struct AboutYouSettingsView: View {
         .onChange(of: answers.calendar) { _, _ in
             answers.saveToDefaults()
             answers.saveToFirestore()
+        }
+    }
+
+    @ViewBuilder
+    private func homeLocationRow() -> some View {
+        VStack(spacing: 0) {
+            HStack {
+                Text("Home")
+                    .font(.custom("DM Sans", size: 14))
+                    .foregroundColor(Color.white.opacity(0.45))
+
+                Text(homeLocationDisplayName)
+                    .font(.custom("DM Sans", size: 14))
+                    .foregroundColor(homeLocationSet ? Color.white.opacity(0.85) : Color.white.opacity(0.35))
+                    .padding(.leading, 12)
+
+                Spacer()
+
+                Button {
+                    withAnimation(.easeInOut(duration: 0.25)) {
+                        if editingField == "home" {
+                            editingField = nil
+                        } else {
+                            editingField = "home"
+                            if homeLocationSet {
+                                homeMapPosition = .region(MKCoordinateRegion(
+                                    center: CLLocationCoordinate2D(latitude: homeLatitude, longitude: homeLongitude),
+                                    span: MKCoordinateSpan(latitudeDelta: 0.05, longitudeDelta: 0.05)
+                                ))
+                            }
+                        }
+                    }
+                } label: {
+                    Text(editingField == "home" ? "Done" : (homeLocationSet ? "Change" : "Set"))
+                        .font(.custom("DM Sans", size: 13))
+                        .foregroundColor(Color(red: 0.627, green: 0.471, blue: 1.0))
+                }
+                .padding(.leading, 12)
+            }
+            .padding(.horizontal, 16)
+            .padding(.vertical, 14)
+
+            if editingField == "home" {
+                Divider()
+                    .background(Color.white.opacity(0.06))
+
+                VStack(spacing: 8) {
+                    Text("Tap the map to set your home location")
+                        .font(.custom("DM Sans", size: 12))
+                        .foregroundColor(Color.white.opacity(0.4))
+                        .frame(maxWidth: .infinity, alignment: .leading)
+                        .padding(.horizontal, 4)
+
+                    MapReader { proxy in
+                        Map(position: $homeMapPosition) {
+                            if homeLocationSet {
+                                Marker("Home", coordinate: CLLocationCoordinate2D(latitude: homeLatitude, longitude: homeLongitude))
+                                    .tint(Color(red: 0.627, green: 0.471, blue: 1.0))
+                            }
+                        }
+                        .frame(height: 200)
+                        .clipShape(RoundedRectangle(cornerRadius: 10))
+                        .onTapGesture { screenPoint in
+                            if let coord = proxy.convert(screenPoint, from: .local) {
+                                homeLatitude = coord.latitude
+                                homeLongitude = coord.longitude
+                                homeLocationSet = true
+                                homeMapPosition = .region(MKCoordinateRegion(
+                                    center: coord,
+                                    span: MKCoordinateSpan(latitudeDelta: 0.05, longitudeDelta: 0.05)
+                                ))
+                                reverseGeocode(coordinate: coord)
+                            }
+                        }
+                    }
+
+                    if isGeocodingHome {
+                        Text("Finding location...")
+                            .font(.custom("DM Sans", size: 12))
+                            .foregroundColor(Color.white.opacity(0.4))
+                    }
+                }
+                .padding(.horizontal, 16)
+                .padding(.vertical, 12)
+                .transition(.opacity.combined(with: .offset(y: -6)))
+            }
         }
     }
 

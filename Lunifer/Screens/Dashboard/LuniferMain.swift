@@ -18,6 +18,7 @@ struct LuniferMain: View {
     @AppStorage("overrideTimestamp") private var overrideTimestamp: Double = 0
     @AppStorage("luniferEnabled") private var luniferEnabled: Bool = true
     @AppStorage("selectedAlarmSound") private var selectedAlarmSound: String = "DeafultAlarm.wav"
+    @AppStorage("snoozeMinutes") private var snoozeMinutes: Int = 5
     /// Ticks every minute so rest-period checks re-evaluate automatically,
     /// including the midnight transition back to the alarm view.
     @State private var ticker = Date()
@@ -529,6 +530,42 @@ struct LuniferMain: View {
                                 )
                             }
                             .buttonStyle(.plain)
+
+                            // ── Snooze row ────────────────────────
+                            VStack(spacing: 8) {
+                                HStack {
+                                    Text("Snooze")
+                                        .font(.custom("DM Sans", size: 14))
+                                        .foregroundColor(Color.white.opacity(0.85))
+                                    Spacer()
+                                    Text("\(snoozeMinutes) min")
+                                        .font(.custom("DM Sans", size: 13))
+                                        .foregroundColor(Color(red: 0.706, green: 0.588, blue: 0.902))
+                                        .monospacedDigit()
+                                }
+                                Slider(value: Binding(
+                                    get: { Double(snoozeMinutes) },
+                                    set: { snoozeMinutes = Int($0.rounded()) }
+                                ), in: 1...30, step: 1)
+                                .tint(Color(red: 0.627, green: 0.471, blue: 1.0))
+                                HStack {
+                                    Text("1 min")
+                                    Spacer()
+                                    Text("30 min")
+                                }
+                                .font(.custom("DM Sans", size: 11))
+                                .foregroundColor(Color.white.opacity(0.2))
+                            }
+                            .padding(.horizontal, 16)
+                            .padding(.vertical, 14)
+                            .background(
+                                RoundedRectangle(cornerRadius: 12)
+                                    .fill(Color.white.opacity(0.04))
+                                    .overlay(
+                                        RoundedRectangle(cornerRadius: 12)
+                                            .stroke(Color.white.opacity(0.08), lineWidth: 1)
+                                    )
+                            )
                         }
                         .padding(.vertical, 12)
                         .padding(.horizontal, 45)
@@ -736,6 +773,7 @@ struct AddAlarmSheet: View {
 
     @AppStorage("addedAlarmSound") private var addedAlarmSound: String = "DeafultAlarm.wav"
     @AppStorage("addedAlarmLabel") private var addedAlarmLabel: String = ""
+    @AppStorage("addedAlarmSnoozeMinutes") private var addedAlarmSnoozeMinutes: Int = 5
 
     var body: some View {
         NavigationStack {
@@ -831,6 +869,43 @@ struct AddAlarmSheet: View {
                         )
                     }
                     .buttonStyle(.plain)
+                    .padding(.horizontal, 24)
+
+                    // ── Snooze row ─────────────────────────────
+                    VStack(spacing: 8) {
+                        HStack {
+                            Text("Snooze")
+                                .font(.custom("DM Sans", size: 15))
+                                .foregroundColor(Color.white.opacity(0.85))
+                            Spacer()
+                            Text("\(addedAlarmSnoozeMinutes) min")
+                                .font(.custom("DM Sans", size: 14))
+                                .foregroundColor(Color(red: 0.706, green: 0.588, blue: 0.902))
+                                .monospacedDigit()
+                        }
+                        Slider(value: Binding(
+                            get: { Double(addedAlarmSnoozeMinutes) },
+                            set: { addedAlarmSnoozeMinutes = Int($0.rounded()) }
+                        ), in: 1...30, step: 1)
+                        .tint(Color(red: 0.627, green: 0.471, blue: 1.0))
+                        HStack {
+                            Text("1 min")
+                            Spacer()
+                            Text("30 min")
+                        }
+                        .font(.custom("DM Sans", size: 11))
+                        .foregroundColor(Color.white.opacity(0.2))
+                    }
+                    .padding(.horizontal, 20)
+                    .padding(.vertical, 16)
+                    .background(
+                        RoundedRectangle(cornerRadius: 14)
+                            .fill(Color.white.opacity(0.04))
+                            .overlay(
+                                RoundedRectangle(cornerRadius: 14)
+                                    .stroke(Color.white.opacity(0.08), lineWidth: 1)
+                            )
+                    )
                     .padding(.horizontal, 24)
 
                     Spacer()
