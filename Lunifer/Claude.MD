@@ -40,7 +40,7 @@ Lunifer is an iOS alarm app that calculates a wake-up time for the next day from
 - `Screens/LuniferAuth.swift`: auth UI
 - `Screens/Dashboard/LuniferMain.swift`: main dashboard, alarm page, rest page, sound picker sheet, and sleep insights paging container
 - `Screens/Dashboard/SleepInsights.swift`: recommended sleep duration card and 7-day sleep history chart
-- `Screens/Dashboard/LuniferSettings.swift`: settings root, About You, Wake Days, and Notifications screens
+- `Screens/Dashboard/LuniferSettings.swift`: settings root, About You (with `HomeLocationSheet` + `HomeLocationSearchCompleter` for manual home address entry), Wake Days, and Notifications screens
 - `Utils/Utils.swift`: shared colors, background utilities, and reusable visual helpers
 - `Sounds/` (project root): bundled alarm audio resources
 
@@ -77,6 +77,19 @@ Current behavior in `LuniferSurvey.swift`:
 - If the user grants `authorizedWhenInUse`, Lunifer shows its own upgrade alert and then requests `Always`
 - If the user denies location once, Lunifer shows an alert explaining `Always` is required
 - If the user tries again after denial, Lunifer opens a Settings redirect flow because iOS will not re-show the system prompt
+
+## Home Location — How It Works
+Home location is set **manually** by the user via an address-search sheet — there is no automatic GPS inference of where the user lives.
+
+Full flow:
+- `AboutYouSettingsView` (`LuniferSettings.swift`) shows a "Home" row at the bottom of the settings list
+- Tapping "Set" (or "Change") presents `HomeLocationSheet` as a `.large` sheet
+- `HomeLocationSheet` uses `MKLocalSearchCompleter` (via the `HomeLocationSearchCompleter` NSObject wrapper, also in `LuniferSettings.swift`) to provide live address autocomplete as the user types
+- Selecting a suggestion fires an `MKLocalSearch` request; the resolved `CLLocationCoordinate2D` is pinned on a MapKit `Map` view
+- Tapping "Confirm Home" writes four `@AppStorage` values: `homeLatitude` (Double), `homeLongitude` (Double), `homeLocationSet` (Bool = true), `homeLocationName` (String — the display address)
+- These keys are declared in `AppPreferencesStore.Keys` and are cleared by `AppPreferencesStore.shared.resetHomeLocation()`, which is called from `AccountDataManager.shared.clearLocalAccountData()` on sign-out/delete — so they are correctly treated as account-scoped data
+
+**Critical gap:** the stored home coordinates are not yet wired into any alarm or commute calculation. The dashboard's `wakeUpTime` / `calculatedAlarmDate` logic in `LuniferMain.swift` does not read home location at all. When `commute.auto == true`, the alarm calculation falls back to a hardcoded 30-minute commute — it does not compute a real travel time from the stored home coordinates. The home location storage infrastructure is in place, but the routing/commute-time calculation that would use it has not been implemented.
 
 ## Dashboard Status
 `LuniferMain.swift` currently does the following:
@@ -178,6 +191,8 @@ Not currently present:
 - Settings coverage is partial after recent rebuilding
 - `SurveyAnswers` and `TimeValue` still live inside `LuniferSurvey.swift` rather than a dedicated model file
 - Persistence is cleaner than before, but some wrappers remain for compatibility and the storage layer could still be consolidated further
+- Home location coordinates (`homeLatitude` / `homeLongitude`) are stored in `AppPreferencesStore` but are not yet consumed anywhere — `wakeUpTime` / `calculatedAlarmDate` in `LuniferMain.swift` still fall back to a hardcoded 30 min commute when `commute.auto == true`. A real routing/travel-time calculation from the stored home coordinates to the user's destination has not been implemented.
+- `LocationManager.swift` only tracks Core Location authorization status — it never starts location updates or reads the device's actual GPS position. No automatic home detection or geofencing exists in the current codebase.
 
 ## Practical Guidance For Future Sessions
 - Do not assume `Claude.md` is authoritative without checking code first

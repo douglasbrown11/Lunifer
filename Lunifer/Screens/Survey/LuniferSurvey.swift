@@ -743,7 +743,7 @@ struct LuniferSurvey: View {
         private func requestCommuteAuthorizationIfNeeded() {
             switch locationManager.authorizationStatus {
             case .notDetermined:
-                locationManager.requestWhenInUseAuthorization()
+                locationManager.requestAlwaysAuthorization()
             case .authorizedWhenInUse:
                 showLocationUpgradeAlert = true
             case .authorizedAlways:
