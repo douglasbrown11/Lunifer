@@ -15,18 +15,28 @@ struct SleepInsights: View {
     /// Local copy edited inside the sheet; committed on save.
     @State private var draftSleep = TimeValue(hours: 8, minutes: 0, auto: false)
 
+    // WHOOP state — read directly from AppStorage so changes sync immediately
+    @AppStorage("whoopConnected")             private var whoopConnected: Bool   = false
+    @AppStorage("whoopRecommendedSleepHours") private var whoopSleepHours: Double = 0
+
     // Pull sleep history from the manager
     private var history: [SleepHistoryEntry] {
         SleepHistoryManager.shared.recentHistory(days: 7)
     }
 
-    // Displayed hours: use user's stated preference, or age-based baseline
+    // Displayed hours: WHOOP takes priority, then manual preference, then age baseline
     private var recommendedHours: Double {
-        if answers.sleep.auto {
+        if whoopConnected && whoopSleepHours > 0 {
+            return whoopSleepHours
+        } else if answers.sleep.auto {
             return SleepDurationModel.baselineForAge(answers.age)
         } else {
             return Double(answers.sleep.hours) + Double(answers.sleep.minutes) / 60.0
         }
+    }
+
+    private var isWhoopDriven: Bool {
+        whoopConnected && whoopSleepHours > 0
     }
 
     var body: some View {
@@ -64,6 +74,24 @@ struct SleepInsights: View {
                     Text("recommended for you")
                         .font(.custom("DM Sans", size: 14))
                         .foregroundColor(Color.white.opacity(0.4))
+
+                    // WHOOP attribution badge
+                    if isWhoopDriven {
+                        HStack(spacing: 5) {
+                            ZStack {
+                                RoundedRectangle(cornerRadius: 4)
+                                    .fill(Color(red: 0.957, green: 0.263, blue: 0.212).opacity(0.85))
+                                    .frame(width: 18, height: 18)
+                                Text("W")
+                                    .font(.system(size: 10, weight: .bold))
+                                    .foregroundColor(.white)
+                            }
+                            Text("via WHOOP")
+                                .font(.custom("DM Sans", size: 12))
+                                .foregroundColor(Color.white.opacity(0.45))
+                        }
+                        .transition(.opacity)
+                    }
                 }
                 .frame(maxWidth: .infinity)
                 .padding(.vertical, 32)
@@ -113,6 +141,9 @@ struct SleepInsights: View {
                 Spacer()
         }
         .frame(maxWidth: .infinity)
+        .onAppear {
+            WhoopManager.shared.refreshIfNeeded()
+        }
         // ── Edit sleep sheet ─────────────────────────────
         .sheet(isPresented: $showChangeSheet) {
             SleepEditSheet(sleep: $draftSleep) {

@@ -11,5 +11,9 @@ final class AccountDataManager {
         AppPreferencesStore.shared.resetBatteryMonitoringState()
         AppPreferencesStore.shared.resetHomeLocation()
         AppPreferencesStore.shared.resetAlarmOverride()
+        // Clear WHOOP tokens and prefs
+        KeychainHelper.delete(forKey: KeychainHelper.Keys.whoopAccessToken)
+        KeychainHelper.delete(forKey: KeychainHelper.Keys.whoopRefreshToken)
+        AppPreferencesStore.shared.resetWhoopData()
     }
 }

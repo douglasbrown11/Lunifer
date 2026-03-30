@@ -185,6 +185,36 @@ Not currently present:
 - Body text typically uses `DM Sans`
 - `LuniferBackground()` / `Color.luniferBg` and `StarsView()` are reused across major screens
 
+## WHOOP Integration
+
+WHOOP connectivity is implemented and ships three new files plus modifications to existing ones.
+
+### New files
+- `Engine/KeychainHelper.swift` — lightweight `Security` framework wrapper (`save`, `load`, `delete`) using `kSecClassGenericPassword`. Keys are namespaced to `Bundle.main.bundleIdentifier`. The only keys currently used are `whoop_access_token` and `whoop_refresh_token` (declared in `KeychainHelper.Keys`).
+- `Engine/WhoopManager.swift` — `@MainActor final class`, singleton (`WhoopManager.shared`). Handles the full OAuth 2.0 + PKCE flow via `ASWebAuthenticationSession`, token refresh, nightly sleep-need fetch, and disconnect. Published state: `isConnected`, `recommendedSleepHours`, `isLoading`, `errorMessage`, `lastSyncDate`.
+
+### Modified files
+- `Data/AppPreferencesStore.swift` — four new keys: `whoopConnected` (Bool), `whoopRecommendedSleepHours` (Double), `whoopLastSyncDate` (Date?), `whoopTokenExpiry` (Date?). New `resetWhoopData()` method clears all four.
+- `Data/AccountDataManager.swift` — `clearLocalAccountData()` now also calls `KeychainHelper.delete` for both token keys and `AppPreferencesStore.shared.resetWhoopData()`.
+- `Screens/Survey/LuniferSurvey.swift` — `stepSleep` now shows a "Let my WHOOP decide" `OptionCard` above the `TimeScalePicker`. State: `whoopSelected`, `whoopLoading`, `whoopRecommendedHours`, `whoopError`. `canNext` for step 4 blocks until WHOOP returns data if selected. `connectWhoop()` async func launches the OAuth flow; cancellation silently deselects the card. On success the fetched hours are written back into `answers.sleep` so downstream alarm logic is unaffected.
+- `Screens/Dashboard/SleepInsights.swift` — `recommendedHours` now checks `whoopConnected && whoopSleepHours > 0` first. A small "via WHOOP" badge (red W icon) appears below the recommendation text when WHOOP is driving the value. `.onAppear` calls `WhoopManager.shared.refreshIfNeeded()` to silently re-sync if last sync was > 12 hours ago.
+
+### Sleep need formula
+```
+total_ms = baseline_milli
+         + need_from_sleep_debt_milli
+         + need_from_recent_strain_milli
+         - need_from_recent_nap_milli
+hours    = total_ms / 3_600_000    (clamped to [5, 12])
+```
+Source: `GET /developer/v1/cycle?limit=1` → `records[0].score.sleep_needed`
+
+### Setup required before testing
+1. Create a WHOOP Developer app at https://app.whoop.com/settings/developer
+2. Set redirect URI to `lunifer://whoop/callback`
+3. Replace `API.clientID` and `API.clientSecret` in `WhoopManager.swift` with your app credentials
+4. Verify `lunifer` URL scheme is registered — **no Info.plist change needed**; `ASWebAuthenticationSession` intercepts the callback scheme automatically
+
 ## Known Gaps
 - Wake-day selection now affects rest-period handling, but not a full calendar-driven alarm calculation
 - Selected alarm sound is stored in `@AppStorage` but not yet passed to AlarmKit when scheduling — wiring `selectedAlarmSound` into `LuniferAlarm.shared.scheduleAlarm` is still needed
@@ -193,6 +223,8 @@ Not currently present:
 - Persistence is cleaner than before, but some wrappers remain for compatibility and the storage layer could still be consolidated further
 - Home location coordinates (`homeLatitude` / `homeLongitude`) are stored in `AppPreferencesStore` but are not yet consumed anywhere — `wakeUpTime` / `calculatedAlarmDate` in `LuniferMain.swift` still fall back to a hardcoded 30 min commute when `commute.auto == true`. A real routing/travel-time calculation from the stored home coordinates to the user's destination has not been implemented.
 - `LocationManager.swift` only tracks Core Location authorization status — it never starts location updates or reads the device's actual GPS position. No automatic home detection or geofencing exists in the current codebase.
+- WHOOP integration requires developer credentials (`API.clientID` / `API.clientSecret` in `WhoopManager.swift`) before the OAuth flow will work. Placeholders are in place.
+- There is no UI to disconnect WHOOP from settings yet — `WhoopManager.shared.disconnect()` exists but is not wired into `LuniferSettings`.
 
 ## Practical Guidance For Future Sessions
 - Do not assume `Claude.md` is authoritative without checking code first
