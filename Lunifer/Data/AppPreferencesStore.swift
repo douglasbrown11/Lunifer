@@ -22,6 +22,11 @@ final class AppPreferencesStore {
         static let homeLongitude         = "homeLongitude"
         static let homeLocationSet       = "homeLocationSet"
         static let homeLocationName      = "homeLocationName"
+        // WHOOP integration
+        static let whoopConnected               = "whoopConnected"
+        static let whoopRecommendedSleepHours   = "whoopRecommendedSleepHours"
+        static let whoopLastSyncDate            = "whoopLastSyncDate"
+        static let whoopTokenExpiry             = "whoopTokenExpiry"
         // Notifications
         static let batteryAlertEnabled   = "batteryAlertEnabled"
         static let wakeReminderEnabled   = "wakeReminderEnabled"
@@ -56,5 +61,34 @@ final class AppPreferencesStore {
     func resetAlarmOverride() {
         defaults.set(false, forKey: Keys.overrideActive)
         defaults.removeObject(forKey: Keys.overrideTimestamp)
+    }
+
+    // MARK: - WHOOP
+
+    var whoopConnected: Bool {
+        get { defaults.bool(forKey: Keys.whoopConnected) }
+        set { defaults.set(newValue, forKey: Keys.whoopConnected) }
+    }
+
+    var whoopRecommendedSleepHours: Double {
+        get { defaults.double(forKey: Keys.whoopRecommendedSleepHours) }
+        set { defaults.set(newValue, forKey: Keys.whoopRecommendedSleepHours) }
+    }
+
+    var whoopLastSyncDate: Date? {
+        get { defaults.object(forKey: Keys.whoopLastSyncDate) as? Date }
+        set { defaults.set(newValue, forKey: Keys.whoopLastSyncDate) }
+    }
+
+    var whoopTokenExpiry: Date? {
+        get { defaults.object(forKey: Keys.whoopTokenExpiry) as? Date }
+        set { defaults.set(newValue, forKey: Keys.whoopTokenExpiry) }
+    }
+
+    func resetWhoopData() {
+        defaults.set(false,  forKey: Keys.whoopConnected)
+        defaults.set(0.0,    forKey: Keys.whoopRecommendedSleepHours)
+        defaults.removeObject(forKey: Keys.whoopLastSyncDate)
+        defaults.removeObject(forKey: Keys.whoopTokenExpiry)
     }
 }

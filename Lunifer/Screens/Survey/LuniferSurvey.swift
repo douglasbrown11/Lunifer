@@ -264,6 +264,11 @@ struct LuniferSurvey: View {
         @State private var showLocationUpgradeAlert = false
         @State private var showLocationSettingsAlert = false
         @State private var hasShownLocationDeniedAlert = false
+        // WHOOP integration state
+        @State private var whoopSelected: Bool = false
+        @State private var whoopLoading: Bool = false
+        @State private var whoopRecommendedHours: Double? = nil
+        @State private var whoopError: String? = nil
         
         private var showCommute: Bool {
             answers.lifestyle == "student" || answers.lifestyle == "commuter"
@@ -286,6 +291,9 @@ struct LuniferSurvey: View {
             case 1: return answers.lifestyle != nil
             case 2: return !answers.wakeDays.isEmpty
             case 3: return answers.calendar  != nil
+            case 4: // sleep step — if WHOOP is selected, we need a successful fetch
+                if whoopSelected { return whoopRecommendedHours != nil }
+                return true
             case 6: // commute step
                 if answers.commute.auto {
                     return locationManager.authorizationStatus == .authorizedAlways
@@ -638,10 +646,93 @@ struct LuniferSurvey: View {
                     .frame(maxWidth: .infinity, alignment: .center)
                     .padding(.bottom, 16)
 
-                TimeScalePicker(value: $answers.sleep,
-                                autoLabel: "I'm not sure — let Lunifer learn this")
-                .padding(.bottom, 24)
+                // ── WHOOP card ──────────────────────────────────
+                OptionCard(isSelected: whoopSelected) {
+                    if !whoopSelected {
+                        whoopSelected = true
+                        // answers.sleep.auto no longer drives things when WHOOP is selected
+                        Task { await connectWhoop() }
+                    }
+                } content: {
+                    HStack(spacing: 12) {
+                        // WHOOP logo mark (W in a rounded rectangle)
+                        ZStack {
+                            RoundedRectangle(cornerRadius: 6)
+                                .fill(Color(red: 0.957, green: 0.263, blue: 0.212))
+                                .frame(width: 28, height: 28)
+                            Text("W")
+                                .font(.system(size: 14, weight: .bold))
+                                .foregroundColor(.white)
+                        }
+
+                        VStack(alignment: .leading, spacing: 2) {
+                            Text("Let my WHOOP decide")
+                                .font(.custom("DM Sans", size: 14))
+                                .foregroundColor(whoopSelected
+                                                 ? Color.white.opacity(0.95)
+                                                 : Color.white.opacity(0.7))
+
+                            if whoopLoading {
+                                Text("Connecting to WHOOP…")
+                                    .font(.custom("DM Sans", size: 12))
+                                    .foregroundColor(Color.white.opacity(0.4))
+                            } else if let hours = whoopRecommendedHours {
+                                Text("Tonight: \(SleepDurationModel.formatted(hours))")
+                                    .font(.custom("DM Sans", size: 12))
+                                    .foregroundColor(Color(red: 0.627, green: 0.471, blue: 1.0).opacity(0.85))
+                            } else if let error = whoopError {
+                                Text(error)
+                                    .font(.custom("DM Sans", size: 12))
+                                    .foregroundColor(Color(red: 1, green: 0.392, blue: 0.392).opacity(0.8))
+                                    .fixedSize(horizontal: false, vertical: true)
+                            } else {
+                                Text("Uses your WHOOP sleep data")
+                                    .font(.custom("DM Sans", size: 12))
+                                    .foregroundColor(Color.white.opacity(0.4))
+                            }
+                        }
+
+                        Spacer()
+
+                        if whoopLoading {
+                            ProgressView()
+                                .tint(Color.white.opacity(0.5))
+                                .scaleEffect(0.85)
+                        } else if whoopRecommendedHours != nil {
+                            Image(systemName: "checkmark.circle.fill")
+                                .foregroundColor(Color(red: 0.4, green: 0.9, blue: 0.5))
+                                .font(.system(size: 16))
+                        } else if whoopSelected && whoopError != nil {
+                            // Retry button
+                            Button {
+                                whoopError = nil
+                                Task { await connectWhoop() }
+                            } label: {
+                                Text("Retry")
+                                    .font(.custom("DM Sans", size: 12))
+                                    .foregroundColor(Color(red: 0.627, green: 0.471, blue: 1.0))
+                            }
+                            .buttonStyle(.plain)
+                        }
+                    }
+                }
                 .padding(.horizontal, 40)
+                .padding(.bottom, 12)
+
+                // ── Manual / Lunifer-learn picker ───────────────
+                // Hidden when WHOOP is selected and data is fetched
+                if !whoopSelected || whoopError != nil {
+                    TimeScalePicker(value: $answers.sleep,
+                                    autoLabel: "I'm not sure — let Lunifer learn this")
+                    .padding(.bottom, 24)
+                    .padding(.horizontal, 40)
+                    // Deselect WHOOP if the user starts interacting with manual picker
+                    .onChange(of: answers.sleep.hours)   { _, _ in if whoopSelected && whoopRecommendedHours == nil { whoopSelected = false } }
+                    .onChange(of: answers.sleep.minutes) { _, _ in if whoopSelected && whoopRecommendedHours == nil { whoopSelected = false } }
+                    .onChange(of: answers.sleep.auto)    { _, _ in if whoopSelected && whoopRecommendedHours == nil { whoopSelected = false } }
+                } else {
+                    Spacer().frame(height: 24)
+                }
             }
         }
         
@@ -738,6 +829,35 @@ struct LuniferSurvey: View {
                     (orderedDays.firstIndex(of: $0) ?? 0) < (orderedDays.firstIndex(of: $1) ?? 0)
                 }
             }
+        }
+
+        // MARK: - WHOOP
+
+        @MainActor
+        private func connectWhoop() async {
+            whoopLoading = true
+            whoopError   = nil
+            do {
+                let manager = WhoopManager.shared
+                // If already connected, just refresh sleep need
+                if manager.isConnected {
+                    try await manager.fetchSleepNeed()
+                } else {
+                    try await manager.connect()
+                }
+                whoopRecommendedHours = manager.recommendedSleepHours
+                // Store into answers so the value flows into the alarm calculation
+                // We use hours/minutes with auto=false so SleepInsights picks it up too
+                let h = Int(manager.recommendedSleepHours)
+                let m = Int((manager.recommendedSleepHours - Double(h)) * 60)
+                answers.sleep = TimeValue(hours: h, minutes: m, auto: false)
+            } catch WhoopError.cancelled {
+                // User closed the sheet — silently deselect WHOOP
+                whoopSelected = false
+            } catch {
+                whoopError = error.localizedDescription
+            }
+            whoopLoading = false
         }
 
         private func requestCommuteAuthorizationIfNeeded() {
