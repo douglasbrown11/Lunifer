@@ -1,0 +1,10 @@
+name = "lunifer-whoop"
+main = "src/index.js"
+compatibility_date = "2026-03-30"
+
+[vars]
+FIREBASE_PROJECT_ID = "lunifer-ce086"
+
+[[kv_namespaces]]
+binding = "WHOOP_TOKENS"
+id = "c5cc14e750f94b168c2230f3eb16e3ec"
