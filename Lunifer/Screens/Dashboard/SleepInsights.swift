@@ -11,7 +11,11 @@ import SwiftUI
 struct SleepInsights: View {
     @Binding var answers: SurveyAnswers
 
+    /// Injected entries for SwiftUI previews. Nil in production — falls back to the live store.
+    var previewEntries: [SleepHistoryEntry]? = nil
+
     @State private var showChangeSheet = false
+    @State private var showWearableWarning = false
     /// Local copy edited inside the sheet; committed on save.
     @State private var draftSleep = TimeValue(hours: 8, minutes: 0, auto: false)
 
@@ -21,9 +25,9 @@ struct SleepInsights: View {
     @AppStorage("ouraConnected")              private var ouraConnected: Bool    = false
     @AppStorage("ouraRecommendedSleepHours")  private var ouraSleepHours: Double  = 0
 
-    // Pull sleep history from the manager
+    // Pull sleep history from the manager (or injected preview data)
     private var history: [SleepHistoryEntry] {
-        SleepHistoryManager.shared.recentHistory(days: 7)
+        previewEntries ?? SleepHistoryManager.shared.recentHistory(days: 7)
     }
 
     // Priority: WHOOP > Oura > manual preference > age baseline
@@ -54,15 +58,26 @@ struct SleepInsights: View {
                     HStack {
                         Button {
                             draftSleep = answers.sleep
-                            showChangeSheet = true
+                            if isWhoopDriven || isOuraDriven {
+                                showWearableWarning = true
+                            } else {
+                                showChangeSheet = true
+                            }
                         } label: {
                             Text("change")
                                 .font(.custom("DM Sans", size: 18))
                                 .foregroundColor(Color.white.opacity(0.95))
                         }
                         .buttonStyle(.plain)
+                        .alert("Override wearable recommendation?", isPresented: $showWearableWarning) {
+                            Button("Set Manually", role: .destructive) {
+                                showChangeSheet = true
+                            }
+                            Button("Keep Recommendation", role: .cancel) { }
+                        } message: {
+                            Text("Your sleep goal was set by your \(isWhoopDriven ? "WHOOP" : "Oura Ring"). Setting it manually will replace that recommendation.")
+                        }
                         Spacer()
-                        
                     }
 
                     Text("SLEEP")
@@ -74,40 +89,44 @@ struct SleepInsights: View {
                         .font(.custom("Libre Franklin", size: 51).weight(.light))
                         .foregroundColor(Color.white.opacity(0.95))
 
-                    Text("recommended for you")
-                        .font(.custom("DM Sans", size: 14))
-                        .foregroundColor(Color.white.opacity(0.4))
-
-                    // Wearable attribution badge
+                    // "recommended to you via [logo]" — or plain text if no wearable
                     if isWhoopDriven {
                         HStack(spacing: 6) {
+                            Text("recommended to you via")
+                                .font(.custom("DM Sans", size: 14))
+                                .foregroundColor(Color.white.opacity(0.4))
                             Image("WhoopLogo")
                                 .resizable()
                                 .interpolation(.high)
-                                .frame(width: 18, height: 18)
-                            Text("via WHOOP")
-                                .font(.custom("DM Sans", size: 12))
-                                .foregroundColor(Color.white.opacity(0.45))
+                                .scaledToFit()
+                                .frame(height: 14)
                         }
                         .transition(.opacity)
                     } else if isOuraDriven {
                         HStack(spacing: 6) {
+                            Text("recommended to you via")
+                                .font(.custom("DM Sans", size: 14))
+                                .foregroundColor(Color.white.opacity(0.4))
                             ZStack {
                                 Circle()
                                     .fill(Color.black)
-                                    .frame(width: 18, height: 18)
+                                    .frame(width: 16, height: 16)
                                 Circle()
                                     .strokeBorder(Color.white, lineWidth: 1.5)
-                                    .frame(width: 13, height: 13)
+                                    .frame(width: 12, height: 12)
                                 Circle()
                                     .strokeBorder(Color.white, lineWidth: 0.8)
-                                    .frame(width: 7, height: 7)
+                                    .frame(width: 6, height: 6)
                             }
-                            Text("via Oura Ring")
-                                .font(.custom("DM Sans", size: 12))
-                                .foregroundColor(Color.white.opacity(0.45))
+                            Text("Oura Ring")
+                                .font(.custom("DM Sans", size: 14))
+                                .foregroundColor(Color.white.opacity(0.4))
                         }
                         .transition(.opacity)
+                    } else {
+                        Text("recommended for you")
+                            .font(.custom("DM Sans", size: 14))
+                            .foregroundColor(Color.white.opacity(0.4))
                     }
                 }
                 .frame(maxWidth: .infinity)
@@ -120,7 +139,7 @@ struct SleepInsights: View {
                                 .stroke(Color.white.opacity(0.08), lineWidth: 1)
                         )
                 )
-                .padding(.horizontal, 75)
+                .padding(.horizontal, 20)
 
                 Spacer().frame(height: 36)
 
@@ -130,30 +149,43 @@ struct SleepInsights: View {
                     .foregroundColor(Color.white.opacity(0.35))
                     .kerning(2.5)
                     .frame(maxWidth: .infinity, alignment: .leading)
-                    .padding(.horizontal, 65)
+                    .padding(.horizontal, 24)
                     .padding(.bottom, 16)
 
-                if history.isEmpty {
-                    VStack(spacing: 12) {
-                        Image(systemName: "moon.zzz")
-                            .font(.system(size: 32, weight: .ultraLight))
-                            .foregroundColor(Color.white.opacity(0.2))
+                Group {
+                    if history.isEmpty {
+                        VStack(spacing: 12) {
+                            Image(systemName: "moon.zzz")
+                                .font(.system(size: 32, weight: .ultraLight))
+                                .foregroundColor(Color.white.opacity(0.2))
 
-                        Text("Sleep data will appear here\nafter your first night")
-                            .font(.custom("DM Sans", size: 14))
-                            .foregroundColor(Color.white.opacity(0.3))
-                            .multilineTextAlignment(.center)
+                            Text("Sleep data will appear here\nafter your first night")
+                                .font(.custom("DM Sans", size: 14))
+                                .foregroundColor(Color.white.opacity(0.3))
+                                .multilineTextAlignment(.center)
+                        }
+                        .frame(maxWidth: .infinity)
+                        .padding(.vertical, 40)
+                    } else {
+                        SleepHistoryChart(
+                            entries: history,
+                            recommendedHours: recommendedHours
+                        )
+                        .frame(height: 180)
+                        .padding(.horizontal, 16)
+                        .padding(.vertical, 20)
                     }
-                    .frame(maxWidth: .infinity)
-                    .padding(.vertical, 40)
-                } else {
-                    SleepHistoryChart(
-                        entries: history,
-                        recommendedHours: recommendedHours
-                    )
-                    .frame(height: 180)
-                    .padding(.horizontal, 24)
                 }
+                .frame(maxWidth: .infinity)
+                .background(
+                    RoundedRectangle(cornerRadius: 20)
+                        .fill(Color.white.opacity(0.04))
+                        .overlay(
+                            RoundedRectangle(cornerRadius: 20)
+                                .stroke(Color.white.opacity(0.08), lineWidth: 1)
+                        )
+                )
+                .padding(.horizontal, 20)
 
                 Spacer()
         }
@@ -232,82 +264,157 @@ private struct SleepEditSheet: View {
 // ─────────────────────────────────────────────────────────────
 // SleepHistoryChart
 // ─────────────────────────────────────────────────────────────
-// A simple bar chart showing sleep duration for each of the
-// last 7 nights, with a dashed line at the recommended level.
+// A bar chart showing sleep duration for each of the last 7
+// nights, with a dashed recommended-hours line, compact
+// duration labels above each bar, a clean X-axis divider, and
+// weekday labels below (with "Today" highlighted in purple).
 
 struct SleepHistoryChart: View {
     let entries: [SleepHistoryEntry]
     let recommendedHours: Double
 
-    private var maxHours: Double { //used to set scale of Y-axis
+    /// Oldest → newest so the chart reads left-to-right chronologically.
+    private var sortedEntries: [SleepHistoryEntry] {
+        entries.sorted { $0.date < $1.date }
+    }
+
+    private var maxHours: Double {
         let tallest = entries.map(\.durationHours).max() ?? 8
         return max(tallest + 1, 10)
     }
 
     var body: some View {
         GeometryReader { geo in
-            // Cap bar width so a single entry doesn't stretch edge-to-edge
-            let barWidth: CGFloat = min(geo.size.width / CGFloat(max(entries.count, 1)) - 12, 44)
-            let chartHeight = geo.size.height - 28  // leave room for labels
+            let count      = max(sortedEntries.count, 1)
+            let spacing    = CGFloat(8)
+            let barWidth   = min((geo.size.width - spacing * CGFloat(count - 1)) / CGFloat(count), 44)
 
-            ZStack(alignment: .bottom) {
+            // Vertical layout constants
+            let durLabelH  = CGFloat(16)   // compact "8:30" label above each bar
+            let axisH      = CGFloat(1)    // X-axis divider line
+            let xLabelH    = CGFloat(22)   // weekday label row
+            let barAreaH   = geo.size.height - axisH - xLabelH
+            let barSlotH   = barAreaH - durLabelH  // pure bar space (below duration labels)
 
-                // ── Recommended line ─────────────────────────
-                let lineY = chartHeight * (1 - recommendedHours / maxHours)
-                Path { path in
-                    path.move(to: CGPoint(x: 0, y: lineY))
-                    path.addLine(to: CGPoint(x: geo.size.width, y: lineY))
-                }
-                .stroke(
-                    Color(red: 0.627, green: 0.471, blue: 1.0).opacity(0.4),
-                    style: StrokeStyle(lineWidth: 1, dash: [6, 4])
-                )
+            VStack(spacing: 0) {
 
-                // Recommended label
-                Text("\(SleepDurationModel.formatted(recommendedHours))")
-                    .font(.custom("DM Sans", size: 10))
-                    .foregroundColor(Color(red: 0.627, green: 0.471, blue: 1.0).opacity(0.6))
-                    .position(x: geo.size.width - 28, y: lineY - 10)
+                // ── Bar + duration-label area ────────────────
+                ZStack(alignment: .bottom) {
 
-                // ── Bars ─────────────────────────────────────
-                HStack(alignment: .bottom, spacing: 8) {
-                    ForEach(entries) { entry in
-                        VStack(spacing: 4) {
-                            // Duration label above bar
-                            Text(entry.formattedDuration)
-                                .font(.custom("DM Sans", size: 10))
-                                .foregroundColor(Color.white.opacity(0.5))
-
-                            // Bar
-                            let barHeight = max(chartHeight * (entry.durationHours / maxHours), 4)
+                    // Bar columns
+                    HStack(alignment: .bottom, spacing: spacing) {
+                        ForEach(sortedEntries) { entry in
+                            let barH      = max(barSlotH * (entry.durationHours / maxHours), 4)
                             let meetsGoal = entry.durationHours >= recommendedHours
 
-                            RoundedRectangle(cornerRadius: 6)
-                                .fill(
-                                    meetsGoal
-                                    ? Color(red: 0.627, green: 0.471, blue: 1.0).opacity(0.6)
-                                    : Color(red: 0.627, green: 0.471, blue: 1.0).opacity(0.25)
-                                )
-                                .frame(width: barWidth, height: barHeight)
+                            VStack(spacing: 4) {
+                                // Compact duration label: "8:30"
+                                Text(SleepDurationModel.shortFormatted(entry.durationHours))
+                                    .font(.custom("DM Sans", size: 10))
+                                    .foregroundColor(Color.white.opacity(0.45))
+                                    .frame(height: durLabelH)
 
-                            // Day label below bar
-                            Text(entry.dayLabel)
-                                .font(.custom("DM Sans", size: 11))
-                                .foregroundColor(Color.white.opacity(0.4))
+                                // Bar
+                                RoundedRectangle(cornerRadius: 6)
+                                    .fill(
+                                        meetsGoal
+                                        ? Color(red: 0.627, green: 0.471, blue: 1.0).opacity(0.6)
+                                        : Color(red: 0.627, green: 0.471, blue: 1.0).opacity(0.25)
+                                    )
+                                    .frame(width: barWidth, height: barH)
+                            }
+                            .frame(width: barWidth)
                         }
+                    }
+                    .frame(maxWidth: .infinity)
+                }
+                .frame(height: barAreaH)
+
+                // ── X-axis divider ───────────────────────────
+                Rectangle()
+                    .fill(Color.white.opacity(0.12))
+                    .frame(height: axisH)
+
+                // ── Weekday labels ───────────────────────────
+                HStack(spacing: spacing) {
+                    ForEach(sortedEntries) { entry in
+                        let isToday = Calendar.current.isDateInToday(entry.date)
+                        Text(isToday ? "Today" : entry.dayLabel)
+                            .font(.custom("DM Sans", size: 11))
+                            .foregroundColor(
+                                isToday
+                                ? Color(red: 0.627, green: 0.471, blue: 1.0).opacity(0.85)
+                                : Color.white.opacity(0.4)
+                            )
+                            .frame(width: barWidth)
                     }
                 }
                 .frame(maxWidth: .infinity)
+                .padding(.top, 5)
+                .frame(height: xLabelH)
             }
         }
     }
 }
 
-#Preview {
+#Preview("Sleep Insights — no wearable") {
     @Previewable @State var answers: SurveyAnswers = {
         var a = SurveyAnswers()
         a.age = "22"
         return a
     }()
-    SleepInsights(answers: $answers)
+    ZStack {
+        Color(red: 0.07, green: 0.04, blue: 0.15).ignoresSafeArea()
+        SleepInsights(answers: $answers, previewEntries: SleepHistoryMock.entries)
+    }
+    .onAppear {
+        UserDefaults.standard.set(false, forKey: "whoopConnected")
+        UserDefaults.standard.set(false, forKey: "ouraConnected")
+    }
+}
+
+#Preview("Sleep Insights — WHOOP") {
+    @Previewable @State var answers: SurveyAnswers = {
+        var a = SurveyAnswers()
+        a.age = "22"
+        return a
+    }()
+    ZStack {
+        Color(red: 0.07, green: 0.04, blue: 0.15).ignoresSafeArea()
+        SleepInsights(answers: $answers, previewEntries: SleepHistoryMock.entries)
+    }
+    .onAppear {
+        UserDefaults.standard.set(true,  forKey: "whoopConnected")
+        UserDefaults.standard.set(7.5,   forKey: "whoopRecommendedSleepHours")
+        UserDefaults.standard.set(false, forKey: "ouraConnected")
+    }
+}
+
+#Preview("Sleep Insights — Oura Ring") {
+    @Previewable @State var answers: SurveyAnswers = {
+        var a = SurveyAnswers()
+        a.age = "22"
+        return a
+    }()
+    ZStack {
+        Color(red: 0.07, green: 0.04, blue: 0.15).ignoresSafeArea()
+        SleepInsights(answers: $answers, previewEntries: SleepHistoryMock.entries)
+    }
+    .onAppear {
+        UserDefaults.standard.set(false, forKey: "whoopConnected")
+        UserDefaults.standard.set(true,  forKey: "ouraConnected")
+        UserDefaults.standard.set(8.25,  forKey: "ouraRecommendedSleepHours")
+    }
+}
+
+#Preview("Sleep History Chart — mock data") {
+    ZStack {
+        Color(red: 0.07, green: 0.04, blue: 0.15).ignoresSafeArea()
+        SleepHistoryChart(
+            entries: SleepHistoryMock.entries,
+            recommendedHours: 8.0
+        )
+        .frame(height: 200)
+        .padding(.horizontal, 24)
+    }
 }
