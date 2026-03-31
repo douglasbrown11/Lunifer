@@ -1,6 +1,9 @@
 const WHOOP_TOKEN_URL = "https://api.prod.whoop.com/oauth/oauth2/token";
 const WHOOP_CYCLE_URL = "https://api.prod.whoop.com/developer/v2/cycle";
-const FIREBASE_CERTS_URL = "https://www.googleapis.com/robot/v1/metadata/x509/securetoken@system.gserviceaccount.com";
+const FIREBASE_CERTS_URL = "https://www.googleapis.com/service_accounts/v1/jwk/securetoken@system.gserviceaccount.com";
+const OURA_TOKEN_URL    = "https://api.ouraring.com/oauth/token";
+const OURA_SLEEP_URL    = "https://api.ouraring.com/v2/usercollection/sleep";
+const OURA_READINESS_URL = "https://api.ouraring.com/v2/usercollection/daily_readiness";
 const TOKEN_REFRESH_BUFFER_MS = 5 * 60 * 1000;
 
 export default {
@@ -42,6 +45,26 @@ export default {
           recommendedSleepHours: 0,
           lastSyncDate: null
         });
+      }
+
+      // ── Oura routes ───────────────────────────────────────────
+      if (url.pathname === "/oura/exchange-code") {
+        const body = await request.json();
+        const code        = requiredString(body.code, "code");
+        const redirectURI = optionalString(body.redirectURI) || "lunifer://oura/callback";
+
+        const tokenData = await exchangeOuraCode({ code, redirectURI, env });
+        await saveOuraToken(env, uid, tokenData);
+        return json(await fetchAndPersistOuraSleep(env, uid));
+      }
+
+      if (url.pathname === "/oura/fetch-sleep") {
+        return json(await fetchAndPersistOuraSleep(env, uid));
+      }
+
+      if (url.pathname === "/oura/disconnect") {
+        await env.WHOOP_TOKENS.delete(ouraTokenKey(uid));
+        return json({ connected: false, recommendedSleepHours: 0, lastSyncDate: null });
       }
 
       return json({ error: "Not found." }, 404);
@@ -89,6 +112,113 @@ async function fetchAndPersistSleepNeed(env, uid) {
     lastSyncDate
   };
 }
+
+// ── Oura helpers ──────────────────────────────────────────────
+
+function ouraTokenKey(uid) {
+  return `oura:${uid}`;
+}
+
+async function exchangeOuraCode({ code, redirectURI, env }) {
+  const response = await postForm(OURA_TOKEN_URL, {
+    grant_type:    "authorization_code",
+    client_id:     env.OURA_CLIENT_ID,
+    client_secret: env.OURA_CLIENT_SECRET,
+    code,
+    redirect_uri:  redirectURI
+  });
+
+  return {
+    accessToken:  response.access_token,
+    refreshToken: response.refresh_token,
+    expiresAt:    new Date(Date.now() + response.expires_in * 1000).toISOString()
+  };
+}
+
+async function saveOuraToken(env, uid, tokenData) {
+  await env.WHOOP_TOKENS.put(
+    ouraTokenKey(uid),
+    JSON.stringify({ ...tokenData, createdAt: new Date().toISOString() })
+  );
+}
+
+async function loadOuraToken(env, uid) {
+  const raw = await env.WHOOP_TOKENS.get(ouraTokenKey(uid));
+  if (!raw) throw httpError(404, "Oura is not connected for this user.");
+  try { return JSON.parse(raw); } catch { throw httpError(500, "Stored Oura token data is invalid."); }
+}
+
+async function refreshOuraTokenIfNeeded(env, uid, tokenData) {
+  const expiresAtMs = Date.parse(tokenData.expiresAt || "");
+  if (Number.isFinite(expiresAtMs) && expiresAtMs - Date.now() > TOKEN_REFRESH_BUFFER_MS) {
+    return tokenData;
+  }
+  if (!tokenData.refreshToken) throw httpError(401, "Oura refresh token is missing. Reconnect Oura.");
+
+  const response = await postForm(OURA_TOKEN_URL, {
+    grant_type:    "refresh_token",
+    client_id:     env.OURA_CLIENT_ID,
+    client_secret: env.OURA_CLIENT_SECRET,
+    refresh_token: tokenData.refreshToken
+  });
+
+  const refreshed = {
+    ...tokenData,
+    accessToken:  response.access_token,
+    refreshToken: response.refresh_token || tokenData.refreshToken,
+    expiresAt:    new Date(Date.now() + response.expires_in * 1000).toISOString()
+  };
+  await env.WHOOP_TOKENS.put(ouraTokenKey(uid), JSON.stringify(refreshed));
+  return refreshed;
+}
+
+async function fetchAndPersistOuraSleep(env, uid) {
+  const tokenData         = await loadOuraToken(env, uid);
+  const refreshedTokenData = await refreshOuraTokenIfNeeded(env, uid, tokenData);
+  const accessToken       = refreshedTokenData.accessToken;
+
+  // Fetch last 7 days of sleep sessions
+  const today   = new Date().toISOString().split("T")[0];
+  const weekAgo = new Date(Date.now() - 7 * 24 * 60 * 60 * 1000).toISOString().split("T")[0];
+  const sleepData = await ouraGet(
+    `${OURA_SLEEP_URL}?start_date=${weekAgo}&end_date=${today}`,
+    accessToken
+  );
+  const sessions = sleepData.data || [];
+  if (sessions.length === 0) throw httpError(404, "Oura returned no sleep sessions.");
+
+  // Average total_sleep_duration (seconds) over available sessions
+  const totalSecs = sessions.reduce((sum, s) => sum + (s.total_sleep_duration || 0), 0);
+  const avgHours  = totalSecs / sessions.length / 3600;
+
+  // Fetch latest readiness score and add buffer if recovery is low
+  let adjustment = 0;
+  try {
+    const readinessData = await ouraGet(`${OURA_READINESS_URL}?limit=1`, accessToken);
+    const score = readinessData.data?.[0]?.score ?? 85;
+    if (score < 70) adjustment = 0.5; // recommend 30 min extra when readiness is poor
+  } catch { /* non-fatal — use raw average */ }
+
+  const recommendedSleepHours = clamp(avgHours + adjustment, 5, 12);
+  const lastSyncDate = new Date().toISOString();
+
+  const updated = { ...refreshedTokenData, recommendedSleepHours, lastSyncDate };
+  await env.WHOOP_TOKENS.put(ouraTokenKey(uid), JSON.stringify(updated));
+
+  return { connected: true, recommendedSleepHours, lastSyncDate };
+}
+
+async function ouraGet(url, accessToken) {
+  const response = await fetch(url, {
+    headers: { Authorization: `Bearer ${accessToken}` }
+  });
+  if (!response.ok) {
+    throw httpError(response.status, `Oura request failed: ${await response.text()}`);
+  }
+  return response.json();
+}
+
+// ── WHOOP helpers ─────────────────────────────────────────────
 
 async function exchangeCodeForTokens({ code, codeVerifier, redirectURI, clientId, clientSecret }) {
   const response = await postForm(WHOOP_TOKEN_URL, {
@@ -232,15 +362,15 @@ async function verifyFirebaseUser(request, env) {
   if (!certsResponse.ok) {
     throw httpError(500, "Failed to fetch Firebase signing certificates.");
   }
-  const certs = await certsResponse.json();
-  const certPem = certs[header.kid];
-  if (!certPem) {
+  const jwks = await certsResponse.json();
+  const jwk = (jwks.keys || []).find(k => k.kid === header.kid);
+  if (!jwk) {
     throw httpError(401, "Firebase signing certificate not found.");
   }
 
   const publicKey = await crypto.subtle.importKey(
-    "spki",
-    pemToArrayBuffer(certPem),
+    "jwk",
+    jwk,
     {
       name: "RSASSA-PKCS1-v1_5",
       hash: "SHA-256"
@@ -280,13 +410,6 @@ function base64UrlToBytes(input) {
   return bytes;
 }
 
-function pemToArrayBuffer(pem) {
-  const normalized = pem
-    .replace("-----BEGIN CERTIFICATE-----", "")
-    .replace("-----END CERTIFICATE-----", "")
-    .replace(/\s+/g, "");
-  return base64UrlToBytes(normalized.replace(/\+/g, "-").replace(/\//g, "_")).buffer;
-}
 
 function optionalString(value) {
   return typeof value === "string" && value.trim().length > 0 ? value.trim() : null;
