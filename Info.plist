@@ -38,6 +38,16 @@
 				<string>msauth.Dream-AI.Lunifer</string>
 			</array>
 		</dict>
+		<dict>
+			<key>CFBundleTypeRole</key>
+			<string>Editor</string>
+			<key>CFBundleURLName</key>
+			<string>whoop</string>
+			<key>CFBundleURLSchemes</key>
+			<array>
+				<string>lunifer</string>
+			</array>
+		</dict>
 	</array>
 	<key>CFBundleVersion</key>
 	<string>1</string>

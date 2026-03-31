@@ -298,7 +298,7 @@ struct LuniferSettings: View {
         do {
             // Delete Firestore data first so the UI promise of removing
             // account data is upheld before the auth account is removed.
-            for sub in ["sleepHistory", "alarmInferences"] {
+            for sub in ["sleepHistory", "alarmInferences", "private"] {
                 let snap = try await userDoc.collection(sub).getDocuments()
                 for doc in snap.documents {
                     try await doc.reference.delete()
