@@ -87,5 +87,7 @@ extension KeychainHelper {
     enum Keys {
         static let whoopAccessToken  = "whoop_access_token"
         static let whoopRefreshToken = "whoop_refresh_token"
+        static let ouraAccessToken   = "oura_access_token"
+        static let ouraRefreshToken  = "oura_refresh_token"
     }
 }

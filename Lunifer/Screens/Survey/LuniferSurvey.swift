@@ -269,6 +269,11 @@ struct LuniferSurvey: View {
         @State private var whoopLoading: Bool = false
         @State private var whoopRecommendedHours: Double? = nil
         @State private var whoopError: String? = nil
+        // Oura integration state
+        @State private var ouraSelected: Bool = false
+        @State private var ouraLoading: Bool = false
+        @State private var ouraRecommendedHours: Double? = nil
+        @State private var ouraError: String? = nil
         
         private var showCommute: Bool {
             answers.lifestyle == "student" || answers.lifestyle == "commuter"
@@ -291,8 +296,9 @@ struct LuniferSurvey: View {
             case 1: return answers.lifestyle != nil
             case 2: return !answers.wakeDays.isEmpty
             case 3: return answers.calendar  != nil
-            case 4: // sleep step — if WHOOP is selected, we need a successful fetch
+            case 4: // sleep step — wearable selected must complete its fetch before continuing
                 if whoopSelected { return whoopRecommendedHours != nil }
+                if ouraSelected  { return ouraRecommendedHours  != nil }
                 return true
             case 6: // commute step
                 if answers.commute.auto {
@@ -650,20 +656,18 @@ struct LuniferSurvey: View {
                 OptionCard(isSelected: whoopSelected) {
                     if !whoopSelected {
                         whoopSelected = true
-                        // answers.sleep.auto no longer drives things when WHOOP is selected
+                        ouraSelected  = false          // mutually exclusive
+                        ouraRecommendedHours = nil
+                        ouraError = nil
                         Task { await connectWhoop() }
                     }
                 } content: {
                     HStack(spacing: 12) {
-                        // WHOOP logo mark (W in a rounded rectangle)
-                        ZStack {
-                            RoundedRectangle(cornerRadius: 6)
-                                .fill(Color(red: 0.957, green: 0.263, blue: 0.212))
-                                .frame(width: 28, height: 28)
-                            Text("W")
-                                .font(.system(size: 14, weight: .bold))
-                                .foregroundColor(.white)
-                        }
+                        // WHOOP Puck — official brand asset (WHOOP Design Guidelines)
+                        Image("WhoopLogo")
+                            .resizable()
+                            .interpolation(.high)
+                            .frame(width: 32, height: 32)
 
                         VStack(alignment: .leading, spacing: 2) {
                             Text("Let my WHOOP decide")
@@ -719,17 +723,104 @@ struct LuniferSurvey: View {
                 .padding(.horizontal, 40)
                 .padding(.bottom, 12)
 
+                // ── Oura Ring card ──────────────────────────────
+                OptionCard(isSelected: ouraSelected) {
+                    if !ouraSelected {
+                        ouraSelected  = true
+                        whoopSelected = false          // mutually exclusive
+                        whoopRecommendedHours = nil
+                        whoopError = nil
+                        Task { await connectOura() }
+                    }
+                } content: {
+                    HStack(spacing: 12) {
+                        // Oura ring icon
+                        ZStack {
+                            Circle()
+                                .fill(Color.black)
+                                .frame(width: 30, height: 30)
+                            Circle()
+                                .strokeBorder(Color.white, lineWidth: 2.5)
+                                .frame(width: 22, height: 22)
+                            Circle()
+                                .strokeBorder(Color.white, lineWidth: 1.2)
+                                .frame(width: 12, height: 12)
+                        }
+                        .frame(width: 32, height: 32)
+
+                        VStack(alignment: .leading, spacing: 2) {
+                            Text("Let my Oura Ring decide")
+                                .font(.custom("DM Sans", size: 14))
+                                .foregroundColor(ouraSelected
+                                                 ? Color.white.opacity(0.95)
+                                                 : Color.white.opacity(0.7))
+
+                            if ouraLoading {
+                                Text("Connecting to Oura…")
+                                    .font(.custom("DM Sans", size: 12))
+                                    .foregroundColor(Color.white.opacity(0.4))
+                            } else if let hours = ouraRecommendedHours {
+                                Text("Tonight: \(SleepDurationModel.formatted(hours))")
+                                    .font(.custom("DM Sans", size: 12))
+                                    .foregroundColor(Color(red: 0.627, green: 0.471, blue: 1.0).opacity(0.85))
+                            } else if let error = ouraError {
+                                Text(error)
+                                    .font(.custom("DM Sans", size: 12))
+                                    .foregroundColor(Color(red: 1, green: 0.392, blue: 0.392).opacity(0.8))
+                                    .fixedSize(horizontal: false, vertical: true)
+                            } else {
+                                Text("Uses your Oura sleep data")
+                                    .font(.custom("DM Sans", size: 12))
+                                    .foregroundColor(Color.white.opacity(0.4))
+                            }
+                        }
+
+                        Spacer()
+
+                        if ouraLoading {
+                            ProgressView()
+                                .tint(Color.white.opacity(0.5))
+                                .scaleEffect(0.85)
+                        } else if ouraRecommendedHours != nil {
+                            Image(systemName: "checkmark.circle.fill")
+                                .foregroundColor(Color(red: 0.4, green: 0.9, blue: 0.5))
+                                .font(.system(size: 16))
+                        } else if ouraSelected && ouraError != nil {
+                            Button {
+                                ouraError = nil
+                                Task { await connectOura() }
+                            } label: {
+                                Text("Retry")
+                                    .font(.custom("DM Sans", size: 12))
+                                    .foregroundColor(Color(red: 0.627, green: 0.471, blue: 1.0))
+                            }
+                            .buttonStyle(.plain)
+                        }
+                    }
+                }
+                .padding(.horizontal, 40)
+                .padding(.bottom, 12)
+
                 // ── Manual / Lunifer-learn picker ───────────────
-                // Hidden when WHOOP is selected and data is fetched
-                if !whoopSelected || whoopError != nil {
+                // Hidden when a wearable is selected and data is fetched
+                if (!whoopSelected && !ouraSelected) || whoopError != nil || ouraError != nil {
                     TimeScalePicker(value: $answers.sleep,
                                     autoLabel: "I'm not sure — let Lunifer learn this")
                     .padding(.bottom, 24)
                     .padding(.horizontal, 40)
-                    // Deselect WHOOP if the user starts interacting with manual picker
-                    .onChange(of: answers.sleep.hours)   { _, _ in if whoopSelected && whoopRecommendedHours == nil { whoopSelected = false } }
-                    .onChange(of: answers.sleep.minutes) { _, _ in if whoopSelected && whoopRecommendedHours == nil { whoopSelected = false } }
-                    .onChange(of: answers.sleep.auto)    { _, _ in if whoopSelected && whoopRecommendedHours == nil { whoopSelected = false } }
+                    // Deselect any wearable if the user starts interacting with manual picker
+                    .onChange(of: answers.sleep.hours)   { _, _ in
+                        if whoopSelected && whoopRecommendedHours == nil { whoopSelected = false }
+                        if ouraSelected  && ouraRecommendedHours  == nil { ouraSelected  = false }
+                    }
+                    .onChange(of: answers.sleep.minutes) { _, _ in
+                        if whoopSelected && whoopRecommendedHours == nil { whoopSelected = false }
+                        if ouraSelected  && ouraRecommendedHours  == nil { ouraSelected  = false }
+                    }
+                    .onChange(of: answers.sleep.auto)    { _, _ in
+                        if whoopSelected && whoopRecommendedHours == nil { whoopSelected = false }
+                        if ouraSelected  && ouraRecommendedHours  == nil { ouraSelected  = false }
+                    }
                 } else {
                     Spacer().frame(height: 24)
                 }
@@ -858,6 +949,31 @@ struct LuniferSurvey: View {
                 whoopError = error.localizedDescription
             }
             whoopLoading = false
+        }
+
+        // MARK: - Oura
+
+        @MainActor
+        private func connectOura() async {
+            ouraLoading = true
+            ouraError   = nil
+            do {
+                let manager = OuraManager.shared
+                if manager.isConnected {
+                    try await manager.fetchSleepRecommendation()
+                } else {
+                    try await manager.connect()
+                }
+                ouraRecommendedHours = manager.recommendedSleepHours
+                let h = Int(manager.recommendedSleepHours)
+                let m = Int((manager.recommendedSleepHours - Double(h)) * 60)
+                answers.sleep = TimeValue(hours: h, minutes: m, auto: false)
+            } catch OuraError.cancelled {
+                ouraSelected = false
+            } catch {
+                ouraError = error.localizedDescription
+            }
+            ouraLoading = false
         }
 
         private func requestCommuteAuthorizationIfNeeded() {

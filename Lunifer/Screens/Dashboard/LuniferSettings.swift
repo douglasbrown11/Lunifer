@@ -840,7 +840,7 @@ struct HomeLocationSheet: View {
         let request = MKLocalSearch.Request(completion: result)
         MKLocalSearch(request: request).start { response, _ in
             guard let item = response?.mapItems.first else { return }
-            let coord = item.placemark.coordinate
+            let coord = item.location.coordinate
             selectedCoordinate = coord
             selectedAddress = [result.title, result.subtitle].filter { !$0.isEmpty }.joined(separator: ", ")
             withAnimation {

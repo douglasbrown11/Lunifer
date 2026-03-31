@@ -1,4 +1,5 @@
 import Foundation
+import Combine
 import AuthenticationServices
 import CryptoKit
 import FirebaseAuth
@@ -46,7 +47,7 @@ final class WhoopManager: NSObject, ObservableObject, ASWebAuthenticationPresent
     private var authSession: ASWebAuthenticationSession?
 
     private enum API {
-        static let clientID = "YOUR_WHOOP_CLIENT_ID"
+        static let clientID = "42b74796-f1a2-449d-8ba4-372a7b9c66ca"
         static let redirectURI = "lunifer://whoop/callback"
         static let authURL = "https://api.prod.whoop.com/oauth/oauth2/auth"
         static let scopes = "read:sleep read:cycles offline"
@@ -247,11 +248,18 @@ final class WhoopManager: NSObject, ObservableObject, ASWebAuthenticationPresent
 
     nonisolated func presentationAnchor(for session: ASWebAuthenticationSession) -> ASPresentationAnchor {
         MainActor.assumeIsolated {
-            UIApplication.shared.connectedScenes
-                .compactMap { $0 as? UIWindowScene }
-                .flatMap { $0.windows }
-                .first { $0.isKeyWindow }
-            ?? ASPresentationAnchor()
+            let scenes = UIApplication.shared.connectedScenes.compactMap { $0 as? UIWindowScene }
+            if let keyWindow = scenes.flatMap({ $0.windows }).first(where: { $0.isKeyWindow }) {
+                return keyWindow
+            }
+            if let scene = scenes.first {
+                return ASPresentationAnchor(windowScene: scene)
+            }
+            if #available(iOS 26.0, *) {
+                fatalError("Unable to find a UIWindowScene for ASWebAuthenticationSession presentation.")
+            } else {
+                return ASPresentationAnchor()
+            }
         }
     }
 

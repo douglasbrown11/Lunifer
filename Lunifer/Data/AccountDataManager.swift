@@ -15,5 +15,9 @@ final class AccountDataManager {
         KeychainHelper.delete(forKey: KeychainHelper.Keys.whoopAccessToken)
         KeychainHelper.delete(forKey: KeychainHelper.Keys.whoopRefreshToken)
         AppPreferencesStore.shared.resetWhoopData()
+        // Clear Oura tokens and prefs
+        KeychainHelper.delete(forKey: KeychainHelper.Keys.ouraAccessToken)
+        KeychainHelper.delete(forKey: KeychainHelper.Keys.ouraRefreshToken)
+        AppPreferencesStore.shared.resetOuraData()
     }
 }

@@ -27,6 +27,10 @@ final class AppPreferencesStore {
         static let whoopRecommendedSleepHours   = "whoopRecommendedSleepHours"
         static let whoopLastSyncDate            = "whoopLastSyncDate"
         static let whoopTokenExpiry             = "whoopTokenExpiry"
+        // Oura integration
+        static let ouraConnected                = "ouraConnected"
+        static let ouraRecommendedSleepHours    = "ouraRecommendedSleepHours"
+        static let ouraLastSyncDate             = "ouraLastSyncDate"
         // Notifications
         static let batteryAlertEnabled   = "batteryAlertEnabled"
         static let wakeReminderEnabled   = "wakeReminderEnabled"
@@ -90,5 +94,28 @@ final class AppPreferencesStore {
         defaults.set(0.0,    forKey: Keys.whoopRecommendedSleepHours)
         defaults.removeObject(forKey: Keys.whoopLastSyncDate)
         defaults.removeObject(forKey: Keys.whoopTokenExpiry)
+    }
+
+    // MARK: - Oura
+
+    var ouraConnected: Bool {
+        get { defaults.bool(forKey: Keys.ouraConnected) }
+        set { defaults.set(newValue, forKey: Keys.ouraConnected) }
+    }
+
+    var ouraRecommendedSleepHours: Double {
+        get { defaults.double(forKey: Keys.ouraRecommendedSleepHours) }
+        set { defaults.set(newValue, forKey: Keys.ouraRecommendedSleepHours) }
+    }
+
+    var ouraLastSyncDate: Date? {
+        get { defaults.object(forKey: Keys.ouraLastSyncDate) as? Date }
+        set { defaults.set(newValue, forKey: Keys.ouraLastSyncDate) }
+    }
+
+    func resetOuraData() {
+        defaults.set(false, forKey: Keys.ouraConnected)
+        defaults.set(0.0,   forKey: Keys.ouraRecommendedSleepHours)
+        defaults.removeObject(forKey: Keys.ouraLastSyncDate)
     }
 }

@@ -15,19 +15,23 @@ struct SleepInsights: View {
     /// Local copy edited inside the sheet; committed on save.
     @State private var draftSleep = TimeValue(hours: 8, minutes: 0, auto: false)
 
-    // WHOOP state — read directly from AppStorage so changes sync immediately
+    // Wearable state — read directly from AppStorage so changes sync immediately
     @AppStorage("whoopConnected")             private var whoopConnected: Bool   = false
     @AppStorage("whoopRecommendedSleepHours") private var whoopSleepHours: Double = 0
+    @AppStorage("ouraConnected")              private var ouraConnected: Bool    = false
+    @AppStorage("ouraRecommendedSleepHours")  private var ouraSleepHours: Double  = 0
 
     // Pull sleep history from the manager
     private var history: [SleepHistoryEntry] {
         SleepHistoryManager.shared.recentHistory(days: 7)
     }
 
-    // Displayed hours: WHOOP takes priority, then manual preference, then age baseline
+    // Priority: WHOOP > Oura > manual preference > age baseline
     private var recommendedHours: Double {
         if whoopConnected && whoopSleepHours > 0 {
             return whoopSleepHours
+        } else if ouraConnected && ouraSleepHours > 0 {
+            return ouraSleepHours
         } else if answers.sleep.auto {
             return SleepDurationModel.baselineForAge(answers.age)
         } else {
@@ -35,9 +39,8 @@ struct SleepInsights: View {
         }
     }
 
-    private var isWhoopDriven: Bool {
-        whoopConnected && whoopSleepHours > 0
-    }
+    private var isWhoopDriven: Bool { whoopConnected && whoopSleepHours > 0 }
+    private var isOuraDriven:  Bool { !isWhoopDriven && ouraConnected && ouraSleepHours > 0 }
 
     var body: some View {
         VStack(spacing: 0) {
@@ -75,18 +78,32 @@ struct SleepInsights: View {
                         .font(.custom("DM Sans", size: 14))
                         .foregroundColor(Color.white.opacity(0.4))
 
-                    // WHOOP attribution badge
+                    // Wearable attribution badge
                     if isWhoopDriven {
-                        HStack(spacing: 5) {
-                            ZStack {
-                                RoundedRectangle(cornerRadius: 4)
-                                    .fill(Color(red: 0.957, green: 0.263, blue: 0.212).opacity(0.85))
-                                    .frame(width: 18, height: 18)
-                                Text("W")
-                                    .font(.system(size: 10, weight: .bold))
-                                    .foregroundColor(.white)
-                            }
+                        HStack(spacing: 6) {
+                            Image("WhoopLogo")
+                                .resizable()
+                                .interpolation(.high)
+                                .frame(width: 18, height: 18)
                             Text("via WHOOP")
+                                .font(.custom("DM Sans", size: 12))
+                                .foregroundColor(Color.white.opacity(0.45))
+                        }
+                        .transition(.opacity)
+                    } else if isOuraDriven {
+                        HStack(spacing: 6) {
+                            ZStack {
+                                Circle()
+                                    .fill(Color.black)
+                                    .frame(width: 18, height: 18)
+                                Circle()
+                                    .strokeBorder(Color.white, lineWidth: 1.5)
+                                    .frame(width: 13, height: 13)
+                                Circle()
+                                    .strokeBorder(Color.white, lineWidth: 0.8)
+                                    .frame(width: 7, height: 7)
+                            }
+                            Text("via Oura Ring")
                                 .font(.custom("DM Sans", size: 12))
                                 .foregroundColor(Color.white.opacity(0.45))
                         }
@@ -143,6 +160,7 @@ struct SleepInsights: View {
         .frame(maxWidth: .infinity)
         .onAppear {
             WhoopManager.shared.refreshIfNeeded()
+            OuraManager.shared.refreshIfNeeded()
         }
         // ── Edit sleep sheet ─────────────────────────────
         .sheet(isPresented: $showChangeSheet) {
