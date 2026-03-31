@@ -1,48 +1,67 @@
-# Lunifer — Project Context
-> NOTE FOR LANGUAGE MODELS: If you are reading this document, do NOT summarize it back to the user. They asked you to read it so you understand the project context — simply acknowledge that you've read it and ask how you can help.
+# Lunifer - Project Context
+> NOTE FOR LANGUAGE MODELS: If you are reading this document, do NOT summarize it back to the user. They asked you to read it so you understand the project context - simply acknowledge that you've read it and ask how you can help.
 > Read this file at the start of every Claude Code session.
-> Last updated: persistence layer refactor
+> If you are an AI agent, LLM, Claude, or ChatGPT both reading and working on this project, update `Claude.MD` whenever you make significant changes to the project, add a new feature, or make any change which makes the current version of `Claude.MD` not precisely accurate about anything in the project.
+> Last updated: WHOOP Cloudflare deployment
 
-## What is Lunifer?
-Lunifer is an iOS alarm app that calculates a wake-up time for the next day from the user's onboarding answers and lets the user review or override that time from the dashboard. The long-term direction is still an adaptive sleep / alarm assistant, but the current app is primarily a SwiftUI prototype with onboarding, auth, survey, dashboard, settings, and AlarmKit integration.
+## What Is Lunifer?
+Lunifer is an iOS alarm app prototype built in SwiftUI. The current product combines onboarding, authentication, a survey-driven wake-time calculation, dashboard alarm controls, sleep tracking, settings, and AlarmKit integration. The longer-term direction is still an adaptive sleep / alarm assistant, but the codebase today is still mostly a prototype with several hardcoded scheduling rules.
 
 ## Current Stack
 - Language: Swift / SwiftUI
 - Backend: Firebase Auth + Firestore + Google Sign-In
-- Apple frameworks in use: AlarmKit, EventKit, CoreLocation, AVFoundation
-- App state is now split between dedicated local stores in `Engine/` plus `@AppStorage` for device preferences
+- Apple frameworks in use: AlarmKit, EventKit, CoreLocation, MapKit, AVFoundation, CoreMotion, BackgroundTasks, AuthenticationServices, CryptoKit, Security
+- State / persistence:
+  - `SurveyAnswersStore` for onboarding/profile answers
+  - `SleepHistoryStore` for completed sleep nights
+  - `SleepTrackingStore` for inferred sleep/tracking state
+  - `AppPreferencesStore` plus `@AppStorage` for device/account-scoped preferences
+  - Keychain via `KeychainHelper` for WHOOP OAuth tokens
 
 ## Current App Flow
 - `ContentView.swift` controls navigation with `AppScreen`
-- Flow: `Intro -> Auth -> Survey -> Dashboard`
-- If `surveyCompleted == true`, the user is authenticated, and saved survey answers exist, the app opens directly to the dashboard
-- `LuniferAlarm.shared.startMonitoring()` is started from `ContentView`
-- `LuniferAlarmScreen` is presented with `fullScreenCover` when an alarm is alerting
+- Flow is effectively `Intro -> Auth -> Survey -> Splash -> Dashboard`
+- Returning signed-in users with `surveyCompleted == true` and saved survey answers reopen through the splash screen, then animate into the dashboard
+- `LuniferAlarm.shared.startMonitoring()` starts from `ContentView`
+- `LuniferAlarmScreen` is presented with `fullScreenCover` whenever an alarm is actively alerting
+- `LuniferApp.swift` configures Firebase, registers the background sleep-analysis task, and purges corrupt legacy sleep-history entries on launch
 
 ## Project File Layout
-- App source currently lives under `Lunifer/Lunifer/`
-- Dashboard files live under `Lunifer/Lunifer/Screens/Dashboard/`
-- Bundled alarm sounds live under the project-root `Lunifer/Sounds/`
+- App source currently lives under `Lunifer/`
+- Dashboard files live under `Lunifer/Screens/Dashboard/`
+- Survey files live under `Lunifer/Screens/Survey/`
+- Sign-in files live under `Lunifer/Screens/SignIn/`
+- Bundled alarm sounds live under the project-root `Sounds/`
 
 ## Current Folder Summary
+- `ContentView.swift`: root navigation and returning-user bootstrap
+- `LuniferApp.swift`: app entry point, Firebase setup, background task registration
 - `Data/SurveyAnswersStore.swift`: local + Firestore persistence for onboarding/profile answers
 - `Data/SleepHistoryStore.swift`: local + Firestore persistence for completed sleep nights
-- `Data/SleepTrackingStore.swift`: persisted local state used by sleep inference and retroactive analysis
-- `Data/AppPreferencesStore.swift`: centralized app/device preference keys and helpers
-- `Data/AccountDataManager.swift`: clears account-scoped local data on sign out / delete account
+- `Data/SleepTrackingStore.swift`: persisted local state for retroactive sleep analysis and interaction logs
+- `Data/AppPreferencesStore.swift`: centralized preference keys and reset helpers
+- `Data/AccountDataManager.swift`: clears account-scoped local data on sign-out / delete account
 - `Engine/CalendarManager.swift`: EventKit authorization and calendar event access
-- `Engine/LocationManager.swift`: Core Location authorization status tracking
-- `Engine/LuniferAlarm.swift`: AlarmKit scheduling and alarm behavior logging hooks
-- `Engine/isAsleep/*`: sleep duration heuristics, feature collection, prediction, and tracking
+- `Engine/LocationManager.swift`: Core Location authorization-status tracking only
+- `Engine/LuniferAlarm.swift`: AlarmKit scheduling / monitoring
+- `Engine/WhoopManager.swift`: WHOOP OAuth + sleep-need fetch / refresh logic
+- `Engine/KeychainHelper.swift`: Security-wrapper for WHOOP token storage
+- `Engine/isAsleep/*`: sleep feature collection, prediction, historical reconstruction, and tracking
+- `Notifications/BatteryAlarmNotification.swift`: battery survival prediction for upcoming alarm
+- `Notifications/WakeNotification.swift`: pre-bedtime "alarm set" reminder notification
 - `Screens/Intro/*`: onboarding intro flow
-- `Screens/Survey/LuniferSurvey.swift`: survey flow UI and step sequencing
-- `Screens/Survey/SurveyObjects.swift`: shared survey UI pieces such as calendar icons and `TimeScalePicker`
-- `Screens/LuniferAuth.swift`: auth UI
-- `Screens/Dashboard/LuniferMain.swift`: main dashboard, alarm page, rest page, sound picker sheet, and sleep insights paging container
-- `Screens/Dashboard/SleepInsights.swift`: recommended sleep duration card and 7-day sleep history chart
-- `Screens/Dashboard/LuniferSettings.swift`: settings root, About You (with `HomeLocationSheet` + `HomeLocationSearchCompleter` for manual home address entry), Wake Days, and Notifications screens
-- `Utils/Utils.swift`: shared colors, background utilities, and reusable visual helpers
-- `Sounds/` (project root): bundled alarm audio resources
+- `Screens/SignIn/LuniferAuth.swift`: email/password + Google auth UI
+- `Screens/Survey/LuniferSurvey.swift`: survey flow UI plus `SurveyAnswers` and `TimeValue`
+- `Screens/Survey/SurveyObjects.swift`: shared survey UI pieces and icons
+- `Screens/Dashboard/LuniferMain.swift`: dashboard, rest view, sound picker, added alarm flow
+- `Screens/Dashboard/SleepInsights.swift`: recommended sleep card and 7-day sleep chart
+- `Screens/Dashboard/LuniferSettings.swift`: settings root, About You, Wake Days, Notifications, home-location UI, sign out, delete account
+- `Utils/Utils.swift`: shared colors, backgrounds, and reusable visual helpers
+- `Sounds/`: bundled alarm audio resources
+- `privacy-policy.html` (repo root): public privacy policy page template for app listings and OAuth metadata
+- `public/privacy-policy.html`: Firebase Hosting copy of the privacy policy page
+- `public/index.html`: minimal Firebase Hosting landing page for policy links
+- `cloudflare-worker/`: Cloudflare Worker backend for WHOOP token exchange, refresh, and sleep fetch
 
 ## Survey Status
 `SurveyAnswers` currently contains:
@@ -59,193 +78,280 @@ Current survey step order in `LuniferSurvey.swift`:
 2. Lifestyle
 3. Wake days
 4. Calendar
-5. Sleep duration
+5. Sleep duration / WHOOP sleep recommendation
 6. Morning routine duration, skipped for `not_working`
 7. Commute duration, only for `student` or `commuter`
 
 Notes:
 - `wakeDays` defaults to `["mon", "tue", "wed", "thu", "fri"]`
 - The wake-day screen uses 7 circular weekday buttons
-- `SurveyAnswers` still exposes `loadFromDefaults()`, `saveToDefaults()`, and `saveToFirestore()`, but those now delegate to `SurveyAnswersStore.shared`
+- `SurveyAnswers` still exposes `loadFromDefaults()`, `saveToDefaults()`, and `saveToFirestore()`, but these delegate to `SurveyAnswersStore.shared`
 - Initial survey completion writes the full onboarding payload through `SurveyAnswersStore.saveInitialProfile(_:)`
-- Incremental settings sync still writes `age`, `lifestyle`, `calendar`, `routine`, `commute`, and `updatedAt`
-- Sleep and wake-day values are still persisted locally, but are not currently included in the incremental `saveToFirestore()` path
+- Incremental settings sync writes `age`, `lifestyle`, `wakeDays`, `calendar`, `routine`, `commute`, and `updatedAt`
+- Incremental settings sync still does not write `sleep`; sleep changes in `SleepInsights` are saved locally and sent through `answers.saveToFirestore()`, but `syncProfile(_:)` omits the `sleep` payload
 
 ## Location Permission Flow
 Current behavior in `LuniferSurvey.swift`:
-- Commute auto mode requests `When In Use` first
-- If the user grants `authorizedWhenInUse`, Lunifer shows its own upgrade alert and then requests `Always`
-- If the user denies location once, Lunifer shows an alert explaining `Always` is required
+- Commute auto mode requests `Always` authorization directly through `LocationManager.requestAlwaysAuthorization()`
+- If the user grants only `authorizedWhenInUse`, Lunifer shows an upgrade alert prompting them toward `Always`
+- If the user denies location once, Lunifer shows an alert explaining that `Always` is required
 - If the user tries again after denial, Lunifer opens a Settings redirect flow because iOS will not re-show the system prompt
 
-## Home Location — How It Works
-Home location is set **manually** by the user via an address-search sheet — there is no automatic GPS inference of where the user lives.
+## Home Location
+Home location is set manually by the user through address search. There is no automatic GPS inference of where the user lives.
 
-Full flow:
-- `AboutYouSettingsView` (`LuniferSettings.swift`) shows a "Home" row at the bottom of the settings list
-- Tapping "Set" (or "Change") presents `HomeLocationSheet` as a `.large` sheet
-- `HomeLocationSheet` uses `MKLocalSearchCompleter` (via the `HomeLocationSearchCompleter` NSObject wrapper, also in `LuniferSettings.swift`) to provide live address autocomplete as the user types
-- Selecting a suggestion fires an `MKLocalSearch` request; the resolved `CLLocationCoordinate2D` is pinned on a MapKit `Map` view
-- Tapping "Confirm Home" writes four `@AppStorage` values: `homeLatitude` (Double), `homeLongitude` (Double), `homeLocationSet` (Bool = true), `homeLocationName` (String — the display address)
-- These keys are declared in `AppPreferencesStore.Keys` and are cleared by `AppPreferencesStore.shared.resetHomeLocation()`, which is called from `AccountDataManager.shared.clearLocalAccountData()` on sign-out/delete — so they are correctly treated as account-scoped data
+Current flow:
+- `AboutYouSettingsView` in `LuniferSettings.swift` shows a "Home" row
+- Tapping "Set" / "Change" presents `HomeLocationSheet`
+- `HomeLocationSheet` uses `MKLocalSearchCompleter` through `HomeLocationSearchCompleter`
+- Selecting a suggestion resolves it with `MKLocalSearch` and pins the coordinate on a MapKit `Map`
+- Tapping "Confirm Home" writes:
+  - `homeLatitude`
+  - `homeLongitude`
+  - `homeLocationSet`
+  - `homeLocationName`
+- These keys are declared in `AppPreferencesStore.Keys` and cleared by `AppPreferencesStore.shared.resetHomeLocation()`, which is called from `AccountDataManager.shared.clearLocalAccountData()`
 
-**Critical gap:** the stored home coordinates are not yet wired into any alarm or commute calculation. The dashboard's `wakeUpTime` / `calculatedAlarmDate` logic in `LuniferMain.swift` does not read home location at all. When `commute.auto == true`, the alarm calculation falls back to a hardcoded 30-minute commute — it does not compute a real travel time from the stored home coordinates. The home location storage infrastructure is in place, but the routing/commute-time calculation that would use it has not been implemented.
+Critical gap:
+- The stored home coordinates are not yet used in alarm or commute calculations
+- `LuniferMain.swift` still falls back to a hardcoded 30-minute commute when `answers.commute.auto == true`
+- No route-time calculation from stored home coordinates to a destination has been implemented
 
 ## Dashboard Status
-`LuniferMain.swift` currently does the following:
-- Uses a horizontal `TabView` with two pages: `SleepInsights` on the left and the main dashboard/rest view on the right
+`LuniferMain.swift` currently:
+- Uses a horizontal `TabView` with two pages: `SleepInsights` on the left and the main dashboard/rest page on the right
 - Shows tomorrow's calculated alarm time
-- Lets the user expand the alarm row
-- Allows manual override with a wheel-style `DatePicker`
-- Includes a `Sound` row inside the expanded alarm dropdown and shows the currently selected sound name
+- Supports manual override with a wheel-style `DatePicker`
+- Includes a `Sound` row inside the expanded alarm UI and shows the selected sound name
 - Opens `LuniferSettings` from the gear button
-- Supports an additional manually added alarm via the top-left add alarm control
-- Switches to a rest-period page when upcoming wake days indicate time off after today's alarm window
-- Starts `SleepTracker.shared.startTracking()` and `BatteryAlarmNotification.shared.startMonitoring()` from the dashboard task
+- Supports an additional manually added alarm from the top-left add-alarm control
+- Switches to a rest page when wake-day selection indicates upcoming days off after today's alarm window
+- Starts:
+  - `SleepTracker.shared.startTracking()`
+  - `BatteryAlarmNotification.shared.startMonitoring()`
+  - `LuniferAlarm.shared.startAdaptiveRescheduling()`
+  - `WakeNotification.shared.schedule(...)`
 - Stores enable / disable state with `@AppStorage("luniferEnabled")`
-- Stores selected alarm sound with `@AppStorage("selectedAlarmSound")`, defaulting to `"DeafultAlarm.wav"`
+- Stores selected sound with `@AppStorage("selectedAlarmSound")`, defaulting to `"DeafultAlarm.wav"`
+- Persists manual override state with `overrideActive` / `overrideTimestamp`
+- Persists an added alarm with its own timestamp, sound, label, and snooze settings
 
-`SoundSettingsView` (defined in `LuniferMain.swift`):
-- Lists all 7 bundled sounds via `SoundOption.all`
-- Tapping a row selects it (purple checkmark) and previews it via `AVAudioPlayer`
-- Selection persisted via `@AppStorage("selectedAlarmSound")`
+Current scheduling limitation:
+- The dashboard alarm calculation is still rule-based and hardcoded around an `8:00 AM` target
+- Routine and commute offsets are applied to that target
+- Calendar events are not yet driving the final alarm time end-to-end
+- Wake days mainly affect rest-period handling, not full schedule generation
 
+## Sleep Insights / Sleep Persistence
 `SleepInsights.swift` currently:
-- Shows a recommended sleep duration card based on either the user's selected sleep duration or the age-based baseline from `SleepDurationModel`
-- Opens a sheet to edit the sleep duration using `TimeScalePicker`
+- Shows a recommended sleep duration card
+- Opens a sheet to edit sleep duration using `TimeScalePicker`
 - Shows a 7-day sleep history chart backed by `SleepHistoryManager.shared.recentHistory(days: 7)`
 
-Sleep persistence now works like this:
-- `SleepTracker` detects sleep onset / wake events
-- `SleepFeatureCollector` gathers and reconstructs the raw signals for prediction
-- `SleepTrackingStore` persists the tracking-related local state such as interaction logs, historical average onset, and retroactive-analysis timestamps
+Sleep persistence currently works like this:
+- `SleepTracker` runs foreground predictions and background retroactive analysis
+- `SleepFeatureCollector` gathers live and reconstructed motion / interaction signals
+- `SleepTrackingStore` persists interaction logs, historical average onset, sleep-event logs, and retroactive-analysis timestamps
 - `SleepHistoryStore` persists completed nights locally and to Firestore
-- `SleepHistoryManager` is now a compatibility wrapper over `SleepHistoryStore`
+- `SleepHistoryManager` remains a compatibility wrapper over `SleepHistoryStore`
+- `LuniferApp` calls `SleepHistoryStore.shared.purgeBadEntries()` on launch to scrub unrealistic legacy entries outside the 3-12 hour range
 
-`SoundOption` struct (defined in `LuniferMain.swift`):
-- Maps filenames to display names
-- `SoundOption.displayName(for:)` used by the dashboard Sound row
+## Sound Options
+`SoundOption` in `LuniferMain.swift` maps filenames to display names.
 
-Available sounds and their filenames:
-- Default Alarm → `DeafultAlarm.wav`
-- Alarm Clock → `Alarm Clock.mp3`
-- Church Bells → `Church Bells.wav`
-- Crystal Bowl → `Crystal Bowl Rythym audio .m4a`
-- Space → `Space.wav`
-- Twin Alarm Bell → `Twin Alarm Bell.wav`
-- Clock Alarm → `microsammy-clock-alarm-8761.mp3`
-
-Important limitation:
-- The dashboard alarm calculation is still rule-based and mostly hardcoded around a `9:00 AM` target, routine duration, and commute duration
-- It is not yet fully driven by real calendar events or the selected wake days
+Available sounds:
+- Default Alarm -> `DeafultAlarm.wav`
+- Alarm Clock -> `Alarm Clock.mp3`
+- Church Bells -> `Church Bells.wav`
+- Crystal Bowl -> `Crystal Bowl Rythym audio .m4a`
+- Space -> `Space.wav`
+- Twin Alarm Bell -> `Twin Alarm Bell.wav`
+- Clock Alarm -> `microsammy-clock-alarm-8761.mp3`
 
 ## Settings Status
 `LuniferSettings.swift` currently contains:
 - Root settings screen
-- Notifications settings
-- Wake Days settings
-- Snooze time control
+- Navigation to About You
+- Navigation to Notifications
+- Navigation to Wake Days
 - Sign out action
-- Delete account action
-- Navigation to `AboutYouSettingsView`
+- Delete account action with reauthentication flow
 
 `AboutYouSettingsView` currently supports editing:
 - Age
 - Lifestyle
 - Calendar
+- Home location
 
-Behavior:
-- Each field shows a `Change` action
-- Tapping `Change` expands inline controls
-- Changes are written back to `SurveyAnswers`
+Behavior notes:
 - Age, lifestyle, and calendar changes are saved locally and synced through the survey/store layer
+- Wake days are editable in a dedicated screen and sync through `answers.saveToDefaults()` / `answers.saveToFirestore()`
+- Notifications screen currently covers `batteryAlertEnabled` and `wakeReminderEnabled`
 
 Not currently present:
-- A rebuilt Sleep settings detail screen
-- Additional settings pages beyond About You, Wake Days, Notifications, and the basic Sound screen
+- A dedicated WHOOP settings / disconnect screen
+- A rebuilt sleep settings detail screen outside `SleepInsights`
+- Additional deeper settings pages beyond About You, Wake Days, Notifications, and the basic sound flows
 
 ## Auth / Firebase Status
 - Email/password auth exists
 - Google Sign-In exists
-- Survey results are written to Firestore
-- Existing code still writes survey/profile data directly to `users/{uid}` with `setData(...)`
+- Survey results write directly to `users/{uid}` with `setData(...)`
 - Sleep history writes to `users/{uid}/sleepHistory/{yyyy-mm-dd}`
-- Current data is written directly to `users/{uid}`, not to a nested `profile` document
+- Account deletion removes:
+  - `users/{uid}`
+  - `users/{uid}/sleepHistory/*`
+  - `users/{uid}/alarmInferences/*`
+- Data is still stored directly on `users/{uid}`, not in a nested profile document
 
 ## Alarm / Calendar Status
 - AlarmKit authorization and monitoring are integrated
 - The app can schedule alarms through `LuniferAlarm.shared`
-- Calendar authorization can be requested from the survey when a calendar option is selected
-- `CalendarManager` exists, but the dashboard is not yet using first-event-tomorrow scheduling end-to-end
-- The main dashboard logic is still largely rule-based around a `9:00 AM` target, routine duration, and commute duration, with wake days used mainly for rest-period handling
+- Dashboard startup re-checks alarm authorization and CoreMotion authorization, surfacing settings alerts when denied
+- `CalendarManager` can request EventKit access and fetch today / upcoming events
+- `CalendarManager.firstEventTomorrow` exists as a useful accessor, but the dashboard is not yet consuming it end-to-end
+- Main alarm logic remains mostly rule-based, not truly calendar-driven
 
 ## Design / UI Notes
 - The app uses a dark purple visual style
 - Headings typically use `Cormorant Garamond`
-- Body text typically uses `DM Sans`
+- Body text typically use `DM Sans`
 - `LuniferBackground()` / `Color.luniferBg` and `StarsView()` are reused across major screens
 
 ## WHOOP Integration
+WHOOP connectivity is implemented and currently affects onboarding plus sleep recommendations.
 
-WHOOP connectivity is implemented and ships three new files plus modifications to existing ones.
+### Core Files
+- `Engine/WhoopManager.swift`
+  - `@MainActor final class`
+  - Singleton: `WhoopManager.shared`
+  - Handles OAuth 2.0 + PKCE through `ASWebAuthenticationSession`
+  - Uses the WHOOP client ID in-app to start the OAuth flow
+  - Sends the WHOOP auth code + PKCE verifier to the Cloudflare Worker backend
+  - Fetches WHOOP-derived recommended sleep time through the backend
+  - Persists:
+    - `whoopConnected`
+    - `whoopRecommendedSleepHours`
+    - `whoopLastSyncDate`
+  - Exposes published state:
+    - `isConnected`
+    - `recommendedSleepHours`
+    - `isLoading`
+    - `errorMessage`
+    - `lastSyncDate`
+  - Supports `disconnect()`, but there is no UI wired to it yet
+- `Engine/KeychainHelper.swift`
+  - Lightweight `Security` wrapper around `kSecClassGenericPassword`
+  - Keys are namespaced to `Bundle.main.bundleIdentifier`
+  - WHOOP token keys still exist in code for legacy/local cleanup paths, but production WHOOP token storage now lives in Cloudflare KV instead of the app keychain
 
-### New files
-- `Engine/KeychainHelper.swift` — lightweight `Security` framework wrapper (`save`, `load`, `delete`) using `kSecClassGenericPassword`. Keys are namespaced to `Bundle.main.bundleIdentifier`. The only keys currently used are `whoop_access_token` and `whoop_refresh_token` (declared in `KeychainHelper.Keys`).
-- `Engine/WhoopManager.swift` — `@MainActor final class`, singleton (`WhoopManager.shared`). Handles the full OAuth 2.0 + PKCE flow via `ASWebAuthenticationSession`, token refresh, nightly sleep-need fetch, and disconnect. Published state: `isConnected`, `recommendedSleepHours`, `isLoading`, `errorMessage`, `lastSyncDate`.
+### Backend
+- `cloudflare-worker/src/index.js`
+  - Verifies Firebase ID tokens server-side
+  - Exchanges WHOOP auth codes for tokens using Worker secrets
+  - Refreshes WHOOP tokens server-side
+  - Fetches WHOOP sleep-need data from WHOOP v2 endpoints
+  - Stores per-user WHOOP token data in Cloudflare KV under a key derived from Firebase UID
+- `cloudflare-worker/wrangler.toml`
+  - Worker name: `lunifer-whoop`
+  - KV binding: `WHOOP_TOKENS`
+  - `FIREBASE_PROJECT_ID` currently set to `lunifer-ce086`
+- Current deployed Worker URL:
+  - `https://lunifer-whoop.dougiebrown516.workers.dev`
 
-### Modified files
-- `Data/AppPreferencesStore.swift` — four new keys: `whoopConnected` (Bool), `whoopRecommendedSleepHours` (Double), `whoopLastSyncDate` (Date?), `whoopTokenExpiry` (Date?). New `resetWhoopData()` method clears all four.
-- `Data/AccountDataManager.swift` — `clearLocalAccountData()` now also calls `KeychainHelper.delete` for both token keys and `AppPreferencesStore.shared.resetWhoopData()`.
-- `Screens/Survey/LuniferSurvey.swift` — `stepSleep` now shows a "Let my WHOOP decide" `OptionCard` above the `TimeScalePicker`. State: `whoopSelected`, `whoopLoading`, `whoopRecommendedHours`, `whoopError`. `canNext` for step 4 blocks until WHOOP returns data if selected. `connectWhoop()` async func launches the OAuth flow; cancellation silently deselects the card. On success the fetched hours are written back into `answers.sleep` so downstream alarm logic is unaffected.
-- `Screens/Dashboard/SleepInsights.swift` — `recommendedHours` now checks `whoopConnected && whoopSleepHours > 0` first. A small "via WHOOP" badge (red W icon) appears below the recommendation text when WHOOP is driving the value. `.onAppear` calls `WhoopManager.shared.refreshIfNeeded()` to silently re-sync if last sync was > 12 hours ago.
+### UI Integration
+- `Screens/Survey/LuniferSurvey.swift`
+  - Step 4 includes a "Let my WHOOP decide" `OptionCard`
+  - Survey state adds:
+    - `whoopSelected`
+    - `whoopLoading`
+    - `whoopRecommendedHours`
+    - `whoopError`
+  - If WHOOP is selected, the user cannot continue until a recommendation is fetched
+  - `connectWhoop()`:
+    - uses existing cached WHOOP connection when present
+    - otherwise launches the OAuth flow
+    - silently deselects WHOOP on cancellation
+    - writes fetched hours back into `answers.sleep` so downstream alarm logic keeps working without a separate WHOOP-specific alarm path
+- `Screens/Dashboard/SleepInsights.swift`
+  - `recommendedHours` prioritizes WHOOP when `whoopConnected && whoopSleepHours > 0`
+  - Shows a small "via WHOOP" badge when WHOOP is driving the recommendation
+  - Calls `WhoopManager.shared.refreshIfNeeded()` on appear to silently resync if the last sync is older than 12 hours
 
-### Sleep need formula
-```
+### Persistence / Cleanup
+- `Data/AppPreferencesStore.swift`
+  - Defines WHOOP preference keys and `resetWhoopData()`
+- `Data/AccountDataManager.swift`
+  - Clears WHOOP keychain tokens and WHOOP preferences on sign-out / delete account
+- `cloudflare-worker/src/index.js`
+  - Stores WHOOP token payloads in Cloudflare KV keyed by Firebase user ID
+  - Verifies Firebase ID tokens server-side before serving WHOOP routes
+- `SleepHistoryStore` is **not** currently populated from WHOOP. WHOOP is only being used for recommended sleep duration, not full sleep-history import.
+
+### Sleep Need Formula
+WHOOP sleep need is derived from `GET /developer/v1/cycle?limit=1` using:
+
+```text
 total_ms = baseline_milli
          + need_from_sleep_debt_milli
          + need_from_recent_strain_milli
          - need_from_recent_nap_milli
-hours    = total_ms / 3_600_000    (clamped to [5, 12])
-```
-Source: `GET /developer/v1/cycle?limit=1` → `records[0].score.sleep_needed`
 
-### Setup required before testing
-1. Create a WHOOP Developer app at https://app.whoop.com/settings/developer
-2. Set redirect URI to `lunifer://whoop/callback`
-3. Replace `API.clientID` and `API.clientSecret` in `WhoopManager.swift` with your app credentials
-4. Verify `lunifer` URL scheme is registered — **no Info.plist change needed**; `ASWebAuthenticationSession` intercepts the callback scheme automatically
+hours = total_ms / 3_600_000
+hours is clamped to [5, 12]
+```
+
+### Setup Required Before Testing
+1. Create a WHOOP Developer app.
+2. Set redirect URI to `lunifer://whoop/callback`.
+3. Replace `API.clientID` in `WhoopManager.swift` with the real WHOOP client ID.
+4. Ensure the `lunifer` URL scheme is available to the app.
+5. Deploy the Cloudflare Worker backend and set Worker secrets for `WHOOP_CLIENT_ID` and `WHOOP_CLIENT_SECRET`.
+6. Create and bind the Cloudflare KV namespace used for `WHOOP_TOKENS`.
+7. Ensure the privacy policy is publicly hosted and linked in the WHOOP dashboard.
+8. `Backend.baseURL` in `WhoopManager.swift` now points at the deployed Worker URL; update it if the Worker URL changes.
+
+### Current WHOOP Limitations
+- WHOOP only affects the recommended sleep duration / onboarding sleep answer
+- WHOOP does not yet have a settings management UI
+- There is no in-app disconnect entry point in `LuniferSettings`
+- The integration depends on Cloudflare Worker deployment and secret configuration before it will function end-to-end
+- Lunifer does not currently import or store full WHOOP sleep-history entries in `SleepHistoryStore`
+- WHOOP is currently used to display recommended sleep time, not as a full historical sleep-sync integration
 
 ## Known Gaps
-- Wake-day selection now affects rest-period handling, but not a full calendar-driven alarm calculation
-- Selected alarm sound is stored in `@AppStorage` but not yet passed to AlarmKit when scheduling — wiring `selectedAlarmSound` into `LuniferAlarm.shared.scheduleAlarm` is still needed
-- Settings coverage is partial after recent rebuilding
-- `SurveyAnswers` and `TimeValue` still live inside `LuniferSurvey.swift` rather than a dedicated model file
-- Persistence is cleaner than before, but some wrappers remain for compatibility and the storage layer could still be consolidated further
-- Home location coordinates (`homeLatitude` / `homeLongitude`) are stored in `AppPreferencesStore` but are not yet consumed anywhere — `wakeUpTime` / `calculatedAlarmDate` in `LuniferMain.swift` still fall back to a hardcoded 30 min commute when `commute.auto == true`. A real routing/travel-time calculation from the stored home coordinates to the user's destination has not been implemented.
-- `LocationManager.swift` only tracks Core Location authorization status — it never starts location updates or reads the device's actual GPS position. No automatic home detection or geofencing exists in the current codebase.
-- WHOOP integration requires developer credentials (`API.clientID` / `API.clientSecret` in `WhoopManager.swift`) before the OAuth flow will work. Placeholders are in place.
-- There is no UI to disconnect WHOOP from settings yet — `WhoopManager.shared.disconnect()` exists but is not wired into `LuniferSettings`.
+- Wake-day selection affects rest-period handling, but not a full calendar-driven alarm calculation
+- Selected alarm sound is stored in `@AppStorage`, but is not fully wired through every AlarmKit scheduling path
+- Main alarm calculation is still hardcoded around an 8:00 AM target
+- `SurveyAnswers` and `TimeValue` still live inside `LuniferSurvey.swift` instead of a dedicated model file
+- Home location coordinates are stored but not consumed in routing / commute calculations
+- `LocationManager.swift` only tracks authorization status; it does not start location updates or read actual device position
+- WHOOP integration requires real developer credentials before OAuth will work
+- There is no UI to disconnect WHOOP from settings
+- Incremental survey/profile sync still omits `sleep`
 
 ## Practical Guidance For Future Sessions
-- Do not assume `Claude.md` is authoritative without checking code first
-- `LuniferSurvey.swift` currently contains both the survey UI and the `SurveyAnswers` / `TimeValue` models
-- `SurveyObjects.swift` contains shared survey view components, while `LuniferSurvey.swift` still defines `SurveyAnswers` and `TimeValue`
+- Do not assume `Claude.MD` is authoritative without checking code first
+- `LuniferSurvey.swift` still contains both the survey UI and the `SurveyAnswers` / `TimeValue` models
+- `SurveyObjects.swift` contains shared survey UI components, while `LuniferSurvey.swift` still defines `SurveyAnswers` and `TimeValue`
 - `LuniferSettings` must receive `@Binding var answers: SurveyAnswers`
-- `LuniferMain` is the dashboard entry point to Settings, Sound, Sleep Insights, and the rest-period page
-- Use `AccountDataManager.shared.clearLocalAccountData()` for account-scoped cleanup instead of removing `UserDefaults` keys in a view
+- `LuniferMain` is the dashboard entry point to settings, sound, sleep insights, the rest page, and added alarms
+- Use `AccountDataManager.shared.clearLocalAccountData()` for account-scoped cleanup instead of deleting `UserDefaults` keys directly in a view
 - Treat the persistence split as:
   - `SurveyAnswersStore` for onboarding/profile persistence
   - `SleepHistoryStore` for completed-night history
   - `SleepTrackingStore` for inferred sleep/tracking state
-  - `AppPreferencesStore` for device preferences and preference keys
+  - `AppPreferencesStore` for preference keys and reset helpers
+  - `KeychainHelper` for WHOOP tokens
 - If you change survey fields, update:
   - `SurveyAnswers`
   - survey step logic / `totalSteps`
   - validation in `canNext`
   - `SurveyAnswersStore.saveInitialProfile(_:)`
-  - incremental sync payload in `SurveyAnswersStore.syncProfile(_:)`
+  - `SurveyAnswersStore.syncProfile(_:)`
   - any settings screens that edit those answers
-- If you add, remove, or rename any `@AppStorage` / `UserDefaults` key anywhere in the codebase, you MUST also:
-  - Add or remove the corresponding static key in `AppPreferencesStore.Keys` (`Data/AppPreferencesStore.swift`)
-  - If the value is account-scoped (i.e. it should be wiped on sign out or account deletion), add a reset call inside the appropriate reset method in `AppPreferencesStore` and make sure `AccountDataManager.clearLocalAccountData()` calls it
-  - If the value is sensitive or user-specific (e.g. location, personal preferences), ensure it is cleared on sign out so it does not leak to a subsequent user on the same device
+- If you add, remove, or rename any `@AppStorage` / `UserDefaults` key anywhere in the codebase, you must also:
+  - add or remove the corresponding static key in `AppPreferencesStore.Keys`
+  - add reset logic in `AppPreferencesStore` if the value is account-scoped
+  - ensure `AccountDataManager.clearLocalAccountData()` clears it when appropriate
+  - clear user-specific values on sign-out so they do not leak to the next user on the same device
