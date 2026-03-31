@@ -517,12 +517,13 @@ struct AboutYouSettingsView: View {
 
                     case "lifestyle":
                         VStack(spacing: 8) {
-                            ForEach([
+                            let lifestyleOptions: [(String, String)] = [
                                 ("student", "Student"),
                                 ("commuter", "Commuter"),
                                 ("wfh", "Work From Home"),
                                 ("not_working", "Not Working")
-                            ], id: \.0) { id, title in
+                            ]
+                            ForEach(lifestyleOptions, id: \.0) { id, title in
                                 Button {
                                     answers.lifestyle = id
                                 } label: {
