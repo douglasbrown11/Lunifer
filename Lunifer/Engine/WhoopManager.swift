@@ -1,92 +1,41 @@
 import Foundation
 import AuthenticationServices
 import CryptoKit
-
-// ─────────────────────────────────────────────────────────────
-// WhoopManager
-// ─────────────────────────────────────────────────────────────
-// Handles the full WHOOP OAuth 2.0 + PKCE flow and nightly
-// sleep-need retrieval via the WHOOP Developer API.
-//
-// DATA FLOW:
-//   connect()
-//     → ASWebAuthenticationSession (OAuth consent)
-//     → exchangeCodeForTokens()  → Keychain
-//     → fetchSleepNeed()         → AppPreferencesStore + @Published
-//
-// SLEEP NEED FORMULA (from /v1/cycle response):
-//   total_ms = baseline_milli
-//            + need_from_sleep_debt_milli
-//            + need_from_recent_strain_milli
-//            - need_from_recent_nap_milli
-//   hours    = total_ms / 3_600_000
-//   clamped to [5, 12] hours
-//
-// REFRESH STRATEGY:
-//   - Access token refreshed automatically when < 5 min to expiry
-//   - refreshIfNeeded() called at app launch / dashboard appear
-//     to silently re-sync if last sync was > 12 hours ago
-
-// MARK: - Error
+import FirebaseAuth
 
 enum WhoopError: LocalizedError {
     case cancelled
     case missingAuthCode
     case invalidURL
-    case noRefreshToken
     case notAuthenticated
+    case backendUnavailable
+    case backendError(String)
     case noData
-    case httpError(Int)
+    case invalidResponse
 
     var errorDescription: String? {
         switch self {
-        case .cancelled:          return "Authorization was cancelled."
-        case .missingAuthCode:    return "No authorization code returned by WHOOP."
-        case .invalidURL:         return "Could not construct the WHOOP API URL."
-        case .noRefreshToken:     return "No refresh token available. Please reconnect WHOOP."
-        case .notAuthenticated:   return "Not connected to WHOOP."
-        case .noData:             return "No sleep data returned by WHOOP."
-        case .httpError(let c):   return "WHOOP API returned HTTP \(c)."
+        case .cancelled: return "Authorization was cancelled."
+        case .missingAuthCode: return "No authorization code returned by WHOOP."
+        case .invalidURL: return "Could not construct the WHOOP API URL."
+        case .notAuthenticated: return "Sign in to Lunifer before connecting WHOOP."
+        case .backendUnavailable: return "WHOOP backend is not configured yet."
+        case .backendError(let message): return message
+        case .noData: return "No sleep data returned by WHOOP."
+        case .invalidResponse: return "WHOOP returned an invalid response."
         }
     }
 }
 
-// MARK: - Response Models
-
-private struct WhoopTokenResponse: Decodable {
-    let access_token: String
-    let refresh_token: String
-    let expires_in: Int       // seconds
-    let token_type: String
+private struct WhoopBackendStatusResponse: Decodable {
+    let connected: Bool
+    let recommendedSleepHours: Double?
+    let lastSyncDate: String?
 }
-
-private struct WhoopCycleResponse: Decodable {
-    let records: [WhoopCycle]
-}
-
-private struct WhoopCycle: Decodable {
-    let score: WhoopCycleScore?
-}
-
-private struct WhoopCycleScore: Decodable {
-    let sleep_needed: WhoopSleepNeeded?
-}
-
-private struct WhoopSleepNeeded: Decodable {
-    let baseline_milli: Int
-    let need_from_sleep_debt_milli: Int
-    let need_from_recent_strain_milli: Int
-    let need_from_recent_nap_milli: Int
-}
-
-// MARK: - WhoopManager
 
 @MainActor
 final class WhoopManager: NSObject, ObservableObject, ASWebAuthenticationPresentationContextProviding {
-
     static let shared = WhoopManager()
-
-    // MARK: Published state
 
     @Published private(set) var isConnected: Bool = false
     @Published private(set) var recommendedSleepHours: Double = 0
@@ -94,36 +43,33 @@ final class WhoopManager: NSObject, ObservableObject, ASWebAuthenticationPresent
     @Published private(set) var errorMessage: String? = nil
     @Published private(set) var lastSyncDate: Date? = nil
 
-    // MARK: Private
-
     private var authSession: ASWebAuthenticationSession?
 
-    // MARK: - API Constants
-    // Replace clientID and clientSecret with your actual WHOOP Developer credentials
-    // from https://app.whoop.com/settings/developer
-
     private enum API {
-        static let clientID     = "YOUR_WHOOP_CLIENT_ID"        // ← replace
-        static let clientSecret = "YOUR_WHOOP_CLIENT_SECRET"    // ← replace
-        static let redirectURI  = "lunifer://whoop/callback"
-        static let authURL      = "https://api.prod.whoop.com/oauth/oauth2/auth"
-        static let tokenURL     = "https://api.prod.whoop.com/oauth/oauth2/token"
-        static let cycleURL     = "https://api.prod.whoop.com/developer/v1/cycle"
-        static let scopes       = "read:sleep read:cycles offline"
+        static let clientID = "YOUR_WHOOP_CLIENT_ID"
+        static let redirectURI = "lunifer://whoop/callback"
+        static let authURL = "https://api.prod.whoop.com/oauth/oauth2/auth"
+        static let scopes = "read:sleep read:cycles offline"
     }
 
-    // MARK: - Init
+    private enum Backend {
+        static let baseURL = "https://lunifer-whoop.dougiebrown516.workers.dev"
+        static let exchangeCodePath = "/whoop/exchange-code"
+        static let fetchSleepNeedPath = "/whoop/fetch-sleep-need"
+        static let disconnectPath = "/whoop/disconnect"
+    }
 
     override private init() {
         super.init()
-        // Restore persisted state on launch
         let prefs = AppPreferencesStore.shared
-        isConnected           = prefs.whoopConnected
+        isConnected = prefs.whoopConnected
         recommendedSleepHours = prefs.whoopRecommendedSleepHours
-        lastSyncDate          = prefs.whoopLastSyncDate
+        lastSyncDate = prefs.whoopLastSyncDate
     }
 
-    // MARK: - PKCE Helpers
+    private var baseBackendURL: URL? {
+        URL(string: Backend.baseURL)
+    }
 
     private func generateCodeVerifier() -> String {
         var buffer = [UInt8](repeating: 0, count: 64)
@@ -145,38 +91,33 @@ final class WhoopManager: NSObject, ObservableObject, ASWebAuthenticationPresent
             .replacingOccurrences(of: "=", with: "")
     }
 
-    // MARK: - Connect
-
-    /// Launches the OAuth consent flow. Throws WhoopError.cancelled silently
-    /// (user just closed the sheet — no error message needed).
     func connect() async throws {
+        guard Auth.auth().currentUser != nil else { throw WhoopError.notAuthenticated }
+
         isLoading = true
         errorMessage = nil
-
         defer { isLoading = false }
 
-        let verifier  = generateCodeVerifier()
+        let verifier = generateCodeVerifier()
         let challenge = generateCodeChallenge(from: verifier)
-        let state     = UUID().uuidString
+        let state = UUID().uuidString
 
-        // Build authorization URL
         guard var components = URLComponents(string: API.authURL) else {
             throw WhoopError.invalidURL
         }
         components.queryItems = [
-            URLQueryItem(name: "client_id",             value: API.clientID),
-            URLQueryItem(name: "redirect_uri",          value: API.redirectURI),
-            URLQueryItem(name: "response_type",         value: "code"),
-            URLQueryItem(name: "scope",                 value: API.scopes),
-            URLQueryItem(name: "state",                 value: state),
-            URLQueryItem(name: "code_challenge",        value: challenge),
+            URLQueryItem(name: "client_id", value: API.clientID),
+            URLQueryItem(name: "redirect_uri", value: API.redirectURI),
+            URLQueryItem(name: "response_type", value: "code"),
+            URLQueryItem(name: "scope", value: API.scopes),
+            URLQueryItem(name: "state", value: state),
+            URLQueryItem(name: "code_challenge", value: challenge),
             URLQueryItem(name: "code_challenge_method", value: "S256")
         ]
         guard let authURL = components.url else {
             throw WhoopError.invalidURL
         }
 
-        // Run ASWebAuthenticationSession and await callback
         let callbackURL: URL = try await withCheckedThrowingContinuation { continuation in
             let session = ASWebAuthenticationSession(
                 url: authURL,
@@ -197,158 +138,33 @@ final class WhoopManager: NSObject, ObservableObject, ASWebAuthenticationPresent
             session.start()
         }
 
-        // Extract authorization code from callback
-        guard let components2 = URLComponents(url: callbackURL, resolvingAgainstBaseURL: false),
-              let code = components2.queryItems?.first(where: { $0.name == "code" })?.value else {
+        guard let callbackComponents = URLComponents(url: callbackURL, resolvingAgainstBaseURL: false),
+              let code = callbackComponents.queryItems?.first(where: { $0.name == "code" })?.value else {
             throw WhoopError.missingAuthCode
         }
 
-        // Exchange code for tokens, then fetch sleep need
-        try await exchangeCodeForTokens(code: code, codeVerifier: verifier)
-        try await fetchSleepNeed()
+        let status: WhoopBackendStatusResponse = try await callBackend(
+            path: Backend.exchangeCodePath,
+            payload: [
+                "code": code,
+                "codeVerifier": verifier,
+                "redirectURI": API.redirectURI
+            ]
+        )
+        apply(status: status)
     }
 
-    // MARK: - Token Exchange
-
-    private func exchangeCodeForTokens(code: String, codeVerifier: String) async throws {
-        guard let url = URL(string: API.tokenURL) else { throw WhoopError.invalidURL }
-
-        var request = URLRequest(url: url)
-        request.httpMethod = "POST"
-        request.setValue("application/x-www-form-urlencoded", forHTTPHeaderField: "Content-Type")
-
-        let body = [
-            "grant_type":    "authorization_code",
-            "client_id":     API.clientID,
-            "client_secret": API.clientSecret,
-            "code":          code,
-            "redirect_uri":  API.redirectURI,
-            "code_verifier": codeVerifier
-        ].map { "\($0.key)=\($0.value.addingPercentEncoding(withAllowedCharacters: .urlQueryAllowed) ?? $0.value)" }
-            .joined(separator: "&")
-
-        request.httpBody = body.data(using: .utf8)
-
-        let (data, response) = try await URLSession.shared.data(for: request)
-        if let http = response as? HTTPURLResponse, http.statusCode != 200 {
-            throw WhoopError.httpError(http.statusCode)
-        }
-
-        let tokenResponse = try JSONDecoder().decode(WhoopTokenResponse.self, from: data)
-
-        // Persist tokens in Keychain
-        KeychainHelper.save(tokenResponse.access_token,  forKey: KeychainHelper.Keys.whoopAccessToken)
-        KeychainHelper.save(tokenResponse.refresh_token, forKey: KeychainHelper.Keys.whoopRefreshToken)
-
-        // Store expiry timestamp
-        let expiry = Date().addingTimeInterval(TimeInterval(tokenResponse.expires_in))
-        AppPreferencesStore.shared.whoopTokenExpiry = expiry
-        AppPreferencesStore.shared.whoopConnected   = true
-        isConnected = true
-    }
-
-    // MARK: - Refresh Token
-
-    private func refreshAccessToken() async throws {
-        guard let refreshToken = KeychainHelper.load(forKey: KeychainHelper.Keys.whoopRefreshToken),
-              !refreshToken.isEmpty else {
-            throw WhoopError.noRefreshToken
-        }
-
-        guard let url = URL(string: API.tokenURL) else { throw WhoopError.invalidURL }
-
-        var request = URLRequest(url: url)
-        request.httpMethod = "POST"
-        request.setValue("application/x-www-form-urlencoded", forHTTPHeaderField: "Content-Type")
-
-        let body = [
-            "grant_type":    "refresh_token",
-            "client_id":     API.clientID,
-            "client_secret": API.clientSecret,
-            "refresh_token": refreshToken
-        ].map { "\($0.key)=\($0.value.addingPercentEncoding(withAllowedCharacters: .urlQueryAllowed) ?? $0.value)" }
-            .joined(separator: "&")
-
-        request.httpBody = body.data(using: .utf8)
-
-        let (data, response) = try await URLSession.shared.data(for: request)
-        if let http = response as? HTTPURLResponse, http.statusCode != 200 {
-            throw WhoopError.httpError(http.statusCode)
-        }
-
-        let tokenResponse = try JSONDecoder().decode(WhoopTokenResponse.self, from: data)
-
-        KeychainHelper.save(tokenResponse.access_token,  forKey: KeychainHelper.Keys.whoopAccessToken)
-        KeychainHelper.save(tokenResponse.refresh_token, forKey: KeychainHelper.Keys.whoopRefreshToken)
-
-        let expiry = Date().addingTimeInterval(TimeInterval(tokenResponse.expires_in))
-        AppPreferencesStore.shared.whoopTokenExpiry = expiry
-    }
-
-    // MARK: - Fetch Sleep Need
-
-    /// Fetches the current cycle from WHOOP and calculates tonight's sleep need.
-    /// Refreshes the access token if it's within 5 minutes of expiry.
     func fetchSleepNeed() async throws {
-        guard isConnected else { throw WhoopError.notAuthenticated }
-
-        // Refresh token proactively if expiring soon (< 5 min)
-        let expiry = AppPreferencesStore.shared.whoopTokenExpiry
-        if let expiry = expiry, expiry.timeIntervalSinceNow < 300 {
-            try await refreshAccessToken()
-        }
-
-        guard let accessToken = KeychainHelper.load(forKey: KeychainHelper.Keys.whoopAccessToken),
-              !accessToken.isEmpty else {
-            throw WhoopError.notAuthenticated
-        }
-
-        guard var components = URLComponents(string: API.cycleURL) else {
-            throw WhoopError.invalidURL
-        }
-        components.queryItems = [URLQueryItem(name: "limit", value: "1")]
-
-        guard let url = components.url else { throw WhoopError.invalidURL }
-
-        var request = URLRequest(url: url)
-        request.setValue("Bearer \(accessToken)", forHTTPHeaderField: "Authorization")
-
-        let (data, response) = try await URLSession.shared.data(for: request)
-        if let http = response as? HTTPURLResponse, http.statusCode != 200 {
-            throw WhoopError.httpError(http.statusCode)
-        }
-
-        let cycleResponse = try JSONDecoder().decode(WhoopCycleResponse.self, from: data)
-
-        guard let cycle = cycleResponse.records.first,
-              let score = cycle.score,
-              let sleepNeeded = score.sleep_needed else {
+        let status: WhoopBackendStatusResponse = try await callBackend(
+            path: Backend.fetchSleepNeedPath,
+            payload: [:]
+        )
+        guard let hours = status.recommendedSleepHours, hours > 0 else {
             throw WhoopError.noData
         }
-
-        // Total sleep need in milliseconds → hours
-        let totalMs = sleepNeeded.baseline_milli
-                    + sleepNeeded.need_from_sleep_debt_milli
-                    + sleepNeeded.need_from_recent_strain_milli
-                    - sleepNeeded.need_from_recent_nap_milli
-
-        let rawHours = Double(max(totalMs, 0)) / 3_600_000.0
-
-        // Clamp to a physiologically plausible range
-        let hours = max(5.0, min(rawHours, 12.0))
-
-        // Persist and publish
-        AppPreferencesStore.shared.whoopRecommendedSleepHours = hours
-        AppPreferencesStore.shared.whoopLastSyncDate = Date()
-        recommendedSleepHours = hours
-        lastSyncDate          = Date()
+        apply(status: status)
     }
 
-    // MARK: - Background Refresh
-
-    /// Call from app launch or dashboard appear. Silently re-syncs if last
-    /// sync was more than 12 hours ago. Errors are swallowed — the cached
-    /// value stays in place if the network is unavailable.
     func refreshIfNeeded() {
         guard isConnected else { return }
         let twelveHours: TimeInterval = 12 * 60 * 60
@@ -358,24 +174,76 @@ final class WhoopManager: NSObject, ObservableObject, ASWebAuthenticationPresent
             do {
                 try await fetchSleepNeed()
             } catch {
-                // Non-critical — keep showing cached value
+                // Keep cached data if refresh fails.
             }
         }
     }
 
-    // MARK: - Disconnect
-
     func disconnect() {
-        KeychainHelper.delete(forKey: KeychainHelper.Keys.whoopAccessToken)
-        KeychainHelper.delete(forKey: KeychainHelper.Keys.whoopRefreshToken)
+        Task {
+            do {
+                let _: WhoopBackendStatusResponse = try await callBackend(
+                    path: Backend.disconnectPath,
+                    payload: [:]
+                )
+            } catch {
+                // Local cleanup should still happen even if the backend call fails.
+            }
+        }
+
         AppPreferencesStore.shared.resetWhoopData()
-        isConnected           = false
+        isConnected = false
         recommendedSleepHours = 0
-        lastSyncDate          = nil
-        errorMessage          = nil
+        lastSyncDate = nil
+        errorMessage = nil
     }
 
-    // MARK: - ASWebAuthenticationPresentationContextProviding
+    private func apply(status: WhoopBackendStatusResponse) {
+        let hours = max(0, status.recommendedSleepHours ?? 0)
+        let syncDate = status.lastSyncDate.flatMap(Self.iso8601.date(from:))
+
+        AppPreferencesStore.shared.whoopConnected = status.connected
+        AppPreferencesStore.shared.whoopRecommendedSleepHours = hours
+        AppPreferencesStore.shared.whoopLastSyncDate = syncDate
+
+        isConnected = status.connected
+        recommendedSleepHours = hours
+        lastSyncDate = syncDate
+    }
+
+    private func callBackend<Response: Decodable>(path: String, payload: [String: Any]) async throws -> Response {
+        guard let user = Auth.auth().currentUser else {
+            throw WhoopError.notAuthenticated
+        }
+        guard let baseURL = baseBackendURL else {
+            throw WhoopError.backendUnavailable
+        }
+
+        let idToken = try await user.getIDToken()
+        let url = baseURL.appendingPathComponent(path.trimmingCharacters(in: CharacterSet(charactersIn: "/")))
+
+        var request = URLRequest(url: url)
+        request.httpMethod = "POST"
+        request.setValue("application/json", forHTTPHeaderField: "Content-Type")
+        request.setValue("Bearer \(idToken)", forHTTPHeaderField: "Authorization")
+        request.httpBody = try JSONSerialization.data(withJSONObject: payload)
+
+        let (data, response) = try await URLSession.shared.data(for: request)
+        guard let http = response as? HTTPURLResponse else {
+            throw WhoopError.invalidResponse
+        }
+
+        if !(200...299).contains(http.statusCode) {
+            let backendMessage = (try? JSONDecoder().decode(BackendErrorResponse.self, from: data))?.error
+            throw WhoopError.backendError(backendMessage ?? "WHOOP backend returned HTTP \(http.statusCode).")
+        }
+
+        do {
+            return try JSONDecoder().decode(Response.self, from: data)
+        } catch {
+            throw WhoopError.invalidResponse
+        }
+    }
 
     nonisolated func presentationAnchor(for session: ASWebAuthenticationSession) -> ASPresentationAnchor {
         MainActor.assumeIsolated {
@@ -386,4 +254,14 @@ final class WhoopManager: NSObject, ObservableObject, ASWebAuthenticationPresent
             ?? ASPresentationAnchor()
         }
     }
+
+    private struct BackendErrorResponse: Decodable {
+        let error: String
+    }
+
+    private static let iso8601: ISO8601DateFormatter = {
+        let formatter = ISO8601DateFormatter()
+        formatter.formatOptions = [.withInternetDateTime, .withFractionalSeconds]
+        return formatter
+    }()
 }

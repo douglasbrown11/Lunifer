@@ -2,3 +2,8 @@ GoogleService-Info.plist
 GoogleService-Info.plist
 .DS_Store
 .claude/
+.firebase/
+functions/
+functions/node_modules/
+cloudflare-worker/node_modules/
+cloudflare-worker/.wrangler/
