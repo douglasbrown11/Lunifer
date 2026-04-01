@@ -90,7 +90,7 @@
       <ul>
         <li>Account information, such as your email address and authentication identifiers when you sign in using email/password or Google Sign-In.</li>
         <li>Profile and onboarding information, such as age range, lifestyle, wake days, calendar preference, sleep preference, morning routine duration, and commute preference.</li>
-        <li>Sleep and wellness-related information, such as inferred sleep history, sleep duration, sleep recommendations, and WHOOP sleep-related data if you choose to connect WHOOP.</li>
+        <li>Sleep and wellness-related information, such as inferred sleep history, sleep duration, sleep recommendations, and sleep-related data from WHOOP or Oura Ring if you choose to connect either service.</li>
         <li>Calendar information, if you grant access, including calendar events used to support scheduling features.</li>
         <li>Location information, if you grant access, including manually entered home location details and any location-based data used for commute-related features.</li>
         <li>Motion and device sensor information, if you grant access, used to infer sleep activity and app functionality.</li>
@@ -98,12 +98,29 @@
         <li>Technical and usage information, such as timestamps, device-generated event data, and diagnostic-style operational data needed to run the service.</li>
       </ul>
 
-      <h2>3. WHOOP Integration</h2>
+      <h2>3. Wearable Integrations</h2>
       <p>
+        Lunifer supports optional integrations with third-party wearable services. In each case, you must actively choose to connect your wearable account, and you can disconnect at any time.
+      </p>
+
+      <p><strong style="color:white;">WHOOP</strong><br>
         If you choose to connect your WHOOP account, Lunifer requests permission to access WHOOP data
         authorized by you through the WHOOP OAuth flow. Lunifer currently uses WHOOP data to obtain
         sleep-related recommendation information. WHOOP access tokens are handled through our backend
-        services and are not intended to be exposed publicly.
+        services and are not intended to be exposed publicly. WHOOP may independently collect usage data
+        related to how their API is accessed in connection with Lunifer; please refer to
+        <a href="https://www.whoop.com/us/en/full-privacy-policy/" target="_blank">WHOOP's Privacy Policy</a>
+        for details.
+      </p>
+
+      <p><strong style="color:white;">Oura Ring</strong><br>
+        If you choose to connect your Oura Ring account, Lunifer requests permission to access Oura data
+        authorized by you through the Oura OAuth flow. Lunifer currently uses Oura data to obtain
+        sleep-related recommendation information. Oura access tokens are handled through our backend
+        services and are not intended to be exposed publicly. Oura may independently collect usage data
+        related to how their API is accessed in connection with Lunifer; please refer to
+        <a href="https://ouraring.com/privacy-policy" target="_blank">Oura's Privacy Policy</a>
+        for details.
       </p>
 
       <h2>4. How We Use Information</h2>
@@ -113,7 +130,7 @@
         <li>Create and manage your account.</li>
         <li>Generate wake-up recommendations, alarm scheduling features, sleep insights, and related app functionality.</li>
         <li>Sync your data across devices or restore it after sign-in.</li>
-        <li>Provide WHOOP-connected features when you choose to connect WHOOP.</li>
+        <li>Provide WHOOP-connected or Oura-connected features when you choose to connect either service.</li>
         <li>Provide customer support, investigate bugs, and protect the security and integrity of the app.</li>
         <li>Comply with legal obligations and enforce our terms and policies.</li>
       </ul>
@@ -130,31 +147,52 @@
       <ul>
         <li>With service providers and infrastructure partners that help us operate the app, such as Firebase / Google Cloud and authentication providers.</li>
         <li>With WHOOP, when you choose to connect your WHOOP account through their OAuth flow.</li>
+        <li>With Oura, when you choose to connect your Oura Ring account through their OAuth flow.</li>
         <li>With Apple platform services when you use Apple-device permissions and system integrations.</li>
         <li>When required by law, regulation, legal process, or to protect rights, safety, and security.</li>
         <li>In connection with a merger, acquisition, financing, or sale of all or part of our business.</li>
       </ul>
+      <p>
+        We do not disclose, market, sell, license, or lease wearable data obtained from WHOOP or Oura
+        to any third parties, including advertisers or data brokers.
+      </p>
 
       <h2>7. Data Storage and Retention</h2>
       <p>
         Data may be stored locally on your device and in cloud services we use to operate Lunifer.
         We retain information for as long as reasonably necessary to provide the app, fulfill the
         purposes described in this policy, comply with legal obligations, resolve disputes, and enforce agreements.
+        When you delete your account, we delete or anonymize your account data within a commercially
+        reasonable time, subject to any legal hold obligations.
       </p>
 
       <h2>8. Your Choices</h2>
       <ul>
-        <li>You can choose whether to create an account and whether to connect WHOOP.</li>
+        <li>You can choose whether to create an account and whether to connect WHOOP or Oura Ring.</li>
         <li>You can deny or revoke app permissions such as location, calendar, and motion access in your device settings.</li>
         <li>You can sign out of the app.</li>
         <li>You can request deletion of your account from within the app if that feature is available, or by contacting us.</li>
+        <li>You can disconnect your WHOOP or Oura Ring account at any time through the respective service's own settings or by contacting us.</li>
       </ul>
 
       <h2>9. Your Privacy Rights</h2>
       <p>
-        Depending on where you live, you may have rights to access, correct, delete, or obtain a copy
-        of your personal information, or to object to or restrict certain processing. To exercise these
+        Depending on where you live, you may have rights to access, correct, delete, or obtain a portable
+        copy of your personal information, or to object to or restrict certain processing. To exercise these
         rights, contact us at <code>luniferAlarm@outlook.com</code>.
+      </p>
+      <p>
+        <strong style="color:white;">California Residents (CCPA / CPRA):</strong> We do not sell or share
+        your personal information for cross-context behavioral advertising. California residents have the
+        right to know what personal information we collect, to request deletion of that information, to
+        correct inaccurate information, to obtain a portable copy of that information, and to opt out of
+        any future sale or sharing. To submit a request, contact us at <code>luniferAlarm@outlook.com</code>.
+      </p>
+      <p>
+        <strong style="color:white;">EEA / UK Residents (GDPR / UK GDPR):</strong> In addition to the
+        rights described above, you may have the right to data portability, the right to withdraw consent
+        at any time where processing is based on consent, and the right to lodge a complaint with a
+        supervisory authority.
       </p>
 
       <h2>10. Security</h2>
@@ -170,6 +208,11 @@
         from children under 13. If you believe a child has provided personal information to us, contact us
         so we can review and take appropriate action.
       </p>
+      <p>
+        Please note that connecting WHOOP or Oura Ring requires you to hold an account with those services.
+        Both WHOOP and Oura require their users to be at least 18 years of age. If you are under 18,
+        you may not use the wearable integration features of Lunifer.
+      </p>
 
       <h2>12. International Transfers</h2>
       <p>
@@ -180,7 +223,8 @@
       <h2>13. Third-Party Services</h2>
       <p>
         Lunifer may rely on third-party services, including Firebase, Google Sign-In, Apple system frameworks,
-        and WHOOP. Their handling of information is governed by their own privacy policies and terms.
+        WHOOP, and Oura Ring. Their handling of information is governed by their own privacy policies and terms.
+        We encourage you to review those policies before connecting any third-party service.
       </p>
 
       <h2>14. Changes to This Policy</h2>

@@ -734,19 +734,10 @@ struct LuniferSurvey: View {
                     }
                 } content: {
                     HStack(spacing: 12) {
-                        // Oura ring icon
-                        ZStack {
-                            Circle()
-                                .fill(Color.black)
-                                .frame(width: 30, height: 30)
-                            Circle()
-                                .strokeBorder(Color.white, lineWidth: 2.5)
-                                .frame(width: 22, height: 22)
-                            Circle()
-                                .strokeBorder(Color.white, lineWidth: 1.2)
-                                .frame(width: 12, height: 12)
-                        }
-                        .frame(width: 32, height: 32)
+                        Image("OuraLogo")
+                            .resizable()
+                            .interpolation(.high)
+                            .frame(width: 32, height: 32)
 
                         VStack(alignment: .leading, spacing: 2) {
                             Text("Let my Oura Ring decide")
