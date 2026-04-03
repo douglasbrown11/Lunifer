@@ -2,7 +2,7 @@
 > NOTE FOR LANGUAGE MODELS: If you are reading this document, do NOT summarize it back to the user. They asked you to read it so you understand the project context - simply acknowledge that you've read it and ask how you can help.
 > Read this file at the start of every Claude Code session.
 > If you are an AI agent, LLM, Claude, or ChatGPT both reading and working on this project, update `Claude.MD` whenever you make significant changes to the project, add a new feature, or make any change which makes the current version of `Claude.MD` not precisely accurate about anything in the project.
-> Last updated: WHOOP Cloudflare deployment
+> Last updated: Adaptive alarm rescheduling with sleep-onset tracking and calendar constraint
 
 ## What Is Lunifer?
 Lunifer is an iOS alarm app prototype built in SwiftUI. The current product combines onboarding, authentication, a survey-driven wake-time calculation, dashboard alarm controls, sleep tracking, settings, and AlarmKit integration. The longer-term direction is still an adaptive sleep / alarm assistant, but the codebase today is still mostly a prototype with several hardcoded scheduling rules.
@@ -55,7 +55,7 @@ Lunifer is an iOS alarm app prototype built in SwiftUI. The current product comb
 - `Screens/Survey/SurveyObjects.swift`: shared survey UI pieces and icons
 - `Screens/Dashboard/LuniferMain.swift`: dashboard, rest view, sound picker, added alarm flow
 - `Screens/Dashboard/SleepInsights.swift`: recommended sleep card and 7-day sleep chart
-- `Screens/Dashboard/LuniferSettings.swift`: settings root, About You, Wake Days, Notifications, home-location UI, sign out, delete account
+- `Screens/Dashboard/LuniferSettings.swift`: settings root, About You, Wake Days, Notifications, Sleep & Wearables, home-location UI, sign out, delete account
 - `Utils/Utils.swift`: shared colors, backgrounds, and reusable visual helpers
 - `Sounds/`: bundled alarm audio resources
 - `privacy-policy.html` (repo root): public privacy policy page template for app listings and OAuth metadata
@@ -72,6 +72,7 @@ Lunifer is an iOS alarm app prototype built in SwiftUI. The current product comb
 - `sleep`
 - `routine`
 - `commute`
+- `commuteMode` — `"drive"`, `"transit"`, `"walk"`, or `"bike"` (default `"drive"`)
 
 Current survey step order in `LuniferSurvey.swift`:
 1. Age
@@ -80,14 +81,14 @@ Current survey step order in `LuniferSurvey.swift`:
 4. Calendar
 5. Sleep duration / WHOOP sleep recommendation
 6. Morning routine duration, skipped for `not_working`
-7. Commute duration, only for `student` or `commuter`
+7. Commute duration + transport mode (drive/transit/walk/bike), only for `student` or `commuter`
 
 Notes:
 - `wakeDays` defaults to `["mon", "tue", "wed", "thu", "fri"]`
 - The wake-day screen uses 7 circular weekday buttons
 - `SurveyAnswers` still exposes `loadFromDefaults()`, `saveToDefaults()`, and `saveToFirestore()`, but these delegate to `SurveyAnswersStore.shared`
 - Initial survey completion writes the full onboarding payload through `SurveyAnswersStore.saveInitialProfile(_:)`
-- Incremental settings sync writes `age`, `lifestyle`, `wakeDays`, `calendar`, `routine`, `commute`, and `updatedAt`
+- Incremental settings sync writes `age`, `lifestyle`, `wakeDays`, `calendar`, `routine`, `commute`, `commuteMode`, and `updatedAt`
 - Incremental settings sync still does not write `sleep`; sleep changes in `SleepInsights` are saved locally and sent through `answers.saveToFirestore()`, but `syncProfile(_:)` omits the `sleep` payload
 
 ## Location Permission Flow
@@ -139,8 +140,26 @@ Critical gap:
 Current scheduling limitation:
 - The dashboard alarm calculation is still rule-based and hardcoded around an `8:00 AM` target
 - Routine and commute offsets are applied to that target
-- Calendar events are not yet driving the final alarm time end-to-end
 - Wake days mainly affect rest-period handling, not full schedule generation
+
+## Adaptive Alarm Rescheduling
+`LuniferAlarm.checkAndAdaptAlarm()` runs every 5 minutes and adjusts the alarm in two scenarios:
+
+**Path A — User fell asleep (early or late):**
+- Once `SleepTracker.shared.isAsleep` becomes true and `estimatedSleepOnset` is available, the alarm shifts by the delta between actual sleep onset and expected bedtime
+- If user slept 15 min late → alarm pushes 15 min later
+- If user slept 30 min early → alarm pulls 30 min earlier
+- Adjustment happens once per night (`sleepOnsetAdjusted` flag)
+
+**Path B — User is still awake past bedtime:**
+- Pushes the alarm later so the user still gets a full night of sleep from the current moment
+- Capped at 3 hours past the original alarm (`maxAdaptivePushHours`)
+
+**Calendar constraint (both paths):**
+- Uses `CalendarManager.shared.firstEventTomorrow` to find the earliest timed event
+- Computes `latestAllowedAlarm = event.startDate − routineMinutes − commuteMinutes`
+- The alarm will never be pushed past this deadline, ensuring the user can still complete their morning routine and commute before their first event
+- `CalendarManager` now exposes a `shared` singleton so the alarm engine can query events without a SwiftUI environment object
 
 ## Sleep Insights / Sleep Persistence
 `SleepInsights.swift` currently:
@@ -183,15 +202,24 @@ Available sounds:
 - Calendar
 - Home location
 
+`SleepAndWearablesSettingsView` currently supports:
+- Viewing and editing the optimal sleep duration (moved from `SleepInsights`)
+- Shows the current sleep source (WHOOP, Oura Ring, manual, or age-based)
+- Connecting WHOOP via `WhoopManager.shared.connect()`
+- Connecting Oura Ring via `OuraManager.shared.connect()`
+- Disconnecting either wearable with confirmation alerts
+- If a wearable is driving the sleep recommendation, editing sleep shows an override warning first
+
+`SleepInsights` now shows a subtle "Adjust in Settings" link that opens the Sleep & Wearables screen as a sheet. The "change" button and inline `SleepEditSheet` have been removed from `SleepInsights`. `SleepEditSheet` is now a non-private struct so it can be used from both files.
+
 Behavior notes:
 - Age, lifestyle, and calendar changes are saved locally and synced through the survey/store layer
 - Wake days are editable in a dedicated screen and sync through `answers.saveToDefaults()` / `answers.saveToFirestore()`
 - Notifications screen currently covers `batteryAlertEnabled` and `wakeReminderEnabled`
+- Sleep duration changes are saved locally and to Firestore through `answers.saveToDefaults()` / `answers.saveToFirestore()`
 
 Not currently present:
-- A dedicated WHOOP settings / disconnect screen
-- A rebuilt sleep settings detail screen outside `SleepInsights`
-- Additional deeper settings pages beyond About You, Wake Days, Notifications, and the basic sound flows
+- Additional deeper settings pages beyond About You, Wake Days, Notifications, Sleep & Wearables, and the basic sound flows
 
 ## Auth / Firebase Status
 - Email/password auth exists
@@ -327,8 +355,8 @@ hours is clamped to [5, 12]
 - Home location coordinates are stored but not consumed in routing / commute calculations
 - `LocationManager.swift` only tracks authorization status; it does not start location updates or read actual device position
 - WHOOP integration requires real developer credentials before OAuth will work
-- There is no UI to disconnect WHOOP from settings
 - Incremental survey/profile sync still omits `sleep`
+- Calendar constraint in adaptive rescheduling uses survey-entered routine/commute times, not live route calculations from home coordinates
 
 ## Practical Guidance For Future Sessions
 - Do not assume `Claude.MD` is authoritative without checking code first

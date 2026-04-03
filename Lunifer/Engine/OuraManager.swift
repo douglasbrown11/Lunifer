@@ -32,6 +32,16 @@ private struct OuraBackendStatusResponse: Decodable {
     let connected: Bool
     let recommendedSleepHours: Double?
     let lastSyncDate: String?
+    let latestSleepOnset: String?
+    let latestWakeTime: String?
+    let recentSleepSessions: [OuraBackendSleepSession]?
+}
+
+private struct OuraBackendSleepSession: Decodable {
+    let date: String
+    let sleepOnset: String
+    let wakeTime: String
+    let durationHours: Double
 }
 
 @MainActor
@@ -43,6 +53,8 @@ final class OuraManager: NSObject, ObservableObject, ASWebAuthenticationPresenta
     @Published private(set) var isLoading: Bool = false
     @Published private(set) var errorMessage: String? = nil
     @Published private(set) var lastSyncDate: Date? = nil
+    @Published private(set) var latestSleepOnset: Date? = nil
+    @Published private(set) var latestWakeTime: Date? = nil
 
     private var authSession: ASWebAuthenticationSession?
 
@@ -68,6 +80,8 @@ final class OuraManager: NSObject, ObservableObject, ASWebAuthenticationPresenta
         isConnected           = prefs.ouraConnected
         recommendedSleepHours = prefs.ouraRecommendedSleepHours
         lastSyncDate          = prefs.ouraLastSyncDate
+        latestSleepOnset      = prefs.ouraLatestSleepOnset
+        latestWakeTime        = prefs.ouraLatestWakeTime
     }
 
     private var baseBackendURL: URL? { URL(string: Backend.baseURL) }
@@ -163,22 +177,40 @@ final class OuraManager: NSObject, ObservableObject, ASWebAuthenticationPresenta
         isConnected           = false
         recommendedSleepHours = 0
         lastSyncDate          = nil
+        latestSleepOnset      = nil
+        latestWakeTime        = nil
         errorMessage          = nil
     }
 
     // MARK: - Private helpers
 
     private func apply(status: OuraBackendStatusResponse) {
-        let hours    = max(0, status.recommendedSleepHours ?? 0)
-        let syncDate = status.lastSyncDate.flatMap(Self.iso8601.date(from:))
+        let hours = max(0, status.recommendedSleepHours ?? 0)
+        let syncDate = status.lastSyncDate.flatMap(Self.parseDate)
+        let sessions = (status.recentSleepSessions ?? []).compactMap(Self.sessionEntry(from:))
+        let latestOnset = status.latestSleepOnset.flatMap(Self.parseDate) ?? sessions.first?.sleepOnset
+        let latestWake = status.latestWakeTime.flatMap(Self.parseDate) ?? sessions.first?.wakeTime
 
         AppPreferencesStore.shared.ouraConnected               = status.connected
         AppPreferencesStore.shared.ouraRecommendedSleepHours   = hours
         AppPreferencesStore.shared.ouraLastSyncDate            = syncDate
+        AppPreferencesStore.shared.ouraLatestSleepOnset        = latestOnset
+        AppPreferencesStore.shared.ouraLatestWakeTime          = latestWake
 
         isConnected           = status.connected
         recommendedSleepHours = hours
         lastSyncDate          = syncDate
+        latestSleepOnset      = latestOnset
+        latestWakeTime        = latestWake
+
+        for session in sessions {
+            SleepHistoryManager.shared.recordNight(
+                date: session.wakeTime ?? session.date,
+                duration: session.durationHours,
+                onset: session.sleepOnset,
+                wake: session.wakeTime
+            )
+        }
     }
 
     private func callBackend<Response: Decodable>(path: String, payload: [String: Any]) async throws -> Response {
@@ -226,9 +258,34 @@ final class OuraManager: NSObject, ObservableObject, ASWebAuthenticationPresenta
 
     private struct BackendErrorResponse: Decodable { let error: String }
 
-    private static let iso8601: ISO8601DateFormatter = {
+    private static let iso8601WithFractionalSeconds: ISO8601DateFormatter = {
         let f = ISO8601DateFormatter()
         f.formatOptions = [.withInternetDateTime, .withFractionalSeconds]
         return f
     }()
+
+    private static let iso8601: ISO8601DateFormatter = {
+        let f = ISO8601DateFormatter()
+        f.formatOptions = [.withInternetDateTime]
+        return f
+    }()
+
+    private static func parseDate(_ value: String) -> Date? {
+        iso8601WithFractionalSeconds.date(from: value) ?? iso8601.date(from: value)
+    }
+
+    private static func sessionEntry(from session: OuraBackendSleepSession) -> SleepHistoryEntry? {
+        guard let date = parseDate(session.date),
+              let onset = parseDate(session.sleepOnset),
+              let wake = parseDate(session.wakeTime) else {
+            return nil
+        }
+
+        return SleepHistoryEntry(
+            date: date,
+            durationHours: session.durationHours,
+            sleepOnset: onset,
+            wakeTime: wake
+        )
+    }
 }

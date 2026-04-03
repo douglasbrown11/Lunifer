@@ -14,10 +14,12 @@ struct LuniferSettings: View {
     @Environment(\.dismiss) private var dismiss
     @AppStorage("surveyCompleted") private var surveyCompleted = false
     @State private var showSignOutAlert = false
+    @State private var showSignOutErrorAlert = false
     @State private var showDeleteAlert = false
     @State private var isDeletingAccount = false
     @State private var showDeleteErrorAlert = false
     @State private var deleteErrorMessage = ""
+    @State private var signOutErrorMessage = ""
     @State private var showPasswordPrompt = false
     @State private var reauthPassword = ""
 
@@ -70,6 +72,12 @@ struct LuniferSettings: View {
                                 settingsNavRow(title: "Wake Days")
                             }
 
+                            NavigationLink {
+                                SleepAndWearablesSettingsView(answers: $answers)
+                            } label: {
+                                settingsNavRow(title: "Sleep & Wearables")
+                            }
+
                             // ── Account ───────────────────────
                             SettingsSection(title: "Account") {
                                 VStack(spacing: 0) {
@@ -118,10 +126,16 @@ struct LuniferSettings: View {
                                 }
                                 .alert("Are you sure you want to sign out?", isPresented: $showSignOutAlert) {
                                     Button("Yes", role: .destructive) {
-                                        try? Auth.auth().signOut()
-                                        dismiss()
+                                        handleSignOut()
                                     }
                                     Button("No", role: .cancel) { }
+                                } message: {
+                                    Text("Your latest profile data will remain in Firebase, but this device will clear local account data before returning to sign in.")
+                                }
+                                .alert("Couldn't Sign Out", isPresented: $showSignOutErrorAlert) {
+                                    Button("OK", role: .cancel) { }
+                                } message: {
+                                    Text(signOutErrorMessage)
                                 }
 
                                 Button {
@@ -325,6 +339,21 @@ struct LuniferSettings: View {
     private func clearLocalAccountData() {
         AccountDataManager.shared.clearLocalAccountData()
         surveyCompleted = false
+    }
+
+    private func handleSignOut() {
+        answers.saveToDefaults()
+        answers.saveToFirestore()
+
+        do {
+            GIDSignIn.sharedInstance.signOut()
+            try Auth.auth().signOut()
+            AccountDataManager.shared.clearLocalSessionDataOnSignOut()
+            dismiss()
+        } catch {
+            signOutErrorMessage = (error as NSError).localizedDescription
+            showSignOutErrorAlert = true
+        }
     }
 }
 
@@ -864,6 +893,259 @@ struct HomeLocationSheet: View {
 }
 
 // ── MARK: Wake Days ────────────────────────────────────────────
+
+// ── MARK: Sleep & Wearables ────────────────────────────────────
+
+struct SleepAndWearablesSettingsView: View {
+    @Binding var answers: SurveyAnswers
+    @Environment(\.dismiss) private var dismiss
+
+    @ObservedObject private var whoopManager = WhoopManager.shared
+    @ObservedObject private var ouraManager  = OuraManager.shared
+
+    @AppStorage("whoopConnected")             private var whoopConnected: Bool   = false
+    @AppStorage("whoopRecommendedSleepHours") private var whoopSleepHours: Double = 0
+    @AppStorage("ouraConnected")              private var ouraConnected: Bool    = false
+    @AppStorage("ouraRecommendedSleepHours")  private var ouraSleepHours: Double  = 0
+
+    @State private var showSleepSheet = false
+    @State private var draftSleep = TimeValue(hours: 8, minutes: 0, auto: false)
+    @State private var showWearableWarning = false
+    @State private var showDisconnectWhoopAlert = false
+    @State private var showDisconnectOuraAlert  = false
+
+    // Priority: WHOOP > Oura > manual preference > age baseline
+    private var recommendedHours: Double {
+        if whoopConnected && whoopSleepHours > 0 {
+            return whoopSleepHours
+        } else if ouraConnected && ouraSleepHours > 0 {
+            return ouraSleepHours
+        } else if answers.sleep.auto {
+            return SleepDurationModel.baselineForAge(answers.age)
+        } else {
+            return Double(answers.sleep.hours) + Double(answers.sleep.minutes) / 60.0
+        }
+    }
+
+    private var isWhoopDriven: Bool { whoopConnected && whoopSleepHours > 0 }
+    private var isOuraDriven:  Bool { !isWhoopDriven && ouraConnected && ouraSleepHours > 0 }
+
+    private var sleepSourceLabel: String {
+        if isWhoopDriven { return "Set by WHOOP" }
+        if isOuraDriven  { return "Set by Oura Ring" }
+        if answers.sleep.auto { return "Learning from your data" }
+        return "Set manually"
+    }
+
+    var body: some View {
+        ZStack(alignment: .top) {
+            Color.luniferBg.ignoresSafeArea()
+
+            VStack(spacing: 0) {
+                // ── Header ───────────────────────────────
+                HStack {
+                    Button { dismiss() } label: {
+                        Image(systemName: "chevron.left")
+                            .font(.system(size: 16, weight: .light))
+                            .foregroundColor(Color.white.opacity(0.75))
+                            .frame(width: 36, height: 36)
+                    }
+                    Spacer()
+                    Text("Sleep & Wearables")
+                        .font(.custom("Cormorant Garamond", size: 28).weight(.light))
+                        .foregroundColor(Color.white.opacity(0.9))
+                    Spacer()
+                    Color.clear.frame(width: 36, height: 36)
+                }
+                .padding(.horizontal, 24)
+                .padding(.top, 24)
+                .padding(.bottom, 20)
+
+                ScrollView(showsIndicators: false) {
+                    VStack(spacing: 24) {
+
+                        // ── Sleep Duration ───────────────
+                        SettingsSection(title: "Optimal Sleep") {
+                            VStack(spacing: 0) {
+                                HStack {
+                                    VStack(alignment: .leading, spacing: 4) {
+                                        Text(SleepDurationModel.formatted(recommendedHours))
+                                            .font(.custom("Libre Franklin", size: 28).weight(.light))
+                                            .foregroundColor(Color.white.opacity(0.95))
+                                        Text(sleepSourceLabel)
+                                            .font(.custom("DM Sans", size: 12))
+                                            .foregroundColor(Color.white.opacity(0.4))
+                                    }
+                                    Spacer()
+                                    Button {
+                                        draftSleep = answers.sleep
+                                        if isWhoopDriven || isOuraDriven {
+                                            showWearableWarning = true
+                                        } else {
+                                            showSleepSheet = true
+                                        }
+                                    } label: {
+                                        Text("Change")
+                                            .font(.custom("DM Sans", size: 13))
+                                            .foregroundColor(Color(red: 0.627, green: 0.471, blue: 1.0))
+                                    }
+                                }
+                                .padding(.horizontal, 16)
+                                .padding(.vertical, 16)
+                            }
+                            .background(
+                                RoundedRectangle(cornerRadius: 12)
+                                    .fill(Color.white.opacity(0.04))
+                                    .overlay(
+                                        RoundedRectangle(cornerRadius: 12)
+                                            .stroke(Color.white.opacity(0.08), lineWidth: 1)
+                                    )
+                            )
+                        }
+
+                        // ── Wearables ────────────────────
+                        SettingsSection(title: "Wearables") {
+                            VStack(spacing: 12) {
+                                wearableRow(
+                                    name: "WHOOP",
+                                    imageName: "WhoopWordmark",
+                                    isConnected: whoopConnected,
+                                    isLoading: whoopManager.isLoading,
+                                    onConnect: {
+                                        Task {
+                                            try? await WhoopManager.shared.connect()
+                                        }
+                                    },
+                                    onDisconnect: {
+                                        showDisconnectWhoopAlert = true
+                                    }
+                                )
+
+                                wearableRow(
+                                    name: "Oura Ring",
+                                    imageName: "OuraWordmark",
+                                    isConnected: ouraConnected,
+                                    isLoading: ouraManager.isLoading,
+                                    onConnect: {
+                                        Task {
+                                            try? await OuraManager.shared.connect()
+                                        }
+                                    },
+                                    onDisconnect: {
+                                        showDisconnectOuraAlert = true
+                                    }
+                                )
+                            }
+                        }
+                    }
+                    .padding(.horizontal, 24)
+                    .padding(.top, 8)
+                }
+            }
+        }
+        .toolbar(.hidden, for: .navigationBar)
+        // ── Alerts ───────────────────────────────────────────
+        .alert("Override wearable recommendation?", isPresented: $showWearableWarning) {
+            Button("Set Manually", role: .destructive) {
+                showSleepSheet = true
+            }
+            Button("Keep Recommendation", role: .cancel) { }
+        } message: {
+            Text("Your sleep goal is set by your \(isWhoopDriven ? "WHOOP" : "Oura Ring"). Setting it manually will replace that recommendation.")
+        }
+        .alert("Disconnect WHOOP?", isPresented: $showDisconnectWhoopAlert) {
+            Button("Disconnect", role: .destructive) {
+                WhoopManager.shared.disconnect()
+            }
+            Button("Cancel", role: .cancel) { }
+        } message: {
+            Text("Your sleep recommendation will revert to your manual setting or Lunifer's age-based estimate.")
+        }
+        .alert("Disconnect Oura Ring?", isPresented: $showDisconnectOuraAlert) {
+            Button("Disconnect", role: .destructive) {
+                OuraManager.shared.disconnect()
+            }
+            Button("Cancel", role: .cancel) { }
+        } message: {
+            Text("Your sleep recommendation will revert to your manual setting or Lunifer's age-based estimate.")
+        }
+        // ── Sleep edit sheet (same as old SleepInsights sheet) ──
+        .sheet(isPresented: $showSleepSheet) {
+            SleepEditSheet(sleep: $draftSleep) {
+                answers.sleep = draftSleep
+                answers.saveToDefaults()
+                answers.saveToFirestore()
+                showSleepSheet = false
+            }
+            .presentationDetents([.fraction(0.52)])
+            .presentationDragIndicator(.visible)
+            .presentationBackground(Color(red: 0.07, green: 0.04, blue: 0.15))
+        }
+    }
+
+    // ── Wearable row builder ─────────────────────────────────
+
+    @ViewBuilder
+    private func wearableRow(
+        name: String,
+        imageName: String,
+        isConnected: Bool,
+        isLoading: Bool,
+        onConnect: @escaping () -> Void,
+        onDisconnect: @escaping () -> Void
+    ) -> some View {
+        HStack(spacing: 12) {
+            Image(imageName)
+                .resizable()
+                .interpolation(.high)
+                .scaledToFit()
+                .frame(height: 16)
+
+            Spacer()
+
+            if isLoading {
+                ProgressView()
+                    .tint(Color(red: 0.627, green: 0.471, blue: 1.0))
+                    .scaleEffect(0.8)
+            } else if isConnected {
+                Button(action: onDisconnect) {
+                    Text("Disconnect")
+                        .font(.custom("DM Sans", size: 13))
+                        .foregroundColor(Color.red.opacity(0.7))
+                }
+            } else {
+                Button(action: onConnect) {
+                    Text("Connect")
+                        .font(.custom("DM Sans", size: 13))
+                        .foregroundColor(Color(red: 0.627, green: 0.471, blue: 1.0))
+                        .padding(.horizontal, 16)
+                        .padding(.vertical, 8)
+                        .background(
+                            Capsule()
+                                .fill(Color(red: 0.627, green: 0.471, blue: 1.0).opacity(0.12))
+                                .overlay(
+                                    Capsule()
+                                        .stroke(Color(red: 0.627, green: 0.471, blue: 1.0).opacity(0.3), lineWidth: 1)
+                                )
+                        )
+                }
+                .buttonStyle(.plain)
+            }
+        }
+        .padding(.horizontal, 16)
+        .padding(.vertical, 14)
+        .background(
+            RoundedRectangle(cornerRadius: 12)
+                .fill(Color.white.opacity(0.04))
+                .overlay(
+                    RoundedRectangle(cornerRadius: 12)
+                        .stroke(Color.white.opacity(0.08), lineWidth: 1)
+                )
+        )
+    }
+}
+
+// ── MARK: Wake Days ───────────────────────────────────────────
 
 struct WakeDaysSettingsView: View {
     @Binding var answers: SurveyAnswers

@@ -10,12 +10,22 @@ final class SleepHistoryStore {
 
     func recordNight(date: Date, duration: Double, onset: Date?, wake: Date?) {
         var entries = loadRawEntries()
-        entries.append([
-            "date": date.timeIntervalSince1970,
+        let referenceDate = wake ?? date
+        let newEntry: [String: Any] = [
+            "date": referenceDate.timeIntervalSince1970,
             "duration": duration,
             "onset": onset?.timeIntervalSince1970 ?? 0,
             "wake": wake?.timeIntervalSince1970 ?? 0
-        ])
+        ]
+
+        if let existingIndex = entries.firstIndex(where: { entry in
+            guard let entryDate = entryReferenceDate(entry) else { return false }
+            return Calendar.current.isDate(entryDate, inSameDayAs: referenceDate)
+        }) {
+            entries[existingIndex] = newEntry
+        } else {
+            entries.append(newEntry)
+        }
 
         if entries.count > 30 {
             entries = Array(entries.suffix(30))
@@ -23,7 +33,7 @@ final class SleepHistoryStore {
         defaults.set(entries, forKey: storageKey)
 
         guard let uid = Auth.auth().currentUser?.uid else { return }
-        let components = Calendar.current.dateComponents([.year, .month, .day], from: date)
+        let components = Calendar.current.dateComponents([.year, .month, .day], from: referenceDate)
         let dateKey = String(
             format: "%04d-%02d-%02d",
             components.year ?? 0,
@@ -32,7 +42,7 @@ final class SleepHistoryStore {
         )
 
         var data: [String: Any] = [
-            "date": date,
+            "date": referenceDate,
             "durationHours": duration
         ]
         if let onset { data["sleepOnset"] = onset }
@@ -104,5 +114,14 @@ final class SleepHistoryStore {
 
     private func loadRawEntries() -> [[String: Any]] {
         defaults.array(forKey: storageKey) as? [[String: Any]] ?? []
+    }
+
+    private func entryReferenceDate(_ entry: [String: Any]) -> Date? {
+        let wakeTS = entry["wake"] as? Double ?? 0
+        if wakeTS > 0 {
+            return Date(timeIntervalSince1970: wakeTS)
+        }
+        guard let dateTS = entry["date"] as? Double else { return nil }
+        return Date(timeIntervalSince1970: dateTS)
     }
 }

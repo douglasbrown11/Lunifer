@@ -18,7 +18,9 @@ struct ContentView: View {
             case .intro:
                 LuniferIntro(onFinish: { screen = .auth })
             case .auth:
-                LuniferAuth(onSignedIn: { screen = .survey })
+                LuniferAuth(onSignedIn: { isNewUser in
+                    await handleSignedIn(isNewUser: isNewUser)
+                })
             case .survey:
                 LuniferSurvey(onFinish: { answers in
                     surveyAnswers = answers
@@ -38,11 +40,13 @@ struct ContentView: View {
         .onAppear {
             if authStateHandle == nil {
                 authStateHandle = Auth.auth().addStateDidChangeListener { _, user in
-                    if user != nil, surveyCompleted, let saved = SurveyAnswers.loadFromDefaults() {
-                        surveyAnswers = saved
-                        screen = .splash
-                    } else if user == nil, surveyCompleted {
-                        screen = .auth
+                    Task { @MainActor in
+                        if user != nil, surveyCompleted, let saved = SurveyAnswers.loadFromDefaults() {
+                            surveyAnswers = saved
+                            screen = .splash
+                        } else if user == nil, screen != .intro {
+                            screen = .auth
+                        }
                     }
                 }
             }
@@ -72,6 +76,30 @@ struct ContentView: View {
             set: { _ in }
         )) {
             LuniferAlarmScreen()
+        }
+    }
+
+    @MainActor
+    private func handleSignedIn(isNewUser: Bool) async {
+        if isNewUser {
+            surveyCompleted = false
+            screen = .survey
+            return
+        }
+
+        do {
+            if let savedAnswers = try await SurveyAnswersStore.shared.loadFromFirestore() {
+                surveyAnswers = savedAnswers
+                surveyAnswers.saveToDefaults()
+                surveyCompleted = true
+                screen = .dashboard
+            } else {
+                surveyCompleted = false
+                screen = .survey
+            }
+        } catch {
+            surveyCompleted = false
+            screen = .survey
         }
     }
 }

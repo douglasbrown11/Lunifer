@@ -4,41 +4,52 @@ final class AppPreferencesStore {
     static let shared = AppPreferencesStore()
 
     enum Keys {
-        static let surveyCompleted       = "surveyCompleted"
+        static let surveyCompleted = "surveyCompleted"
+
         // Alarm
-        static let snoozeMinutes         = "snoozeMinutes"
-        static let selectedAlarmSound    = "selectedAlarmSound"
-        static let luniferEnabled        = "luniferEnabled"
-        static let overrideActive        = "overrideActive"
-        static let overrideTimestamp     = "overrideTimestamp"
+        static let snoozeMinutes = "snoozeMinutes"
+        static let selectedAlarmSound = "selectedAlarmSound"
+        static let luniferEnabled = "luniferEnabled"
+        static let overrideActive = "overrideActive"
+        static let overrideTimestamp = "overrideTimestamp"
+
         // Added alarm
-        static let addedAlarmActive         = "addedAlarmActive"
-        static let addedAlarmTimestamp      = "addedAlarmTimestamp"
-        static let addedAlarmSound          = "addedAlarmSound"
-        static let addedAlarmLabel          = "addedAlarmLabel"
-        static let addedAlarmSnoozeMinutes  = "addedAlarmSnoozeMinutes"
+        static let addedAlarmActive = "addedAlarmActive"
+        static let addedAlarmTimestamp = "addedAlarmTimestamp"
+        static let addedAlarmSound = "addedAlarmSound"
+        static let addedAlarmLabel = "addedAlarmLabel"
+        static let addedAlarmSnoozeMinutes = "addedAlarmSnoozeMinutes"
+
         // Home location
-        static let homeLatitude          = "homeLatitude"
-        static let homeLongitude         = "homeLongitude"
-        static let homeLocationSet       = "homeLocationSet"
-        static let homeLocationName      = "homeLocationName"
+        static let homeLatitude = "homeLatitude"
+        static let homeLongitude = "homeLongitude"
+        static let homeLocationSet = "homeLocationSet"
+        static let homeLocationName = "homeLocationName"
+
         // WHOOP integration
-        static let whoopConnected               = "whoopConnected"
-        static let whoopRecommendedSleepHours   = "whoopRecommendedSleepHours"
-        static let whoopLastSyncDate            = "whoopLastSyncDate"
-        static let whoopTokenExpiry             = "whoopTokenExpiry"
+        static let whoopConnected = "whoopConnected"
+        static let whoopRecommendedSleepHours = "whoopRecommendedSleepHours"
+        static let whoopLastSyncDate = "whoopLastSyncDate"
+        static let whoopTokenExpiry = "whoopTokenExpiry"
+        static let whoopLatestSleepOnset = "whoopLatestSleepOnset"
+        static let whoopLatestWakeTime = "whoopLatestWakeTime"
+
         // Oura integration
-        static let ouraConnected                = "ouraConnected"
-        static let ouraRecommendedSleepHours    = "ouraRecommendedSleepHours"
-        static let ouraLastSyncDate             = "ouraLastSyncDate"
+        static let ouraConnected = "ouraConnected"
+        static let ouraRecommendedSleepHours = "ouraRecommendedSleepHours"
+        static let ouraLastSyncDate = "ouraLastSyncDate"
+        static let ouraLatestSleepOnset = "ouraLatestSleepOnset"
+        static let ouraLatestWakeTime = "ouraLatestWakeTime"
+
         // Notifications
-        static let batteryAlertEnabled   = "batteryAlertEnabled"
-        static let wakeReminderEnabled   = "wakeReminderEnabled"
+        static let batteryAlertEnabled = "batteryAlertEnabled"
+        static let wakeReminderEnabled = "wakeReminderEnabled"
+
         // Battery monitoring internals
-        static let batteryDrainSamples      = "lunifer_battery_drain_samples"
-        static let batteryLastCheckTime     = "lunifer_battery_last_check_time"
-        static let batteryLastCheckLevel    = "lunifer_battery_last_check_level"
-        static let batteryLastWarnedAlarm   = "lunifer_battery_last_warned_alarm"
+        static let batteryDrainSamples = "lunifer_battery_drain_samples"
+        static let batteryLastCheckTime = "lunifer_battery_last_check_time"
+        static let batteryLastCheckLevel = "lunifer_battery_last_check_level"
+        static let batteryLastWarnedAlarm = "lunifer_battery_last_warned_alarm"
     }
 
     private let defaults = UserDefaults.standard
@@ -89,11 +100,23 @@ final class AppPreferencesStore {
         set { defaults.set(newValue, forKey: Keys.whoopTokenExpiry) }
     }
 
+    var whoopLatestSleepOnset: Date? {
+        get { defaults.object(forKey: Keys.whoopLatestSleepOnset) as? Date }
+        set { defaults.set(newValue, forKey: Keys.whoopLatestSleepOnset) }
+    }
+
+    var whoopLatestWakeTime: Date? {
+        get { defaults.object(forKey: Keys.whoopLatestWakeTime) as? Date }
+        set { defaults.set(newValue, forKey: Keys.whoopLatestWakeTime) }
+    }
+
     func resetWhoopData() {
-        defaults.set(false,  forKey: Keys.whoopConnected)
-        defaults.set(0.0,    forKey: Keys.whoopRecommendedSleepHours)
+        defaults.set(false, forKey: Keys.whoopConnected)
+        defaults.set(0.0, forKey: Keys.whoopRecommendedSleepHours)
         defaults.removeObject(forKey: Keys.whoopLastSyncDate)
         defaults.removeObject(forKey: Keys.whoopTokenExpiry)
+        defaults.removeObject(forKey: Keys.whoopLatestSleepOnset)
+        defaults.removeObject(forKey: Keys.whoopLatestWakeTime)
     }
 
     // MARK: - Oura
@@ -113,9 +136,21 @@ final class AppPreferencesStore {
         set { defaults.set(newValue, forKey: Keys.ouraLastSyncDate) }
     }
 
+    var ouraLatestSleepOnset: Date? {
+        get { defaults.object(forKey: Keys.ouraLatestSleepOnset) as? Date }
+        set { defaults.set(newValue, forKey: Keys.ouraLatestSleepOnset) }
+    }
+
+    var ouraLatestWakeTime: Date? {
+        get { defaults.object(forKey: Keys.ouraLatestWakeTime) as? Date }
+        set { defaults.set(newValue, forKey: Keys.ouraLatestWakeTime) }
+    }
+
     func resetOuraData() {
         defaults.set(false, forKey: Keys.ouraConnected)
-        defaults.set(0.0,   forKey: Keys.ouraRecommendedSleepHours)
+        defaults.set(0.0, forKey: Keys.ouraRecommendedSleepHours)
         defaults.removeObject(forKey: Keys.ouraLastSyncDate)
+        defaults.removeObject(forKey: Keys.ouraLatestSleepOnset)
+        defaults.removeObject(forKey: Keys.ouraLatestWakeTime)
     }
 }

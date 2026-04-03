@@ -1,5 +1,6 @@
 const WHOOP_TOKEN_URL = "https://api.prod.whoop.com/oauth/oauth2/token";
 const WHOOP_CYCLE_URL = "https://api.prod.whoop.com/developer/v2/cycle";
+const WHOOP_SLEEP_URL = "https://api.prod.whoop.com/developer/v2/activity/sleep";
 const FIREBASE_CERTS_URL = "https://www.googleapis.com/service_accounts/v1/jwk/securetoken@system.gserviceaccount.com";
 const OURA_TOKEN_URL    = "https://api.ouraring.com/oauth/token";
 const OURA_SLEEP_URL    = "https://api.ouraring.com/v2/usercollection/sleep";
@@ -43,7 +44,10 @@ export default {
         return json({
           connected: false,
           recommendedSleepHours: 0,
-          lastSyncDate: null
+          lastSyncDate: null,
+          latestSleepOnset: null,
+          latestWakeTime: null,
+          recentSleepSessions: []
         });
       }
 
@@ -64,7 +68,14 @@ export default {
 
       if (url.pathname === "/oura/disconnect") {
         await env.WHOOP_TOKENS.delete(ouraTokenKey(uid));
-        return json({ connected: false, recommendedSleepHours: 0, lastSyncDate: null });
+        return json({
+          connected: false,
+          recommendedSleepHours: 0,
+          lastSyncDate: null,
+          latestSleepOnset: null,
+          latestWakeTime: null,
+          recentSleepSessions: []
+        });
       }
 
       return json({ error: "Not found." }, 404);
@@ -78,10 +89,14 @@ async function fetchAndPersistSleepNeed(env, uid) {
   const tokenData = await loadWhoopToken(env, uid);
   const refreshedTokenData = await refreshTokenIfNeeded(env, uid, tokenData);
 
-  const cycle = await whoopGet(`${WHOOP_CYCLE_URL}?limit=1`, refreshedTokenData.accessToken);
-  const cycleId = cycle?.records?.[0]?.id;
+  const sleepCollection = await whoopGet(`${WHOOP_SLEEP_URL}?limit=7`, refreshedTokenData.accessToken);
+  const sleepRecords = (sleepCollection?.records || [])
+    .map(normalizeWhoopSleepSession)
+    .filter(Boolean);
+  const latestSleep = sleepCollection?.records?.find(record => record?.cycle_id);
+  const cycleId = latestSleep?.cycle_id;
   if (!cycleId) {
-    throw httpError(404, "WHOOP returned no cycles for this user.");
+    throw httpError(404, "WHOOP returned no sleep sessions for this user.");
   }
 
   const sleep = await whoopGet(`${WHOOP_CYCLE_URL}/${cycleId}/sleep`, refreshedTokenData.accessToken);
@@ -98,18 +113,24 @@ async function fetchAndPersistSleepNeed(env, uid) {
 
   const recommendedSleepHours = clamp(totalMs / 3600000, 5, 12);
   const lastSyncDate = new Date().toISOString();
+  const latestSession = sleepRecords[0] || null;
 
   const updated = {
     ...refreshedTokenData,
     recommendedSleepHours,
-    lastSyncDate
+    lastSyncDate,
+    latestSleepOnset: latestSession?.sleepOnset ?? null,
+    latestWakeTime: latestSession?.wakeTime ?? null
   };
   await env.WHOOP_TOKENS.put(tokenKey(uid), JSON.stringify(updated));
 
   return {
     connected: true,
     recommendedSleepHours,
-    lastSyncDate
+    lastSyncDate,
+    latestSleepOnset: latestSession?.sleepOnset ?? null,
+    latestWakeTime: latestSession?.wakeTime ?? null,
+    recentSleepSessions: sleepRecords
   };
 }
 
@@ -184,12 +205,14 @@ async function fetchAndPersistOuraSleep(env, uid) {
     `${OURA_SLEEP_URL}?start_date=${weekAgo}&end_date=${today}`,
     accessToken
   );
-  const sessions = sleepData.data || [];
+  const sessions = (sleepData.data || [])
+    .map(normalizeOuraSleepSession)
+    .filter(Boolean);
   if (sessions.length === 0) throw httpError(404, "Oura returned no sleep sessions.");
 
   // Average total_sleep_duration (seconds) over available sessions
-  const totalSecs = sessions.reduce((sum, s) => sum + (s.total_sleep_duration || 0), 0);
-  const avgHours  = totalSecs / sessions.length / 3600;
+  const totalHours = sessions.reduce((sum, s) => sum + (s.durationHours || 0), 0);
+  const avgHours  = totalHours / sessions.length;
 
   // Fetch latest readiness score and add buffer if recovery is low
   let adjustment = 0;
@@ -201,11 +224,25 @@ async function fetchAndPersistOuraSleep(env, uid) {
 
   const recommendedSleepHours = clamp(avgHours + adjustment, 5, 12);
   const lastSyncDate = new Date().toISOString();
+  const latestSession = sessions[0] || null;
 
-  const updated = { ...refreshedTokenData, recommendedSleepHours, lastSyncDate };
+  const updated = {
+    ...refreshedTokenData,
+    recommendedSleepHours,
+    lastSyncDate,
+    latestSleepOnset: latestSession?.sleepOnset ?? null,
+    latestWakeTime: latestSession?.wakeTime ?? null
+  };
   await env.WHOOP_TOKENS.put(ouraTokenKey(uid), JSON.stringify(updated));
 
-  return { connected: true, recommendedSleepHours, lastSyncDate };
+  return {
+    connected: true,
+    recommendedSleepHours,
+    lastSyncDate,
+    latestSleepOnset: latestSession?.sleepOnset ?? null,
+    latestWakeTime: latestSession?.wakeTime ?? null,
+    recentSleepSessions: sessions
+  };
 }
 
 async function ouraGet(url, accessToken) {
@@ -425,6 +462,62 @@ function requiredString(value, field) {
 
 function clamp(value, min, max) {
   return Math.max(min, Math.min(max, value));
+}
+
+function normalizeWhoopSleepSession(session) {
+  const sleepOnset = optionalString(session?.start);
+  const wakeTime = optionalString(session?.end);
+  if (!sleepOnset || !wakeTime) {
+    return null;
+  }
+
+  const durationHours = diffHours(sleepOnset, wakeTime);
+  if (!durationHours || durationHours <= 0) {
+    return null;
+  }
+
+  return {
+    date: wakeTime,
+    sleepOnset,
+    wakeTime,
+    durationHours
+  };
+}
+
+function normalizeOuraSleepSession(session) {
+  const sleepOnset =
+    optionalString(session?.bedtime_start) ||
+    optionalString(session?.start_time) ||
+    optionalString(session?.start_datetime) ||
+    optionalString(session?.start);
+  const wakeTime =
+    optionalString(session?.bedtime_end) ||
+    optionalString(session?.end_time) ||
+    optionalString(session?.end_datetime) ||
+    optionalString(session?.end);
+  const totalSleepDuration = typeof session?.total_sleep_duration === "number"
+    ? session.total_sleep_duration / 3600
+    : diffHours(sleepOnset, wakeTime);
+
+  if (!sleepOnset || !wakeTime || !totalSleepDuration || totalSleepDuration <= 0) {
+    return null;
+  }
+
+  return {
+    date: optionalString(session?.day) || wakeTime,
+    sleepOnset,
+    wakeTime,
+    durationHours: totalSleepDuration
+  };
+}
+
+function diffHours(start, end) {
+  const startMs = Date.parse(start || "");
+  const endMs = Date.parse(end || "");
+  if (!Number.isFinite(startMs) || !Number.isFinite(endMs) || endMs <= startMs) {
+    return null;
+  }
+  return (endMs - startMs) / 3600000;
 }
 
 function httpError(status, message) {

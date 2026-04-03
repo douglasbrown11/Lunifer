@@ -14,10 +14,7 @@ struct SleepInsights: View {
     /// Injected entries for SwiftUI previews. Nil in production — falls back to the live store.
     var previewEntries: [SleepHistoryEntry]? = nil
 
-    @State private var showChangeSheet = false
-    @State private var showWearableWarning = false
-    /// Local copy edited inside the sheet; committed on save.
-    @State private var draftSleep = TimeValue(hours: 8, minutes: 0, auto: false)
+    @State private var showSettings = false
 
     // Wearable state — read directly from AppStorage so changes sync immediately
     @AppStorage("whoopConnected")             private var whoopConnected: Bool   = false
@@ -49,35 +46,27 @@ struct SleepInsights: View {
     var body: some View {
         VStack(spacing: 0) {
 
-                Spacer().frame(height: 60)
+                Spacer().frame(height: 28)
 
                 // ── Optimal sleep duration card ──────────
-                VStack(spacing: 16) {
+                VStack(spacing: 10) {
 
-                    // "change" sits in the top-left corner of the card
+                    // Subtle link to the sleep editor in Settings
                     HStack {
+                        Spacer()
                         Button {
-                            draftSleep = answers.sleep
-                            if isWhoopDriven || isOuraDriven {
-                                showWearableWarning = true
-                            } else {
-                                showChangeSheet = true
-                            }
+                            showSettings = true
                         } label: {
-                            Text("change")
-                                .font(.custom("DM Sans", size: 18))
-                                .foregroundColor(Color.white.opacity(0.95))
+                            HStack(spacing: 4) {
+                                Text("Adjust in Settings")
+                                    .font(.custom("DM Sans", size: 12))
+                                    .foregroundColor(Color(red: 0.627, green: 0.471, blue: 1.0).opacity(0.7))
+                                Image(systemName: "arrow.right")
+                                    .font(.system(size: 9, weight: .medium))
+                                    .foregroundColor(Color(red: 0.627, green: 0.471, blue: 1.0).opacity(0.5))
+                            }
                         }
                         .buttonStyle(.plain)
-                        .alert("Override wearable recommendation?", isPresented: $showWearableWarning) {
-                            Button("Set Manually", role: .destructive) {
-                                showChangeSheet = true
-                            }
-                            Button("Keep Recommendation", role: .cancel) { }
-                        } message: {
-                            Text("Your sleep goal was set by your \(isWhoopDriven ? "WHOOP" : "Oura Ring"). Setting it manually will replace that recommendation.")
-                        }
-                        Spacer()
                     }
 
                     Text("SLEEP")
@@ -86,42 +75,42 @@ struct SleepInsights: View {
                         .kerning(2.5)
 
                     Text(SleepDurationModel.formatted(recommendedHours))
-                        .font(.custom("Libre Franklin", size: 51).weight(.light))
+                        .font(.custom("Libre Franklin", size: 44).weight(.light))
                         .foregroundColor(Color.white.opacity(0.95))
 
                     // "recommended to you via [logo]" — or plain text if no wearable
                     if isWhoopDriven {
                         HStack(spacing: 6) {
                             Text("recommended to you via")
-                                .font(.custom("DM Sans", size: 14))
+                                .font(.custom("DM Sans", size: 13))
                                 .foregroundColor(Color.white.opacity(0.4))
                             Image("WhoopWordmark")
                                 .resizable()
                                 .interpolation(.high)
                                 .scaledToFit()
-                                .frame(height: 14)
+                                .frame(height: 13)
                         }
                         .transition(.opacity)
                     } else if isOuraDriven {
                         HStack(spacing: 6) {
                             Text("recommended to you via")
-                                .font(.custom("DM Sans", size: 14))
+                                .font(.custom("DM Sans", size: 13))
                                 .foregroundColor(Color.white.opacity(0.4))
                             Image("OuraWordmark")
                                 .resizable()
                                 .interpolation(.high)
                                 .scaledToFit()
-                                .frame(height: 14)
+                                .frame(height: 13)
                         }
                         .transition(.opacity)
                     } else {
                         Text("recommended for you")
-                            .font(.custom("DM Sans", size: 14))
+                            .font(.custom("DM Sans", size: 13))
                             .foregroundColor(Color.white.opacity(0.4))
                     }
                 }
                 .frame(maxWidth: .infinity)
-                .padding(.vertical, 32)
+                .padding(.vertical, 20)
                 .background(
                     RoundedRectangle(cornerRadius: 20)
                         .fill(Color.white.opacity(0.04))
@@ -130,9 +119,9 @@ struct SleepInsights: View {
                                 .stroke(Color.white.opacity(0.08), lineWidth: 1)
                         )
                 )
-                .padding(.horizontal, 20)
+                .padding(.horizontal, 28)
 
-                Spacer().frame(height: 36)
+                Spacer().frame(height: 20)
 
                 // ── 7-day history chart ──────────────────
                 Text("LAST 7 DAYS")
@@ -140,31 +129,31 @@ struct SleepInsights: View {
                     .foregroundColor(Color.white.opacity(0.35))
                     .kerning(2.5)
                     .frame(maxWidth: .infinity, alignment: .leading)
-                    .padding(.horizontal, 24)
-                    .padding(.bottom, 16)
+                    .padding(.horizontal, 28)
+                    .padding(.bottom, 10)
 
                 Group {
                     if history.isEmpty {
-                        VStack(spacing: 12) {
+                        VStack(spacing: 10) {
                             Image(systemName: "moon.zzz")
-                                .font(.system(size: 32, weight: .ultraLight))
+                                .font(.system(size: 28, weight: .ultraLight))
                                 .foregroundColor(Color.white.opacity(0.2))
 
                             Text("Sleep data will appear here\nafter your first night")
-                                .font(.custom("DM Sans", size: 14))
+                                .font(.custom("DM Sans", size: 13))
                                 .foregroundColor(Color.white.opacity(0.3))
                                 .multilineTextAlignment(.center)
                         }
                         .frame(maxWidth: .infinity)
-                        .padding(.vertical, 40)
+                        .padding(.vertical, 28)
                     } else {
                         SleepHistoryChart(
                             entries: history,
                             recommendedHours: recommendedHours
                         )
-                        .frame(height: 180)
+                        .frame(height: 150)
                         .padding(.horizontal, 16)
-                        .padding(.vertical, 20)
+                        .padding(.vertical, 14)
                     }
                 }
                 .frame(maxWidth: .infinity)
@@ -176,7 +165,7 @@ struct SleepInsights: View {
                                 .stroke(Color.white.opacity(0.08), lineWidth: 1)
                         )
                 )
-                .padding(.horizontal, 20)
+                .padding(.horizontal, 28)
 
                 Spacer()
         }
@@ -185,18 +174,14 @@ struct SleepInsights: View {
             WhoopManager.shared.refreshIfNeeded()
             OuraManager.shared.refreshIfNeeded()
         }
-        // ── Edit sleep sheet ─────────────────────────────
-        .sheet(isPresented: $showChangeSheet) {
-            SleepEditSheet(sleep: $draftSleep) {
-                // Save callback
-                answers.sleep = draftSleep
-                answers.saveToDefaults()
-                answers.saveToFirestore()
-                showChangeSheet = false
+        // ── Jump to Sleep & Wearables settings ───────────
+        .sheet(isPresented: $showSettings) {
+            NavigationStack {
+                SleepAndWearablesSettingsView(answers: $answers)
             }
-            .presentationDetents([.fraction(0.52)])
+            .presentationDetents([.large])
             .presentationDragIndicator(.visible)
-            .presentationBackground(Color(red: 0.07, green: 0.04, blue: 0.15))
+            .presentationBackground(Color(red: 0.06, green: 0.03, blue: 0.14))
         }
     }
 }
@@ -205,7 +190,7 @@ struct SleepInsights: View {
 // SleepEditSheet after clicking "change"
 // ─────────────────────────────────────────────────────────────
 
-private struct SleepEditSheet: View {
+struct SleepEditSheet: View {
     @Binding var sleep: TimeValue
     let onSave: () -> Void
 
