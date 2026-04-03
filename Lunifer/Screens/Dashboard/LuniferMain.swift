@@ -283,6 +283,9 @@ struct LuniferMain: View {
                 addedAlarmTimestamp = 0
                 addedAlarmLabel = ""
             }
+            // Skip system-service calls (AlarmKit, CoreMotion, notifications)
+            // when running inside the Xcode preview canvas.
+            guard ProcessInfo.processInfo.environment["XCODE_RUNNING_FOR_PREVIEWS"] != "1" else { return }
             await SleepTracker.shared.startTracking()
             BatteryAlarmNotification.shared.startMonitoring()
             LuniferAlarm.shared.startAdaptiveRescheduling()
