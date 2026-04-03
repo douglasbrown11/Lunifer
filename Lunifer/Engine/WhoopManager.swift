@@ -32,6 +32,16 @@ private struct WhoopBackendStatusResponse: Decodable {
     let connected: Bool
     let recommendedSleepHours: Double?
     let lastSyncDate: String?
+    let latestSleepOnset: String?
+    let latestWakeTime: String?
+    let recentSleepSessions: [WhoopBackendSleepSession]?
+}
+
+private struct WhoopBackendSleepSession: Decodable {
+    let date: String
+    let sleepOnset: String
+    let wakeTime: String
+    let durationHours: Double
 }
 
 @MainActor
@@ -43,6 +53,8 @@ final class WhoopManager: NSObject, ObservableObject, ASWebAuthenticationPresent
     @Published private(set) var isLoading: Bool = false
     @Published private(set) var errorMessage: String? = nil
     @Published private(set) var lastSyncDate: Date? = nil
+    @Published private(set) var latestSleepOnset: Date? = nil
+    @Published private(set) var latestWakeTime: Date? = nil
 
     private var authSession: ASWebAuthenticationSession?
 
@@ -66,6 +78,8 @@ final class WhoopManager: NSObject, ObservableObject, ASWebAuthenticationPresent
         isConnected = prefs.whoopConnected
         recommendedSleepHours = prefs.whoopRecommendedSleepHours
         lastSyncDate = prefs.whoopLastSyncDate
+        latestSleepOnset = prefs.whoopLatestSleepOnset
+        latestWakeTime = prefs.whoopLatestWakeTime
     }
 
     private var baseBackendURL: URL? {
@@ -196,20 +210,38 @@ final class WhoopManager: NSObject, ObservableObject, ASWebAuthenticationPresent
         isConnected = false
         recommendedSleepHours = 0
         lastSyncDate = nil
+        latestSleepOnset = nil
+        latestWakeTime = nil
         errorMessage = nil
     }
 
     private func apply(status: WhoopBackendStatusResponse) {
         let hours = max(0, status.recommendedSleepHours ?? 0)
-        let syncDate = status.lastSyncDate.flatMap(Self.iso8601.date(from:))
+        let syncDate = status.lastSyncDate.flatMap(Self.parseDate)
+        let sessions = (status.recentSleepSessions ?? []).compactMap(Self.sessionEntry(from:))
+        let latestOnset = status.latestSleepOnset.flatMap(Self.parseDate) ?? sessions.first?.sleepOnset
+        let latestWake = status.latestWakeTime.flatMap(Self.parseDate) ?? sessions.first?.wakeTime
 
         AppPreferencesStore.shared.whoopConnected = status.connected
         AppPreferencesStore.shared.whoopRecommendedSleepHours = hours
         AppPreferencesStore.shared.whoopLastSyncDate = syncDate
+        AppPreferencesStore.shared.whoopLatestSleepOnset = latestOnset
+        AppPreferencesStore.shared.whoopLatestWakeTime = latestWake
 
         isConnected = status.connected
         recommendedSleepHours = hours
         lastSyncDate = syncDate
+        latestSleepOnset = latestOnset
+        latestWakeTime = latestWake
+
+        for session in sessions {
+            SleepHistoryManager.shared.recordNight(
+                date: session.wakeTime ?? session.date,
+                duration: session.durationHours,
+                onset: session.sleepOnset,
+                wake: session.wakeTime
+            )
+        }
     }
 
     private func callBackend<Response: Decodable>(path: String, payload: [String: Any]) async throws -> Response {
@@ -267,9 +299,34 @@ final class WhoopManager: NSObject, ObservableObject, ASWebAuthenticationPresent
         let error: String
     }
 
-    private static let iso8601: ISO8601DateFormatter = {
+    private static let iso8601WithFractionalSeconds: ISO8601DateFormatter = {
         let formatter = ISO8601DateFormatter()
         formatter.formatOptions = [.withInternetDateTime, .withFractionalSeconds]
         return formatter
     }()
+
+    private static let iso8601: ISO8601DateFormatter = {
+        let formatter = ISO8601DateFormatter()
+        formatter.formatOptions = [.withInternetDateTime]
+        return formatter
+    }()
+
+    private static func parseDate(_ value: String) -> Date? {
+        iso8601WithFractionalSeconds.date(from: value) ?? iso8601.date(from: value)
+    }
+
+    private static func sessionEntry(from session: WhoopBackendSleepSession) -> SleepHistoryEntry? {
+        guard let date = parseDate(session.date),
+              let onset = parseDate(session.sleepOnset),
+              let wake = parseDate(session.wakeTime) else {
+            return nil
+        }
+
+        return SleepHistoryEntry(
+            date: date,
+            durationHours: session.durationHours,
+            sleepOnset: onset,
+            wakeTime: wake
+        )
+    }
 }

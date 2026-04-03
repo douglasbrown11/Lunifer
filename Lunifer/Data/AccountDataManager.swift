@@ -3,8 +3,7 @@ import Foundation
 final class AccountDataManager {
     static let shared = AccountDataManager()
 
-    func clearLocalAccountData() {
-        AppPreferencesStore.shared.surveyCompleted = false
+    func clearLocalSessionDataOnSignOut() {
         SurveyAnswersStore.shared.clearLocalData()
         SleepHistoryStore.shared.clearLocalData()
         SleepTrackingStore.shared.clearLocalData()
@@ -19,5 +18,10 @@ final class AccountDataManager {
         KeychainHelper.delete(forKey: KeychainHelper.Keys.ouraAccessToken)
         KeychainHelper.delete(forKey: KeychainHelper.Keys.ouraRefreshToken)
         AppPreferencesStore.shared.resetOuraData()
+    }
+
+    func clearLocalAccountData() {
+        AppPreferencesStore.shared.surveyCompleted = false
+        clearLocalSessionDataOnSignOut()
     }
 }

@@ -99,7 +99,7 @@
 /* End PBXFrameworksBuildPhase section */
 
 /* Begin PBXGroup section */
-		A3AB40092F6E259A0077BA25 /* Sounds */ = {
+		A3AB40092F6E259A0077BA25 /* sounds */ = {
 			isa = PBXGroup;
 			children = (
 				A3AB400A2F6E25DA0077BA25 /* Alarm Clock.mp3 */,
@@ -110,14 +110,14 @@
 				A3AB400F2F6E25DA0077BA25 /* Space.wav */,
 				A3AB40102F6E25DA0077BA25 /* Twin Alarm Bell.wav */,
 			);
-			path = Sounds;
+			path = sounds;
 			sourceTree = "<group>";
 		};
 		A3CF23722F61D1D200E6A310 = {
 			isa = PBXGroup;
 			children = (
 				A3CF237D2F61D1D200E6A310 /* Lunifer */,
-				A3AB40092F6E259A0077BA25 /* Sounds */,
+				A3AB40092F6E259A0077BA25 /* sounds */,
 				A3CF238B2F61D1D400E6A310 /* LuniferTests */,
 				A3CF23952F61D1D400E6A310 /* LuniferUITests */,
 				A3CF237C2F61D1D200E6A310 /* Products */,

@@ -91,15 +91,30 @@ private struct LuniferInputField: View {
 // ── MARK: LuniferAuth ────────────────────────────────────────
 
 struct LuniferAuth: View {
-    var onSignedIn: () -> Void = {}
+    var onSignedIn: (_ isNewUser: Bool) async -> Void = { _ in }
 
     @State private var mode: AuthMode = .create
     @State private var email = ""
     @State private var password = ""
     @State private var loading = false
     @State private var errorMessage: String?
+    @State private var agreedToTerms: Bool = false
 
     private var canSubmit: Bool { !email.isEmpty && password.count >= 6 }
+
+    private var termsAttributedString: AttributedString {
+        let tosURL  = URL(string: "https://lunifer-ce086.web.app/terms.html")!
+        let ppURL   = URL(string: "https://lunifer-ce086.web.app/privacy-policy.html")!
+        let base    = Font.custom("DM Sans", size: 12)
+        let muted   = Color.white.opacity(0.35)
+        let accent  = Color(red: 0.627, green: 0.471, blue: 1.0).opacity(0.85)
+        var s   = AttributedString("By continuing, you agree to our "); s.font = base;   s.foregroundColor = muted
+        var tos = AttributedString("Terms of Service");                  tos.font = base; tos.foregroundColor = accent; tos.link = tosURL
+        var and = AttributedString(" and ");                             and.font = base; and.foregroundColor = muted
+        var pp  = AttributedString("Privacy Policy");                   pp.font = base;  pp.foregroundColor = accent;  pp.link = ppURL
+        var dot = AttributedString(".");                                 dot.font = base; dot.foregroundColor = muted
+        return s + tos + and + pp + dot
+    }
 
     var body: some View {
         ZStack {
@@ -199,6 +214,7 @@ struct LuniferAuth: View {
                                 .font(.custom("DM Sans", size: 15))
                                 .foregroundColor(Color.white.opacity(0.8))
                         }
+                        .frame(maxWidth: .infinity, alignment: .center)
                         .frame(maxWidth: .infinity)
                         .frame(height: 50)
                         .background(
@@ -217,6 +233,7 @@ struct LuniferAuth: View {
                                 .font(.custom("DM Sans", size: 15))
                                 .foregroundColor(Color.white.opacity(0.8))
                         }
+                        .frame(maxWidth: .infinity, alignment: .center)
                         .frame(maxWidth: .infinity)
                         .frame(height: 50)
                         .background(
@@ -249,8 +266,55 @@ struct LuniferAuth: View {
                 }
                 .padding(.horizontal, 62)
                 .padding(.top, 115)
-                .padding(.bottom, 32)
+                .padding(.bottom, 110)   // leave room for the pinned checkbox panel
                 .frame(maxWidth: .infinity)
+            }
+
+            // ── Pinned terms checkbox card ────────────────────
+            VStack {
+                Spacer()
+                HStack(alignment: .top, spacing: 10) {
+                    Button {
+                        withAnimation(.easeInOut(duration: 0.15)) { agreedToTerms.toggle() }
+                    } label: {
+                        ZStack {
+                            RoundedRectangle(cornerRadius: 5)
+                                .fill(agreedToTerms
+                                      ? Color(red: 0.627, green: 0.471, blue: 1.0)
+                                      : Color.white.opacity(0.06))
+                                .overlay(
+                                    RoundedRectangle(cornerRadius: 5)
+                                        .stroke(agreedToTerms
+                                                ? Color.clear
+                                                : Color.white.opacity(0.18),
+                                                lineWidth: 1.5)
+                                )
+                                .frame(width: 18, height: 18)
+                            if agreedToTerms {
+                                Image(systemName: "checkmark")
+                                    .font(.system(size: 10, weight: .bold))
+                                    .foregroundColor(.white)
+                            }
+                        }
+                    }
+                    .padding(.top, 1)
+
+                    Text(termsAttributedString)
+                        .multilineTextAlignment(.leading)
+                        .fixedSize(horizontal: false, vertical: true)
+                }
+                .padding(.horizontal, 16)
+                .padding(.vertical, 16)
+                .background(
+                    RoundedRectangle(cornerRadius: 16)
+                        .fill(Color(red: 0.12, green: 0.08, blue: 0.20))
+                        .overlay(
+                            RoundedRectangle(cornerRadius: 16)
+                                .stroke(Color.white.opacity(0.08), lineWidth: 1)
+                        )
+                )
+                .padding(.horizontal, 29)
+                .padding(.bottom, 52)
             }
         }
         .frame(maxWidth: .infinity, maxHeight: .infinity)
@@ -262,16 +326,21 @@ struct LuniferAuth: View {
 
     private func handleEmailAuth() {
         guard canSubmit else { return }
+        guard agreedToTerms else {
+            withAnimation { errorMessage = "Please agree to the Terms of Service and Privacy Policy to continue." }
+            return
+        }
         Task { @MainActor in
             loading = true
             errorMessage = nil
             do {
                 if mode == .create {
-                    try await Auth.auth().createUser(withEmail: email, password: password)
+                    _ = try await Auth.auth().createUser(withEmail: email, password: password)
+                    await onSignedIn(true)
                 } else {
-                    try await Auth.auth().signIn(withEmail: email, password: password)
+                    _ = try await Auth.auth().signIn(withEmail: email, password: password)
+                    await onSignedIn(false)
                 }
-                onSignedIn()
             } catch {
                 errorMessage = friendlyAuthError(error)
             }
@@ -290,6 +359,10 @@ struct LuniferAuth: View {
     //   3. In Azure, copy the Application (client) ID into Firebase Console.
 
     private func handleMicrosoftSignIn() {
+        guard agreedToTerms else {
+            withAnimation { errorMessage = "Please agree to the Terms of Service and Privacy Policy to continue." }
+            return
+        }
         Task { @MainActor in
             loading = true
             errorMessage = nil
@@ -331,8 +404,8 @@ struct LuniferAuth: View {
                         }
                     }
                 }
-                try await Auth.auth().signIn(with: credential)
-                onSignedIn()
+                let authResult = try await Auth.auth().signIn(with: credential)
+                await onSignedIn(authResult.additionalUserInfo?.isNewUser ?? false)
             } catch {
                 errorMessage = friendlyAuthError(error)
             }
@@ -341,6 +414,10 @@ struct LuniferAuth: View {
     }
 
     private func handleGoogleSignIn() {
+        guard agreedToTerms else {
+            withAnimation { errorMessage = "Please agree to the Terms of Service and Privacy Policy to continue." }
+            return
+        }
         Task { @MainActor in
             loading = true
             errorMessage = nil
@@ -369,8 +446,8 @@ struct LuniferAuth: View {
                     withIDToken: idToken,
                     accessToken: result.user.accessToken.tokenString
                 )
-                try await Auth.auth().signIn(with: credential)
-                onSignedIn()
+                let authResult = try await Auth.auth().signIn(with: credential)
+                await onSignedIn(authResult.additionalUserInfo?.isNewUser ?? false)
             } catch {
                 errorMessage = friendlyAuthError(error)
             }

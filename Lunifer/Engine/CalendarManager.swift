@@ -45,6 +45,10 @@ enum CalendarAuthorizationStatus: Equatable {
 @MainActor
 final class CalendarManager: ObservableObject {
 
+    /// Shared singleton so the alarm engine can query calendar events
+    /// without requiring a SwiftUI environment object.
+    static let shared = CalendarManager()
+
     // MARK: Published State
 
     /// Current system-level authorization state.

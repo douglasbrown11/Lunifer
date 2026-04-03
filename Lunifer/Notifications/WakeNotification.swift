@@ -4,17 +4,17 @@ import UserNotifications
 // ─────────────────────────────────────────────────────────────
 // WakeNotification
 // ─────────────────────────────────────────────────────────────
-// Schedules a "heads up" notification 3 hours before the user's
+// Schedules a "heads up" notification 1 hour before the user's
 // estimated bedtime, telling them what time Lunifer will wake
 // them up the next morning.
 //
 // ── TIMING ───────────────────────────────────────────────────
 // Estimated bedtime = wakeTime − user's sleep duration
-// Notification fires 3 hours before that bedtime so the user
-// still has time to wind down.
+// Notification fires 1 hour before that bedtime so the user
+// has time to start winding down.
 //
 //   Example: wake at 7:00 AM, sleeps 8h → bedtime 11:00 PM
-//   Notification fires at 8:00 PM
+//   Notification fires at 10:00 PM
 //
 // ── NOTIFICATION FORMAT ──────────────────────────────────────
 //   Title:  "11:00 PM → 7:00 AM"
@@ -66,7 +66,7 @@ final class WakeNotification {
 
         // ── Compute bedtime and notification fire time ────────
         let bedtime    = targetWake.addingTimeInterval(-sleepHours * 3600)
-        let notifyAt   = bedtime.addingTimeInterval(-3 * 3600)
+        let notifyAt   = bedtime.addingTimeInterval(-1 * 3600)
 
         // Nothing to do if the notification window has already passed
         guard notifyAt > Date() else {

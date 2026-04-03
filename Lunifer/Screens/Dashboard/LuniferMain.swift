@@ -805,11 +805,6 @@ struct AddAlarmSheet: View {
                     .padding(.top, 24)
                     .padding(.bottom, 8)
 
-                    Rectangle()
-                        .fill(Color.white.opacity(0.95))
-                        .frame(height: 1)
-                        .padding(.horizontal, 32)
-
                     // ── Time picker ───────────────────────────
                     DatePicker("", selection: $pickerTime, displayedComponents: .hourAndMinute)
                         .datePickerStyle(.wheel)
@@ -872,6 +867,7 @@ struct AddAlarmSheet: View {
                     }
                     .buttonStyle(.plain)
                     .padding(.horizontal, 24)
+                    .padding(.bottom, 10)
 
                     // ── Snooze row ─────────────────────────────
                     VStack(spacing: 8) {
