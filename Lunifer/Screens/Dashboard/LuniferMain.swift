@@ -33,6 +33,10 @@ struct LuniferMain: View {
     @State private var showMotionDeniedAlert = false
     @State private var showAlarmDeniedAlert = false
 
+    private var isRunningPreview: Bool {
+        ProcessInfo.processInfo.environment["XCODE_RUNNING_FOR_PREVIEWS"] == "1"
+    }
+
     private var addedAlarmDate: Date {
         Date(timeIntervalSince1970: addedAlarmTimestamp)
     }
@@ -144,6 +148,31 @@ struct LuniferMain: View {
         guard consecutiveRestDaysFromTomorrow > 0 else { return false }
         let noon = Calendar.current.date(bySettingHour: 12, minute: 0, second: 0, of: Date())!
         return Date() >= max(calculatedAlarmDate, noon)
+    }
+
+    // ── Commute helpers ───────────────────────────────────────
+
+    private var isCommuterUser: Bool {
+        answers.lifestyle == "student" || answers.lifestyle == "commuter"
+    }
+
+    /// True after the alarm has fired and before the calculated leave time,
+    /// on a day the user is scheduled to wake up.
+    private var shouldShowCommuteCard: Bool {
+        _ = ticker // re-evaluate each minute alongside the rest-period check
+        guard isCommuterUser else { return false }
+        guard answers.wakeDays.contains(weekdayID(for: Date())) else { return false }
+        let commuteMinutes = answers.commute.auto
+            ? 30
+            : answers.commute.hours * 60 + answers.commute.minutes
+        guard commuteMinutes > 0 else { return false }
+        let routineMinutes = answers.routine.auto
+            ? 60
+            : answers.routine.hours * 60 + answers.routine.minutes
+        // leaveTime = wakeTime + routineMinutes = arrivalTarget - commuteMinutes
+        let leaveTime = calculatedAlarmDate.addingTimeInterval(Double(routineMinutes) * 60)
+        let now = Date()
+        return now >= calculatedAlarmDate && now < leaveTime
     }
 
     /// Day name, time string, and AM/PM for the first alarm after the rest period.
@@ -285,7 +314,7 @@ struct LuniferMain: View {
             }
             // Skip system-service calls (AlarmKit, CoreMotion, notifications)
             // when running inside the Xcode preview canvas.
-            guard ProcessInfo.processInfo.environment["XCODE_RUNNING_FOR_PREVIEWS"] != "1" else { return }
+            guard !isRunningPreview else { return }
             await SleepTracker.shared.startTracking()
             BatteryAlarmNotification.shared.startMonitoring()
             LuniferAlarm.shared.startAdaptiveRescheduling()
@@ -297,6 +326,19 @@ struct LuniferMain: View {
             // before we check the result
             try? await Task.sleep(nanoseconds: 500_000_000)
             checkMotionAuthorization()
+
+            // Start commute monitoring on scheduled wake days for commuters/students.
+            // CommuteManager will schedule the leave reminder and watch for duration
+            // deltas. The arrival target mirrors the hardcoded 8:00 AM used throughout
+            // the alarm calculation — swap this for a calendar-driven date when ready.
+            if isCommuterUser && answers.wakeDays.contains(weekdayID(for: Date())) {
+                var arrComps = Calendar.current.dateComponents([.year, .month, .day], from: Date())
+                arrComps.hour   = 8
+                arrComps.minute = 0
+                arrComps.second = 0
+                let arrival = Calendar.current.date(from: arrComps) ?? Date()
+                CommuteManager.shared.startPolling(answers: answers, arrivalDate: arrival)
+            }
         }
         // Re-evaluate rest period every minute so the midnight transition
         // back to the alarm view happens automatically without a relaunch.
@@ -306,6 +348,7 @@ struct LuniferMain: View {
         // Re-check both authorizations each time the user returns to the app
         // (e.g. coming back from iOS Settings after granting access).
         .onReceive(NotificationCenter.default.publisher(for: UIApplication.didBecomeActiveNotification)) { _ in
+            guard !isRunningPreview else { return }
             checkAlarmAuthorization()
             checkMotionAuthorization()
         }
@@ -330,6 +373,10 @@ struct LuniferMain: View {
     }
 
     private func checkAlarmAuthorization() {
+        guard !isRunningPreview else {
+            showAlarmDeniedAlert = false
+            return
+        }
         showAlarmDeniedAlert = LuniferAlarm.shared.authorizationDenied
     }
 
@@ -337,6 +384,10 @@ struct LuniferMain: View {
     // Called on first load and every time the app returns to the foreground
     // so the loop continues until the user grants access.
     private func checkMotionAuthorization() {
+        guard !isRunningPreview else {
+            showMotionDeniedAlert = false
+            return
+        }
         let status = CMMotionActivityManager.authorizationStatus()
         showMotionDeniedAlert = (status == .denied)
     }
@@ -635,6 +686,12 @@ struct LuniferMain: View {
                         .padding(.horizontal, 60)
                     }
                     .offset(y: luniferEnabled ? 0 : 8)
+                }
+
+                // ── Commute card ──────────────────────────
+                if shouldShowCommuteCard && !alarmExpanded {
+                    CommuteStatusCard(answers: answers)
+                        .transition(.opacity)
                 }
 
             }
@@ -1142,14 +1199,124 @@ struct SoundSettingsView: View {
 }
 
 
-#Preview {
-    LuniferMain(answers: .constant({
-        var a = SurveyAnswers()
-        a.age       = "28"
-        a.lifestyle = "commuter"
-        a.calendar  = "apple"
-        a.routine   = TimeValue(hours: 0, minutes: 45, auto: false)
-        a.commute   = TimeValue(hours: 0, minutes: 30, auto: false)
-        return a
-    }()))
+// ── MARK: Commute Status Card ─────────────────────────────────
+// Shown on the alarm page after the alarm fires, while the user
+// still has time before they need to leave. Displays the survey-
+// entered commute duration and the derived leave-by time.
+// When live routing is added to CommuteManager, bind this view
+// to CommuteManager.shared.currentDurationMinutes instead of
+// re-deriving the duration from answers directly.
+
+struct CommuteStatusCard: View {
+    let answers: SurveyAnswers
+
+    private var commuteMinutes: Int {
+        answers.commute.auto
+            ? 30
+            : answers.commute.hours * 60 + answers.commute.minutes
+    }
+
+    /// leave time = 8:00 AM target − commute duration
+    private var leaveTime: Date {
+        var comps    = Calendar.current.dateComponents([.year, .month, .day], from: Date())
+        comps.hour   = 8
+        comps.minute = 0
+        comps.second = 0
+        let arrival  = Calendar.current.date(from: comps) ?? Date()
+        return arrival.addingTimeInterval(-Double(commuteMinutes) * 60)
+    }
+
+    private var leaveTimeString: String {
+        let f        = DateFormatter()
+        f.dateFormat = "h:mm a"
+        return f.string(from: leaveTime)
+    }
+
+    private var modeIcon: String {
+        switch answers.commuteMode {
+        case "transit": return "tram.fill"
+        case "walk":    return "figure.walk"
+        case "bike":    return "bicycle"
+        default:        return "car.fill"
+        }
+    }
+
+    var body: some View {
+        VStack(spacing: 8) {
+
+            Text("COMMUTE")
+                .font(.custom("DM Sans", size: 10))
+                .foregroundColor(Color.white.opacity(0.3))
+                .kerning(2.5)
+                .frame(maxWidth: .infinity, alignment: .leading)
+                .padding(.horizontal, 60)
+                .padding(.top, 20)
+
+            HStack(alignment: .center, spacing: 0) {
+                VStack(alignment: .leading, spacing: 6) {
+                    HStack(alignment: .lastTextBaseline, spacing: 8) {
+                        Image(systemName: modeIcon)
+                            .font(.system(size: 14, weight: .light))
+                            .foregroundColor(Color(red: 0.706, green: 0.588, blue: 0.902))
+                        Text("~\(commuteMinutes) min")
+                            .font(.custom("Libre Franklin", size: 36).weight(.light))
+                            .foregroundColor(Color.white.opacity(0.80))
+                            .monospacedDigit()
+                    }
+                    Text("Leave by \(leaveTimeString)")
+                        .font(.custom("DM Sans", size: 13))
+                        .foregroundColor(Color.white.opacity(0.40))
+                }
+                Spacer()
+            }
+            .padding(.horizontal, 60)
+        }
+    }
 }
+
+private struct LuniferMainPreview: View {
+    @State private var answers: SurveyAnswers = {
+        var a = SurveyAnswers()
+        a.age = "28"
+        a.lifestyle = "commuter"
+        a.wakeDays = ["sun", "mon", "tue", "wed", "thu", "fri", "sat"]
+        a.calendar = "apple"
+        a.routine = TimeValue(hours: 0, minutes: 45, auto: false)
+        a.commute = TimeValue(hours: 0, minutes: 30, auto: false)
+        a.sleep = TimeValue(hours: 8, minutes: 0, auto: false)
+        return a
+    }()
+
+    var body: some View {
+        LuniferMain(answers: $answers)
+    }
+}
+
+private struct SleepInsightsOnlyPreview: View {
+    @State private var answers: SurveyAnswers = {
+        var a = SurveyAnswers()
+        a.age = "28"
+        a.sleep = TimeValue(hours: 8, minutes: 0, auto: false)
+        return a
+    }()
+
+    var body: some View {
+        ZStack {
+            Color.luniferBg.ignoresSafeArea()
+            SleepInsights(answers: $answers, previewEntries: SleepHistoryMock.entries)
+        }
+    }
+}
+
+struct LuniferMain_Previews: PreviewProvider {
+    static var previews: some View {
+        Group {
+            LuniferMainPreview()
+                .previewDisplayName("Dashboard")
+
+            SleepInsightsOnlyPreview()
+                .previewDisplayName("Sleep Insights Only")
+        }
+    }
+}
+

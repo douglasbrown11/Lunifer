@@ -42,8 +42,14 @@ final class AppPreferencesStore {
         static let ouraLatestWakeTime = "ouraLatestWakeTime"
 
         // Notifications
-        static let batteryAlertEnabled = "batteryAlertEnabled"
-        static let wakeReminderEnabled = "wakeReminderEnabled"
+        static let batteryAlertEnabled    = "batteryAlertEnabled"
+        static let wakeReminderEnabled    = "wakeReminderEnabled"
+        static let commuteReminderEnabled = "commuteReminderEnabled"
+
+        // Commute polling state (persisted for background task continuity)
+        static let commuteArrivalTimestamp        = "commuteArrivalTimestamp"
+        static let commutePreviousDurationMinutes = "commutePreviousDurationMinutes"
+        static let commutePollingActive           = "commutePollingActive"
 
         // Battery monitoring internals
         static let batteryDrainSamples = "lunifer_battery_drain_samples"
