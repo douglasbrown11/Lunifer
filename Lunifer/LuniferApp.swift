@@ -21,6 +21,12 @@ struct LuniferApp: App {
         // iOS will call this handler when it wakes the app in the background.
         SleepTracker.registerBackgroundTask()
 
+        // Register the background task handler for commute duration refresh.
+        // Fires ~every 10 minutes during the morning commute window so the
+        // leave-reminder and delta-alert pipeline works even when the app
+        // is suspended.
+        CommuteManager.registerBackgroundTask()
+
         // One-time migration: scrub any sleep history entries whose duration
         // falls outside the realistic 3–12 hour range.  These are artefacts
         // from early development runs where the retroactive analysis window

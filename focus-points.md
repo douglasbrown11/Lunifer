@@ -1,32 +1,32 @@
 # Lunifer — Focus Points Briefing
-*Generated: April 3, 2026*
+*Generated: April 6, 2026*
 
 ---
 
 ## 1. Replace the Hardcoded 8:00 AM Target with Real Calendar-Driven Alarm Scheduling
 
-**Why this matters most:** The entire value proposition of Lunifer is an alarm that knows when you actually need to be up. Right now, the core alarm calculation in `LuniferMain.swift` works backwards from a hardcoded `targetMinutes = 8 * 60` (8:00 AM), subtracting routine and commute offsets. `CalendarManager` already has `firstEventTomorrow` fully implemented and the adaptive rescheduling engine already uses it as a cap — but the base alarm the user sees on the dashboard is never calendar-aware.
+**Why this matters most:** The entire value proposition of Lunifer is an alarm that knows when you actually need to be up. Right now the core alarm calculation in `LuniferMain.swift` works backwards from a hardcoded `targetMinutes = 8 * 60` in four separate places: `wakeUpTime`, `wakeUpPeriod`, `calculatedAlarmDate`, and the manual-override re-derivation block. `CalendarManager` already has `firstEventTomorrow` fully implemented and the adaptive rescheduling engine already uses it as a cap — but the base alarm the user sees on the dashboard is never calendar-aware.
 
-**What to build:** Replace the hardcoded 8 AM target with a real calculation: `wakeTime = firstEvent.startDate − routineMinutes − commuteMinutes`. On days with no calendar events, fall back to a user-configurable default wake time (add this to settings). The three computed properties (`wakeUpTime`, `wakeUpPeriod`, `calculatedAlarmDate`) in `LuniferMain.swift` all repeat the same hardcoded math and would all need updating together. This is a single well-contained change that would make the app feel like a real product instead of a prototype.
-
----
-
-## 2. Wire Home Location Coordinates into Live Commute Calculations
-
-**Why this matters:** Home location storage is fully plumbed — coordinates are written to `AppPreferencesStore` and the MapKit search UI works — but the stored coordinates are never read by anything that affects the alarm. `LuniferAlarm.checkAndAdaptAlarm()` explicitly falls back to a hardcoded 30-minute commute when `commute.auto == true`, and the dashboard calculation does the same. The "auto commute" setting is visible to users but does nothing useful.
-
-**What to build:** Use the stored `homeLatitude` / `homeLongitude` with `MKDirections` to request a real driving/transit route to the location string on `firstEventTomorrow` (when available). Feed the resulting travel time back as `commuteMinutes` into the alarm calculation. `LocationManager` currently only tracks authorization status — it doesn't start location updates or read actual position — but the home coordinates are already stored manually so a live GPS fix is not strictly required for this step. Start with MapKit routing from the saved home pin to the event location; that alone would make the auto-commute estimate real and dynamic.
+**What to build:** Replace all four instances of the hardcoded 8 AM target with `wakeTime = firstEvent.startDate − routineMinutes − commuteMinutes`. On days with no calendar events, fall back to a user-configurable default wake time (add a "Default wake time" field to About You settings). This is a well-contained change that would make the app feel like a real product rather than a prototype, and it is the prerequisite for item 2 below to matter end-to-end.
 
 ---
 
-## 3. Complete the WHOOP / Oura Sleep Sync Loop
+## 2. Add Work Location Storage and Wire Live Routing into Commute Calculations
 
-**Why this matters:** The wearable integrations are the most powerful differentiator Lunifer can have, but they are currently half-finished. WHOOP only provides a recommended sleep duration — it doesn't populate `SleepHistoryStore`, so the 7-day sleep chart and the adaptive alarm model never see WHOOP data. `OuraManager` exists in the codebase but is not yet meaningfully connected. On top of that, the incremental profile sync (`syncProfile` in `SurveyAnswersStore`) intentionally omits the `sleep` field, meaning WHOOP-derived sleep hours can silently disappear after a settings change.
+**Why this matters:** Home location is fully stored — coordinates are in `AppPreferencesStore` and the MapKit search UI works — but two things are missing before live commute routing can be activated. First, there is no work/destination location stored anywhere in the app (no keys in `AppPreferencesStore`, no UI in settings). Second, `CommuteManager.refreshDuration()` is explicitly a stub that re-reads the static survey value on every poll tick, so delta alerts never fire and the "auto commute" toggle the user can see does nothing useful. `LuniferAlarm.checkAndAdaptAlarm()` also falls back to a hardcoded 30-minute commute when `commute.auto == true`.
 
-**What to build (in order of impact):**
-- Fix `SurveyAnswersStore.syncProfile(_:)` to include the `sleep` payload so WHOOP hours are not dropped on incremental syncs.
-- Import actual WHOOP sleep sessions (start time, end time, duration) into `SleepHistoryStore` so the sleep chart reflects real data.
-- Add a Disconnect button for WHOOP and Oura in `LuniferSettings` — the disconnect logic exists in the managers but there is no UI entry point.
-- Once WHOOP history import is working, apply the same pattern to Oura via `OuraManager`.
+**What to build:** Add a "Work / Destination" location row to `AboutYouSettingsView`, mirroring the existing `HomeLocationSheet` pattern with `MKLocalSearchCompleter`. Store `workLatitude`, `workLongitude`, `workLocationSet`, and `workLocationName` in `AppPreferencesStore`. Then replace the body of `CommuteManager.refreshDuration()` with an async `MKDirections` request from `(homeLatitude, homeLongitude)` → `(workLatitude, workLongitude)` using the user's `commuteMode` transport type. Feed the resulting travel time back as `commuteMinutes` into both the dashboard alarm calculation (item 1) and `LuniferAlarm.checkAndAdaptAlarm()`.
 
-This chain of work would make the wearable connections genuinely useful rather than just affecting the single recommended-hours number on the Sleep Insights card.
+---
+
+## 3. Pass the Selected Alarm Sound into AlarmKit's AlarmPresentation
+
+**Why this matters:** The sound picker is visible to users and writing to `@AppStorage("selectedAlarmSound")`, but `LuniferAlarm.scheduleAlarm()` creates `AlarmPresentation` without a sound property, so AlarmKit fires the system default sound as the initial alert. The custom sound only starts playing later, when the user interacts with the device and `LuniferAlarmScreen` appears and AVFoundation picks it up. On a locked phone, the user hears the wrong sound first.
+
+**What to build:** Read `UserDefaults.standard.string(forKey: "selectedAlarmSound")` inside `scheduleAlarm(for:)` and pass it to `AlarmPresentation` using AlarmKit's audio API. Apply the same change to `scheduleAddedAlarm` and the snooze re-schedule path so all three alarm paths stay consistent. The seven bundled audio filenames are already mapped in `LuniferMain.swift` — the alarm engine just needs to consume the same preference. This is the smallest-scope change of the three and closes a visible gap where user settings silently have no effect.
+
+---
+
+*Items 1 and 2 are tightly coupled — calendar-driven scheduling is only as accurate as the commute time feeding into it, and live routing requires a destination to route to. Completing both together delivers the core promise of the app. Item 3 is self-contained and can be done in any order, but closes a user-visible settings gap that undermines trust in the product.*
+
+*Note: Since yesterday's briefing, the Oura Ring integration has been substantially completed — the Cloudflare Worker routes (`/oura/exchange-code`, `/oura/fetch-sleep`, `/oura/disconnect`) are live, OuraManager feeds `SleepHistoryManager`, the "via Oura" badge shows in SleepInsights, and the connect/disconnect UI exists in Settings. The `syncProfile` sleep field omission has also been fixed. These items are no longer blocking.*

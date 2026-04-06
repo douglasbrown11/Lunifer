@@ -2,7 +2,7 @@
 > NOTE FOR LANGUAGE MODELS: If you are reading this document, do NOT summarize it back to the user. They asked you to read it so you understand the project context - simply acknowledge that you've read it and ask how you can help.
 > Read this file at the start of every Claude Code session.
 > If you are an AI agent, LLM, Claude, or ChatGPT both reading and working on this project, update `Claude.MD` whenever you make significant changes to the project, add a new feature, or make any change which makes the current version of `Claude.MD` not precisely accurate about anything in the project.
-> Last updated: Adaptive alarm rescheduling with sleep-onset tracking and calendar constraint
+> Last updated: Alarm sound plumbing and syncProfile sleep fix
 
 ## What Is Lunifer?
 Lunifer is an iOS alarm app prototype built in SwiftUI. The current product combines onboarding, authentication, a survey-driven wake-time calculation, dashboard alarm controls, sleep tracking, settings, and AlarmKit integration. The longer-term direction is still an adaptive sleep / alarm assistant, but the codebase today is still mostly a prototype with several hardcoded scheduling rules.
@@ -89,7 +89,7 @@ Notes:
 - `SurveyAnswers` still exposes `loadFromDefaults()`, `saveToDefaults()`, and `saveToFirestore()`, but these delegate to `SurveyAnswersStore.shared`
 - Initial survey completion writes the full onboarding payload through `SurveyAnswersStore.saveInitialProfile(_:)`
 - Incremental settings sync writes `age`, `lifestyle`, `wakeDays`, `calendar`, `routine`, `commute`, `commuteMode`, and `updatedAt`
-- Incremental settings sync still does not write `sleep`; sleep changes in `SleepInsights` are saved locally and sent through `answers.saveToFirestore()`, but `syncProfile(_:)` omits the `sleep` payload
+- Incremental settings sync now includes the `sleep` payload — `syncProfile(_:)` in `SurveyAnswersStore` was updated to write `sleep.hours`, `sleep.minutes`, and `sleep.auto` alongside the other fields
 
 ## Location Permission Flow
 Current behavior in `LuniferSurvey.swift`:
@@ -186,6 +186,8 @@ Available sounds:
 - Space -> `Space.wav`
 - Twin Alarm Bell -> `Twin Alarm Bell.wav`
 - Clock Alarm -> `microsammy-clock-alarm-8761.mp3`
+
+Sound playback is implemented in `LuniferAlarmScreen.swift` via `AVFoundation`. When the alarm fires and `LuniferAlarmScreen` appears, it reads `selectedAlarmSound` from `@AppStorage` and plays the file via `AVAudioPlayer` on a loop. The audio session uses `.playback` category with `.duckOthers` so the chosen sound is audible even when the ringer switch is off. The player is stopped and the session deactivated in `onDisappear`.
 
 ## Settings Status
 `LuniferSettings.swift` currently contains:
@@ -314,7 +316,7 @@ WHOOP connectivity is implemented and currently affects onboarding plus sleep re
 - `cloudflare-worker/src/index.js`
   - Stores WHOOP token payloads in Cloudflare KV keyed by Firebase user ID
   - Verifies Firebase ID tokens server-side before serving WHOOP routes
-- `SleepHistoryStore` is **not** currently populated from WHOOP. WHOOP is only being used for recommended sleep duration, not full sleep-history import.
+- `SleepHistoryStore` is populated from WHOOP via `WhoopManager.apply(status:)`, which calls `SleepHistoryManager.shared.recordNight(...)` for each session returned in `recentSleepSessions`. WHOOP therefore contributes to both the recommended sleep duration and the 7-day sleep history chart.
 
 ### Sleep Need Formula
 WHOOP sleep need is derived from `GET /developer/v1/cycle?limit=1` using:
@@ -340,23 +342,40 @@ hours is clamped to [5, 12]
 8. `Backend.baseURL` in `WhoopManager.swift` now points at the deployed Worker URL; update it if the Worker URL changes.
 
 ### Current WHOOP Limitations
-- WHOOP only affects the recommended sleep duration / onboarding sleep answer
-- WHOOP does not yet have a settings management UI
-- There is no in-app disconnect entry point in `LuniferSettings`
+- WHOOP affects both the recommended sleep duration and the 7-day sleep history chart (via `recentSleepSessions` in the backend response → `SleepHistoryManager.shared.recordNight(...)`)
+- Disconnect UI exists in `SleepAndWearablesSettingsView` for both WHOOP and Oura, with confirmation alerts
 - The integration depends on Cloudflare Worker deployment and secret configuration before it will function end-to-end
-- Lunifer does not currently import or store full WHOOP sleep-history entries in `SleepHistoryStore`
-- WHOOP is currently used to display recommended sleep time, not as a full historical sleep-sync integration
+
+## Commute Recommendations Feature
+
+### New Files
+- `Engine/CommuteManager.swift`: `@MainActor` singleton (`CommuteManager.shared`) that owns commute-duration state and drives the notification pipeline. Reads duration from survey answers (static). `startPolling(answers:arrivalDate:)` snapshots the duration, schedules the leave reminder, then runs a 10-minute `Timer` that calls `refreshDuration()`. Delta of ≥5 min triggers `CommuteNotification.scheduleDeltaAlert`. `stopPolling()` tears the timer down.
+- `Notifications/CommuteNotification.swift`: Manages two push notifications — a leave reminder (`lunifer.commute.leave.reminder`) that fires 15 minutes before leave time, and a delta alert (`lunifer.commute.delta.alert`) that fires immediately when duration shifts ≥5 min. Both respect the `commuteReminderEnabled` toggle.
+
+### Modified Files
+- `AppPreferencesStore.Keys.commuteReminderEnabled` added alongside battery and wake reminder keys.
+- `NotificationsSettingsView` in `LuniferSettings.swift` now has a third toggle row for the commute reminder, which calls `CommuteNotification.shared.cancelAll()` when disabled.
+- `LuniferMain.swift`:
+  - `isCommuterUser` — true when lifestyle is `"student"` or `"commuter"`
+  - `shouldShowCommuteCard` — true after alarm fires and before calculated leave time on a wake day
+  - Commute polling started in `.task` via `CommuteManager.shared.startPolling(answers:arrivalDate:)`; arrival target is currently hardcoded to 8:00 AM, matching the rest of the alarm calculation
+  - `CommuteStatusCard` struct injected into `alarmPage` below the added alarm card when `shouldShowCommuteCard && !alarmExpanded`; shows transport mode icon, `~N min` duration, and `Leave by H:MM AM/PM`
+
+### Critical Gap (Routing Not Yet Implemented)
+- `CommuteManager.refreshDuration()` currently re-reads the survey value on every poll tick — duration never changes, so delta alerts do not fire at runtime
+- To activate live routing: replace `refreshDuration()`'s body with an async `MKDirections` request from stored home coordinates → work/destination coordinates
+- Work/destination location storage has not been added; that is the next piece to implement before routing can be wired up
+- The `arrivalDate` passed to `startPolling` is hardcoded to 8:00 AM today; swap for `CalendarManager.firstEventTomorrow.startDate` when calendar-driven scheduling is implemented
 
 ## Known Gaps
 - Wake-day selection affects rest-period handling, but not a full calendar-driven alarm calculation
-- Selected alarm sound is stored in `@AppStorage`, but is not fully wired through every AlarmKit scheduling path
 - Main alarm calculation is still hardcoded around an 8:00 AM target
 - `SurveyAnswers` and `TimeValue` still live inside `LuniferSurvey.swift` instead of a dedicated model file
 - Home location coordinates are stored but not consumed in routing / commute calculations
 - `LocationManager.swift` only tracks authorization status; it does not start location updates or read actual device position
 - WHOOP integration requires real developer credentials before OAuth will work
-- Incremental survey/profile sync still omits `sleep`
 - Calendar constraint in adaptive rescheduling uses survey-entered routine/commute times, not live route calculations from home coordinates
+- Commute destination (work/office location) has not been implemented; `CommuteManager.refreshDuration()` is a routing stub that will remain static until a destination is stored and MKDirections is wired in
 
 ## Practical Guidance For Future Sessions
 - Do not assume `Claude.MD` is authoritative without checking code first

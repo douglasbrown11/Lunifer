@@ -29,6 +29,11 @@ final class SurveyAnswersStore {
             "lifestyle": answers.lifestyle ?? "",
             "wakeDays": answers.wakeDays,
             "calendar": answers.calendar ?? "",
+            "sleep": [
+                "hours": answers.sleep.hours,
+                "minutes": answers.sleep.minutes,
+                "auto": answers.sleep.auto
+            ],
             "routine": [
                 "hours": answers.routine.hours,
                 "minutes": answers.routine.minutes,
