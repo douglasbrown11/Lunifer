@@ -3,6 +3,7 @@ import UIKit
 import MapKit
 import CoreLocation
 import Combine
+import FirebaseCore
 import FirebaseAuth
 import FirebaseFirestore
 import GoogleSignIn
@@ -26,7 +27,13 @@ struct LuniferSettings: View {
     @State private var reauthPassword = ""
 
     private var userEmail: String {
-        Auth.auth().currentUser?.email ?? "—"
+        guard ProcessInfo.processInfo.environment["XCODE_RUNNING_FOR_PREVIEWS"] != "1" else {
+            return "Preview"
+        }
+        guard FirebaseApp.app() != nil else {
+            return "—"
+        }
+        return Auth.auth().currentUser?.email ?? "—"
     }
 
     var body: some View {
@@ -1298,8 +1305,9 @@ struct WakeDaysSettingsView: View {
 
 struct NotificationsSettingsView: View {
     @Environment(\.dismiss) private var dismiss
-    @AppStorage("batteryAlertEnabled") private var batteryAlertEnabled: Bool = true
-    @AppStorage("wakeReminderEnabled") private var wakeReminderEnabled: Bool = true
+    @AppStorage("batteryAlertEnabled")    private var batteryAlertEnabled: Bool    = true
+    @AppStorage("wakeReminderEnabled")    private var wakeReminderEnabled: Bool    = true
+    @AppStorage("commuteReminderEnabled") private var commuteReminderEnabled: Bool = true
 
     var body: some View {
         ZStack(alignment: .top) {
@@ -1370,6 +1378,32 @@ struct NotificationsSettingsView: View {
                         .padding(.vertical, 16)
                         .onChange(of: wakeReminderEnabled) { _, enabled in
                             if !enabled { WakeNotification.shared.cancel() }
+                        }
+
+                        Divider()
+                            .background(Color.white.opacity(0.08))
+                            .padding(.leading, 16)
+
+                        // ── Commute reminder row ──────────
+                        HStack(spacing: 12) {
+                            VStack(alignment: .leading, spacing: 4) {
+                                Text("Commute Reminder")
+                                    .font(.custom("DM Sans", size: 14))
+                                    .foregroundColor(Color.white.opacity(0.85))
+                                Text("Notify me 15 minutes before I need to leave for work")
+                                    .font(.custom("DM Sans", size: 12))
+                                    .foregroundColor(Color.white.opacity(0.35))
+                                    .fixedSize(horizontal: false, vertical: true)
+                            }
+                            Spacer()
+                            Toggle("", isOn: $commuteReminderEnabled)
+                                .labelsHidden()
+                                .tint(Color(red: 0.627, green: 0.471, blue: 1.0))
+                        }
+                        .padding(.horizontal, 16)
+                        .padding(.vertical, 16)
+                        .onChange(of: commuteReminderEnabled) { _, enabled in
+                            if !enabled { CommuteNotification.shared.cancelAll() }
                         }
                     }
                     .background(
