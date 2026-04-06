@@ -14,6 +14,10 @@ struct SleepInsights: View {
     /// Injected entries for SwiftUI previews. Nil in production — falls back to the live store.
     var previewEntries: [SleepHistoryEntry]? = nil
 
+    private var isRunningPreview: Bool {
+        ProcessInfo.processInfo.environment["XCODE_RUNNING_FOR_PREVIEWS"] == "1"
+    }
+
     @State private var showSettings = false
 
     // Wearable state — read directly from AppStorage so changes sync immediately
@@ -171,6 +175,7 @@ struct SleepInsights: View {
         }
         .frame(maxWidth: .infinity)
         .onAppear {
+            guard !isRunningPreview else { return }
             WhoopManager.shared.refreshIfNeeded()
             OuraManager.shared.refreshIfNeeded()
         }

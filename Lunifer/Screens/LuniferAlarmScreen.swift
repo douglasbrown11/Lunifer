@@ -1,5 +1,6 @@
 import SwiftUI
 import Combine
+import AVFoundation
 
 // ─────────────────────────────────────────────────────────────
 // LuniferAlarmScreen.swift
@@ -16,7 +17,11 @@ struct LuniferAlarmScreen: View {
     // Note: swap "System" for "Roboto" here once Roboto is added to the Xcode project.
     @AppStorage("snoozeMinutes") private var snoozeMinutes: Int = 5
 
+    // The selected alarm sound filename, set from the sound picker in the dashboard.
+    @AppStorage("selectedAlarmSound") private var selectedAlarmSound: String = "DeafultAlarm.wav"
+
     @State private var currentTime = Date()
+    @State private var audioPlayer: AVAudioPlayer? = nil
     private let ticker = Timer.publish(every: 1, on: .main, in: .common).autoconnect()
 
     var body: some View {
@@ -83,7 +88,53 @@ struct LuniferAlarmScreen: View {
                 .padding(.bottom, 60)
             }
         }
+        .onAppear   { startPlayingSound() }
+        .onDisappear { stopPlayingSound() }
         .onReceive(ticker) { _ in currentTime = Date() }
+    }
+
+    // ── Sound playback ───────────────────────────────────────
+
+    /// Starts playing the user's selected alarm sound on a loop.
+    /// Configures the audio session for .playback so the sound is
+    /// audible even when the ringer switch is off (same category
+    /// used by music and video apps). .duckOthers lowers competing
+    /// audio (e.g. any system alarm tone AlarmKit may produce) so
+    /// Lunifer's custom sound is clearly heard.
+    private func startPlayingSound() {
+        let filename = selectedAlarmSound
+        let name = (filename as NSString).deletingPathExtension
+        let ext  = (filename as NSString).pathExtension.isEmpty ? "wav" : (filename as NSString).pathExtension
+
+        guard let url = Bundle.main.url(forResource: name, withExtension: ext) else {
+            print("⚠️ Alarm sound '\(filename)' not found in bundle — no custom sound will play.")
+            return
+        }
+
+        do {
+            try AVAudioSession.sharedInstance().setCategory(.playback, mode: .default, options: [.duckOthers])
+            try AVAudioSession.sharedInstance().setActive(true)
+
+            let player = try AVAudioPlayer(contentsOf: url)
+            player.numberOfLoops = -1  // Loop until the user stops or snoozes
+            player.volume = 1.0
+            player.prepareToPlay()
+            player.play()
+            audioPlayer = player
+
+            print("🔊 Playing alarm sound: \(filename)")
+        } catch {
+            print("❌ Failed to play alarm sound '\(filename)': \(error.localizedDescription)")
+        }
+    }
+
+    /// Stops and releases the audio player, then deactivates the
+    /// audio session so other apps can resume their audio normally.
+    private func stopPlayingSound() {
+        audioPlayer?.stop()
+        audioPlayer = nil
+        try? AVAudioSession.sharedInstance().setActive(false, options: [.notifyOthersOnDeactivation])
+        print("🔇 Alarm sound stopped")
     }
 
     // ── Time formatting ──────────────────────────────────────
