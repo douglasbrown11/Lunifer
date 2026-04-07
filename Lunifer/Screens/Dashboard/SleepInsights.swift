@@ -123,7 +123,7 @@ struct SleepInsights: View {
                                 .stroke(Color.white.opacity(0.08), lineWidth: 1)
                         )
                 )
-                .padding(.horizontal, 28)
+                .padding(.horizontal, 38)
 
                 Spacer().frame(height: 20)
 
@@ -133,7 +133,7 @@ struct SleepInsights: View {
                     .foregroundColor(Color.white.opacity(0.35))
                     .kerning(2.5)
                     .frame(maxWidth: .infinity, alignment: .leading)
-                    .padding(.horizontal, 28)
+                    .padding(.horizontal, 38)
                     .padding(.bottom, 10)
 
                 Group {
@@ -169,7 +169,7 @@ struct SleepInsights: View {
                                 .stroke(Color.white.opacity(0.08), lineWidth: 1)
                         )
                 )
-                .padding(.horizontal, 28)
+                .padding(.horizontal, 38)
 
                 Spacer()
         }

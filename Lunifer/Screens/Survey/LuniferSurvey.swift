@@ -21,7 +21,7 @@ struct SurveyAnswers: Codable {
     var routine = TimeValue(hours: 1, minutes: 0,  auto: false)
     var commute = TimeValue(hours: 0, minutes: 30, auto: false)
     /// Transport mode for commute: "drive", "transit", "walk", or "bike"
-    var commuteMode: String = "drive"
+    var commuteMode: String = ""
 
     static func loadFromDefaults() -> SurveyAnswers? {
         SurveyAnswersStore.shared.loadFromDefaults()
@@ -303,6 +303,7 @@ struct LuniferSurvey: View {
                 if ouraSelected  { return ouraRecommendedHours  != nil }
                 return true
             case 6: // commute step
+                guard !answers.commuteMode.isEmpty else { return false }
                 if answers.commute.auto {
                     return locationManager.authorizationStatus == .authorizedAlways
                 } else {
@@ -762,7 +763,7 @@ struct LuniferSurvey: View {
                     }
                 }
             }
-            .padding(.horizontal, 5)
+            .padding(.horizontal, 10)
             .padding(.bottom, 35)
 
             // ── Oura Ring card ──────────────────────────────────
@@ -825,7 +826,7 @@ struct LuniferSurvey: View {
                     }
                 }
             }
-            .padding(.horizontal, 5)
+            .padding(.horizontal, 10)
             .padding(.bottom, 35)
         }
 
@@ -916,7 +917,14 @@ struct LuniferSurvey: View {
                 }
 
                 // ── Location permission status hint ───────────
-                if answers.commute.auto && locationManager.authorizationStatus == .authorizedAlways {
+                if answers.commuteMode.isEmpty {
+                    Text("Select a commute type above to continue.")
+                        .font(.custom("DM Sans", size: 13))
+                        .foregroundColor(Color.white.opacity(0.35))
+                        .padding(.top, 14)
+                        .padding(.horizontal, 40)
+                        .transition(.opacity)
+                } else if answers.commute.auto && locationManager.authorizationStatus == .authorizedAlways {
                     Label("Location access granted", systemImage: "checkmark.circle.fill")
                         .font(.custom("DM Sans", size: 13))
                         .foregroundColor(Color(red: 0.4, green: 0.9, blue: 0.5))
@@ -1039,20 +1047,34 @@ struct LuniferSurvey: View {
                 saveError = "Not signed in. Please sign in and try again."
                 return
             }
+            if showCommute && answers.commuteMode.isEmpty {
+                saveError = "Please select your commute type to continue."
+                return
+            }
+            let snapshot = answers
             Task { @MainActor in
                 saving    = true
                 saveError = nil
 
-                do {
-                    try await SurveyAnswersStore.shared.saveInitialProfile(answers)
-                    answers.saveToDefaults()
-                    surveyCompleted = true
-                    await LuniferAlarm.shared.requestAuthorization()
-                    onFinish?(answers)
-                } catch {
-                    saveError = "Something went wrong saving your data. Please try again."
+                // Save locally first — this always succeeds and lets the user proceed.
+                snapshot.saveToDefaults()
+                surveyCompleted = true
+
+                // Fire the Firestore sync in the background. A failure here is
+                // non-fatal: the local copy is the source of truth on this device,
+                // and syncProfile() will push it again whenever the user edits
+                // settings. Log the error so it's visible in the Xcode console.
+                Task {
+                    do {
+                        try await SurveyAnswersStore.shared.saveInitialProfile(snapshot)
+                        print("✅ Initial profile synced to Firestore")
+                    } catch {
+                        print("⚠️ Firestore sync failed (non-fatal): \(error)")
+                    }
                 }
-                
+
+                await LuniferAlarm.shared.requestAuthorization()
+                onFinish?(snapshot)
                 saving = false
             }
         }

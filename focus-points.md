@@ -1,5 +1,5 @@
 # Lunifer — Focus Points Briefing
-*Generated: April 6, 2026*
+*Generated: April 7, 2026*
 
 ---
 
@@ -29,4 +29,4 @@
 
 *Items 1 and 2 are tightly coupled — calendar-driven scheduling is only as accurate as the commute time feeding into it, and live routing requires a destination to route to. Completing both together delivers the core promise of the app. Item 3 is self-contained and can be done in any order, but closes a user-visible settings gap that undermines trust in the product.*
 
-*Note: Since yesterday's briefing, the Oura Ring integration has been substantially completed — the Cloudflare Worker routes (`/oura/exchange-code`, `/oura/fetch-sleep`, `/oura/disconnect`) are live, OuraManager feeds `SleepHistoryManager`, the "via Oura" badge shows in SleepInsights, and the connect/disconnect UI exists in Settings. The `syncProfile` sleep field omission has also been fixed. These items are no longer blocking.*
+*Note: The Oura Ring backend routes (`/oura/exchange-code`, `/oura/fetch-sleep`, `/oura/disconnect`) are live in the Cloudflare Worker and `OuraManager.swift` has the full iOS-side integration built. However, `OuraManager.API.clientID` is still set to `"YOUR_OURA_CLIENT_ID"` — a real Oura Developer app has not been registered yet. Once credentials are in place, Oura becomes a zero-code-change activation and could be prioritised alongside item 3.*

@@ -298,6 +298,7 @@ struct LuniferAuth: View {
                         }
                     }
                     .padding(.top, 1)
+                    .padding(.horizontal, 5)
 
                     Text(termsAttributedString)
                         .multilineTextAlignment(.leading)

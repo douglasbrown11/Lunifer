@@ -53,6 +53,18 @@ class LuniferAlarm: ObservableObject {
     /// Used by the dashboard to drive the "must allow" alert loop.
     var authorizationDenied: Bool { manager.authorizationState == .denied }
 
+    // ── Sound helper ──────────────────────────────────────────
+    // Reads the user's sound picker selection from UserDefaults and
+    // returns the bare filename (no extension), which is what
+    // AlarmPresentation.Sound.named(_:) expects.
+    //
+    // Falls back to "DeafultAlarm" if the key is missing (e.g. first
+    // launch before the user has visited the sound picker).
+    private var selectedAlarmSoundName: String {
+        let filename = UserDefaults.standard.string(forKey: "selectedAlarmSound") ?? "DeafultAlarm.wav"
+        return (filename as NSString).deletingPathExtension
+    }
+
     // Tracks the first alarm time set each night so adaptive pushes
     // can be capped relative to it. Reset whenever a fresh base alarm is set.
     private var originalScheduledWakeTime: Date? = nil
@@ -160,7 +172,7 @@ class LuniferAlarm: ObservableObject {
         // AlarmAttributes is AlarmKit's way of packaging everything about
         // how the alarm looks and what data it carries
         let attributes = AlarmAttributes<LuniferAlarmMetadata>(
-            presentation: AlarmPresentation(alert: alert),  // The alert we designed above
+            presentation: AlarmPresentation(alert: alert, sound: .named(selectedAlarmSoundName)),  // The alert we designed above
             metadata: LuniferAlarmMetadata(                 // Our custom data attached to this alarm
                 scheduledWakeTime: date,
                 calendarEventTitle: eventTitle,
@@ -222,7 +234,7 @@ class LuniferAlarm: ObservableObject {
         )
 
         let attributes = AlarmAttributes<LuniferAlarmMetadata>(
-            presentation: AlarmPresentation(alert: alert),
+            presentation: AlarmPresentation(alert: alert, sound: .named(selectedAlarmSoundName)),
             metadata: LuniferAlarmMetadata(
                 scheduledWakeTime: date,
                 calendarEventTitle: "",
