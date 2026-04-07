@@ -44,7 +44,7 @@ final class SurveyAnswersStore {
                 "minutes": answers.commute.minutes,
                 "auto": answers.commute.auto
             ],
-            "commuteMode": answers.commuteMode,
+            "commuteMode": answers.commuteMode.isEmpty ? "drive" : answers.commuteMode,
             "updatedAt": Date()
         ]
 
@@ -88,12 +88,12 @@ final class SurveyAnswersStore {
                 "minutes": answers.commute.minutes,
                 "auto": answers.commute.auto
             ],
-            "commuteMode": answers.commuteMode,
+            "commuteMode": answers.commuteMode.isEmpty ? "drive" : answers.commuteMode,
             "createdAt": Date()
         ]
 
         try await withCheckedThrowingContinuation { (continuation: CheckedContinuation<Void, Error>) in
-            Firestore.firestore().collection("users").document(uid).setData(data) { error in
+            Firestore.firestore().collection("users").document(uid).setData(data, merge: true) { error in
                 if let error {
                     continuation.resume(throwing: error)
                 } else {

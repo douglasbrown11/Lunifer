@@ -2,14 +2,14 @@
 > NOTE FOR LANGUAGE MODELS: If you are reading this document, do NOT summarize it back to the user. They asked you to read it so you understand the project context - simply acknowledge that you've read it and ask how you can help.
 > Read this file at the start of every Claude Code session.
 > If you are an AI agent, LLM, Claude, or ChatGPT both reading and working on this project, update `Claude.MD` whenever you make significant changes to the project, add a new feature, or make any change which makes the current version of `Claude.MD` not precisely accurate about anything in the project.
-> Last updated: Alarm sound plumbing and syncProfile sleep fix
+> Last updated: commuteMode default empty, local-first handleFinish, AlarmKit Sound removal, Oura integration, padding updates
 
 ## What Is Lunifer?
 Lunifer is an iOS alarm app prototype built in SwiftUI. The current product combines onboarding, authentication, a survey-driven wake-time calculation, dashboard alarm controls, sleep tracking, settings, and AlarmKit integration. The longer-term direction is still an adaptive sleep / alarm assistant, but the codebase today is still mostly a prototype with several hardcoded scheduling rules.
 
 ## Current Stack
 - Language: Swift / SwiftUI
-- Backend: Firebase Auth + Firestore + Google Sign-In
+- Backend: Firebase Auth + Firestore + Google Sign-In + Microsoft Sign-In
 - Apple frameworks in use: AlarmKit, EventKit, CoreLocation, MapKit, AVFoundation, CoreMotion, BackgroundTasks, AuthenticationServices, CryptoKit, Security
 - State / persistence:
   - `SurveyAnswersStore` for onboarding/profile answers
@@ -45,12 +45,13 @@ Lunifer is an iOS alarm app prototype built in SwiftUI. The current product comb
 - `Engine/LocationManager.swift`: Core Location authorization-status tracking only
 - `Engine/LuniferAlarm.swift`: AlarmKit scheduling / monitoring
 - `Engine/WhoopManager.swift`: WHOOP OAuth + sleep-need fetch / refresh logic
+- `Engine/OuraManager.swift`: Oura Ring OAuth + sleep-need fetch / refresh logic
 - `Engine/KeychainHelper.swift`: Security-wrapper for WHOOP token storage
 - `Engine/isAsleep/*`: sleep feature collection, prediction, historical reconstruction, and tracking
 - `Notifications/BatteryAlarmNotification.swift`: battery survival prediction for upcoming alarm
 - `Notifications/WakeNotification.swift`: pre-bedtime "alarm set" reminder notification
 - `Screens/Intro/*`: onboarding intro flow
-- `Screens/SignIn/LuniferAuth.swift`: email/password + Google auth UI
+- `Screens/SignIn/LuniferAuth.swift`: email/password + Google + Microsoft auth UI
 - `Screens/Survey/LuniferSurvey.swift`: survey flow UI plus `SurveyAnswers` and `TimeValue`
 - `Screens/Survey/SurveyObjects.swift`: shared survey UI pieces and icons
 - `Screens/Dashboard/LuniferMain.swift`: dashboard, rest view, sound picker, added alarm flow
@@ -61,6 +62,7 @@ Lunifer is an iOS alarm app prototype built in SwiftUI. The current product comb
 - `privacy-policy.html` (repo root): public privacy policy page template for app listings and OAuth metadata
 - `public/privacy-policy.html`: Firebase Hosting copy of the privacy policy page
 - `public/index.html`: minimal Firebase Hosting landing page for policy links
+- Website: `https://lunifer-website.vercel.app/`
 - `cloudflare-worker/`: Cloudflare Worker backend for WHOOP token exchange, refresh, and sleep fetch
 
 ## Survey Status
@@ -72,7 +74,7 @@ Lunifer is an iOS alarm app prototype built in SwiftUI. The current product comb
 - `sleep`
 - `routine`
 - `commute`
-- `commuteMode` — `"drive"`, `"transit"`, `"walk"`, or `"bike"` (default `"drive"`)
+- `commuteMode` — `"drive"`, `"transit"`, `"walk"`, or `"bike"` (**default `""` — no mode selected by default**)
 
 Current survey step order in `LuniferSurvey.swift`:
 1. Age
@@ -88,8 +90,26 @@ Notes:
 - The wake-day screen uses 7 circular weekday buttons
 - `SurveyAnswers` still exposes `loadFromDefaults()`, `saveToDefaults()`, and `saveToFirestore()`, but these delegate to `SurveyAnswersStore.shared`
 - Initial survey completion writes the full onboarding payload through `SurveyAnswersStore.saveInitialProfile(_:)`
+- `saveInitialProfile` uses `setData(data, merge: true)` so it upserts rather than replacing an existing document
+- If `commuteMode` is empty at save time, Firestore payload writes `"drive"` as the fallback to avoid storing an empty string
 - Incremental settings sync writes `age`, `lifestyle`, `wakeDays`, `calendar`, `routine`, `commute`, `commuteMode`, and `updatedAt`
 - Incremental settings sync now includes the `sleep` payload — `syncProfile(_:)` in `SurveyAnswersStore` was updated to write `sleep.hours`, `sleep.minutes`, and `sleep.auto` alongside the other fields
+
+### canNext Validation (Step 7 — Commute)
+`canNext` for the commute step (case 6) guards:
+1. `!answers.commuteMode.isEmpty` — user must pick a transport mode before proceeding
+2. If `answers.commute.auto == true` → location authorization must be `.authorizedAlways`
+3. Otherwise → `answers.commute.hours > 0 || answers.commute.minutes > 0`
+
+The step hint text shows "Select a commute type above to continue." when no mode has been chosen yet.
+
+### handleFinish — Local-First Save Pattern
+`handleFinish()` in `LuniferSurvey.swift` uses a local-first, non-blocking approach:
+1. Guards: must be signed in, and if `showCommute`, `commuteMode` must not be empty
+2. Captures a local snapshot of `answers`
+3. On `@MainActor`: calls `snapshot.saveToDefaults()` immediately, sets `surveyCompleted = true`, then fires a detached background `Task` to push to Firestore via `SurveyAnswersStore.shared.saveInitialProfile(snapshot)`
+4. Firestore failures are non-fatal (`print` only) — the user always proceeds regardless of network
+5. Calls `LuniferAlarm.shared.requestAuthorization()` and `onFinish?(snapshot)` after local save
 
 ## Location Permission Flow
 Current behavior in `LuniferSurvey.swift`:
@@ -161,9 +181,15 @@ Current scheduling limitation:
 - The alarm will never be pushed past this deadline, ensuring the user can still complete their morning routine and commute before their first event
 - `CalendarManager` now exposes a `shared` singleton so the alarm engine can query events without a SwiftUI environment object
 
+## AlarmKit Notes
+- `LuniferAlarm.swift` uses `AlarmKit` for scheduling and monitoring
+- `AlarmPresentation` is initialized as `AlarmPresentation(alert: alert)` — the `sound:` parameter and `AlarmPresentation.Sound` type have been **removed from the AlarmKit API** and must not be used
+- Sound playback is handled separately via `AVFoundation` in `LuniferAlarmScreen.swift`
+
 ## Sleep Insights / Sleep Persistence
 `SleepInsights.swift` currently:
-- Shows a recommended sleep duration card
+- Shows a recommended sleep duration card with `.padding(.horizontal, 38)`
+- Shows the 7-day sleep chart with `.padding(.horizontal, 38)`
 - Opens a sheet to edit sleep duration using `TimeScalePicker`
 - Shows a 7-day sleep history chart backed by `SleepHistoryManager.shared.recentHistory(days: 7)`
 
@@ -226,7 +252,9 @@ Not currently present:
 ## Auth / Firebase Status
 - Email/password auth exists
 - Google Sign-In exists
-- Survey results write directly to `users/{uid}` with `setData(...)`
+- **Microsoft Sign-In exists** (added to `LuniferAuth.swift`)
+- Terms of service / privacy policy checkbox in `LuniferAuth.swift` has `.padding(.horizontal, 5)` applied to the checkbox button
+- Survey results write to `users/{uid}` with `setData(data, merge: true)` (upsert)
 - Sleep history writes to `users/{uid}/sleepHistory/{yyyy-mm-dd}`
 - Account deletion removes:
   - `users/{uid}`
@@ -237,6 +265,7 @@ Not currently present:
 ## Alarm / Calendar Status
 - AlarmKit authorization and monitoring are integrated
 - The app can schedule alarms through `LuniferAlarm.shared`
+- `AlarmPresentation` no longer accepts a `sound:` parameter — use `AlarmPresentation(alert: alert)` only
 - Dashboard startup re-checks alarm authorization and CoreMotion authorization, surfacing settings alerts when denied
 - `CalendarManager` can request EventKit access and fetch today / upcoming events
 - `CalendarManager.firstEventTomorrow` exists as a useful accessor, but the dashboard is not yet consuming it end-to-end
@@ -247,6 +276,9 @@ Not currently present:
 - Headings typically use `Cormorant Garamond`
 - Body text typically use `DM Sans`
 - `LuniferBackground()` / `Color.luniferBg` and `StarsView()` are reused across major screens
+- `SleepInsights` cards use `.padding(.horizontal, 38)`
+- WHOOP and Oura cards on the sleep survey step use `.padding(.horizontal, 10)`
+- LuniferAuth terms checkbox uses `.padding(.horizontal, 5)`
 
 ## WHOOP Integration
 WHOOP connectivity is implemented and currently affects onboarding plus sleep recommendations.
@@ -291,7 +323,7 @@ WHOOP connectivity is implemented and currently affects onboarding plus sleep re
 
 ### UI Integration
 - `Screens/Survey/LuniferSurvey.swift`
-  - Step 4 includes a "Let my WHOOP decide" `OptionCard`
+  - Step 4 includes a "Let my WHOOP decide" `OptionCard` with `.padding(.horizontal, 10)`
   - Survey state adds:
     - `whoopSelected`
     - `whoopLoading`
@@ -346,6 +378,47 @@ hours is clamped to [5, 12]
 - Disconnect UI exists in `SleepAndWearablesSettingsView` for both WHOOP and Oura, with confirmation alerts
 - The integration depends on Cloudflare Worker deployment and secret configuration before it will function end-to-end
 
+## Oura Ring Integration
+Oura Ring connectivity is implemented in `Engine/OuraManager.swift`, parallel to WHOOP.
+
+### Core Files
+- `Engine/OuraManager.swift`
+  - `@MainActor final class`
+  - Singleton: `OuraManager.shared`
+  - Handles OAuth 2.0 (no PKCE) through `ASWebAuthenticationSession`
+  - Uses the Oura client ID in-app to start the OAuth flow
+  - Exchanges the auth code for tokens directly (no Cloudflare Worker needed for Oura)
+  - Fetches Oura sleep data and derives a recommended sleep duration
+  - Persists:
+    - `ouraConnected`
+    - `ouraRecommendedSleepHours`
+    - `ouraLastSyncDate`
+  - Exposes published state parallel to `WhoopManager`:
+    - `isConnected`
+    - `recommendedSleepHours`
+    - `isLoading`
+    - `errorMessage`
+    - `lastSyncDate`
+  - Supports `disconnect()`
+
+### UI Integration
+- `Screens/Survey/LuniferSurvey.swift`
+  - Step 4 includes a "Let my Oura decide" `OptionCard` with `.padding(.horizontal, 10)`
+  - Survey state adds:
+    - `ouraSelected`
+    - `ouraLoading`
+    - `ouraRecommendedHours`
+    - `ouraError`
+  - `connectOura()` logic mirrors `connectWhoop()`: uses cached connection or launches OAuth, silently deselects on cancellation
+- `Screens/Dashboard/SleepInsights.swift`
+  - `recommendedHours` considers Oura when `ouraConnected && ouraSleepHours > 0`
+  - Shows a small "via Oura" badge when Oura is driving the recommendation
+  - Calls `OuraManager.shared.refreshIfNeeded()` on appear
+
+### Persistence / Cleanup
+- `Data/AppPreferencesStore.swift` defines Oura preference keys and `resetOuraData()`
+- `Data/AccountDataManager.swift` clears Oura preferences on sign-out / delete account
+
 ## Commute Recommendations Feature
 
 ### New Files
@@ -369,7 +442,7 @@ hours is clamped to [5, 12]
 
 ## Known Gaps
 - Wake-day selection affects rest-period handling, but not a full calendar-driven alarm calculation
-- Main alarm calculation is still hardcoded around an 8:00 AM target
+- Main alarm calculation is still hardcoded around an `8:00 AM` target
 - `SurveyAnswers` and `TimeValue` still live inside `LuniferSurvey.swift` instead of a dedicated model file
 - Home location coordinates are stored but not consumed in routing / commute calculations
 - `LocationManager.swift` only tracks authorization status; it does not start location updates or read actual device position
@@ -390,6 +463,9 @@ hours is clamped to [5, 12]
   - `SleepTrackingStore` for inferred sleep/tracking state
   - `AppPreferencesStore` for preference keys and reset helpers
   - `KeychainHelper` for WHOOP tokens
+- `commuteMode` defaults to `""` (empty string). Never assume it is `"drive"` unless the user has explicitly selected it. The Firestore payload falls back to `"drive"` only at write time.
+- `AlarmPresentation.Sound` does not exist in the current AlarmKit SDK. Always use `AlarmPresentation(alert: alert)` with no `sound:` argument.
+- `SurveyAnswersStore.saveInitialProfile` uses `setData(data, merge: true)` — do not change this back to a non-merging `setData` call
 - If you change survey fields, update:
   - `SurveyAnswers`
   - survey step logic / `totalSteps`
