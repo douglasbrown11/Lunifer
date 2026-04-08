@@ -141,11 +141,16 @@ struct LuniferSettings: View {
                                 } message: {
                                     Text("Your latest profile data will remain in Firebase, but this device will clear local account data before returning to sign in.")
                                 }
-                                .alert("Couldn't Sign Out", isPresented: $showSignOutErrorAlert) {
-                                    Button("OK", role: .cancel) { }
-                                } message: {
-                                    Text(signOutErrorMessage)
-                                }
+                                // Secondary alert on a separate view so both can fire independently.
+                                // SwiftUI only honours the last .alert on a given view; using a
+                                // Color.clear background gives this alert its own view node.
+                                .background(Color.clear
+                                    .alert("Couldn't Sign Out", isPresented: $showSignOutErrorAlert) {
+                                        Button("OK", role: .cancel) { }
+                                    } message: {
+                                        Text(signOutErrorMessage)
+                                    }
+                                )
 
                                 Button {
                                     showDeleteAlert = true
@@ -180,20 +185,28 @@ struct LuniferSettings: View {
                                 } message: {
                                     Text("This will permanently delete your account and all your data. This cannot be undone.")
                                 }
-                                .alert("Enter your password to confirm", isPresented: $showPasswordPrompt) {
-                                    SecureField("Password", text: $reauthPassword)
-                                    Button("Delete Account", role: .destructive) {
-                                        Task { await reauthenticateAndDelete(password: reauthPassword) }
+                                // Each secondary alert lives on its own Color.clear background view
+                                // so SwiftUI can present them independently. Chaining multiple
+                                // .alert modifiers on the same view causes all but the last to
+                                // be silently ignored.
+                                .background(Color.clear
+                                    .alert("Enter your password to confirm", isPresented: $showPasswordPrompt) {
+                                        SecureField("Password", text: $reauthPassword)
+                                        Button("Delete Account", role: .destructive) {
+                                            Task { await reauthenticateAndDelete(password: reauthPassword) }
+                                        }
+                                        Button("Cancel", role: .cancel) { reauthPassword = ""; isDeletingAccount = false }
+                                    } message: {
+                                        Text("For security, please re-enter your password to delete your account.")
                                     }
-                                    Button("Cancel", role: .cancel) { reauthPassword = ""; isDeletingAccount = false }
-                                } message: {
-                                    Text("For security, please re-enter your password to delete your account.")
-                                }
-                                .alert("Couldn't Delete Account", isPresented: $showDeleteErrorAlert) {
-                                    Button("OK", role: .cancel) { }
-                                } message: {
-                                    Text(deleteErrorMessage)
-                                }
+                                )
+                                .background(Color.clear
+                                    .alert("Couldn't Delete Account", isPresented: $showDeleteErrorAlert) {
+                                        Button("OK", role: .cancel) { }
+                                    } message: {
+                                        Text(deleteErrorMessage)
+                                    }
+                                )
                             }
 
                             Spacer(minLength: 40)
@@ -229,6 +242,9 @@ struct LuniferSettings: View {
         if providers.contains("google.com") {
             // Google users: reauthenticate via Google Sign-In prompt
             await reauthenticateWithGoogle()
+        } else if providers.contains("microsoft.com") {
+            // Microsoft users: reauthenticate via OAuth prompt
+            await reauthenticateWithMicrosoft()
         } else {
             // Email/password users: show password prompt
             reauthPassword = ""
@@ -310,6 +326,63 @@ struct LuniferSettings: View {
             deleteErrorMessage = nsError.localizedDescription
             showDeleteErrorAlert = true
             print("❌ Google reauthentication failed: \(nsError.localizedDescription)")
+        }
+    }
+
+    /// Reauthenticates a Microsoft (Outlook) user via OAuth, then deletes.
+    private func reauthenticateWithMicrosoft() async {
+        do {
+            guard let windowScene = UIApplication.shared.connectedScenes
+                .compactMap({ $0 as? UIWindowScene })
+                .first(where: { $0.activationState == .foregroundActive }),
+                  let window = windowScene.windows.first(where: { $0.isKeyWindow }),
+                  let rootVC = window.rootViewController else {
+                isDeletingAccount = false
+                deleteErrorMessage = "Unable to present sign in. Please try again."
+                showDeleteErrorAlert = true
+                return
+            }
+            var presentingVC = rootVC
+            while let presented = presentingVC.presentedViewController {
+                presentingVC = presented
+            }
+
+            let provider = OAuthProvider(providerID: "microsoft.com")
+            provider.scopes = ["email", "profile", "openid"]
+            provider.customParameters = ["prompt": "select_account"]
+
+            let credential = try await withCheckedThrowingContinuation { (continuation: CheckedContinuation<AuthCredential, Error>) in
+                provider.getCredentialWith(presentingVC as? AuthUIDelegate) { credential, error in
+                    if let error {
+                        continuation.resume(throwing: error)
+                    } else if let credential {
+                        continuation.resume(returning: credential)
+                    } else {
+                        continuation.resume(throwing: NSError(
+                            domain: "LuniferSettings",
+                            code: -1,
+                            userInfo: [NSLocalizedDescriptionKey: "No credential returned."]
+                        ))
+                    }
+                }
+            }
+
+            guard let user = Auth.auth().currentUser else {
+                isDeletingAccount = false
+                return
+            }
+            try await user.reauthenticate(with: credential)
+            await performDeletion(user: user)
+        } catch {
+            isDeletingAccount = false
+            let nsError = error as NSError
+            // ASWebAuthenticationSession cancellation — user tapped Cancel
+            if nsError.domain == "com.apple.AuthenticationServices.WebAuthenticationSession" && nsError.code == 1 {
+                return
+            }
+            deleteErrorMessage = nsError.localizedDescription
+            showDeleteErrorAlert = true
+            print("❌ Microsoft reauthentication failed: \(nsError.localizedDescription)")
         }
     }
 
