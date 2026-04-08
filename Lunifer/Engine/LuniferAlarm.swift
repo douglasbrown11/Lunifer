@@ -172,7 +172,7 @@ class LuniferAlarm: ObservableObject {
         // AlarmAttributes is AlarmKit's way of packaging everything about
         // how the alarm looks and what data it carries
         let attributes = AlarmAttributes<LuniferAlarmMetadata>(
-            presentation: AlarmPresentation(alert: alert, sound: .named(selectedAlarmSoundName)),  // The alert we designed above
+            presentation: AlarmPresentation(alert: alert),  // The alert we designed above
             metadata: LuniferAlarmMetadata(                 // Our custom data attached to this alarm
                 scheduledWakeTime: date,
                 calendarEventTitle: eventTitle,
@@ -234,7 +234,7 @@ class LuniferAlarm: ObservableObject {
         )
 
         let attributes = AlarmAttributes<LuniferAlarmMetadata>(
-            presentation: AlarmPresentation(alert: alert, sound: .named(selectedAlarmSoundName)),
+            presentation: AlarmPresentation(alert: alert),
             metadata: LuniferAlarmMetadata(
                 scheduledWakeTime: date,
                 calendarEventTitle: "",

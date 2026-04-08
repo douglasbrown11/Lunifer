@@ -60,7 +60,7 @@ final class OuraManager: NSObject, ObservableObject, ASWebAuthenticationPresenta
 
     private enum API {
         // Replace with your Oura Developer app Client ID from cloud.ouraring.com/oauth/apps
-        static let clientID   = "YOUR_OURA_CLIENT_ID"
+        static let clientID   = "fab77b50-4730-4451-af8d-5075e3d1a437"
         static let redirectURI = "lunifer://oura/callback"
         static let authURL    = "https://cloud.ouraring.com/oauth/authorize"
         // Oura v2 scopes needed for sleep data

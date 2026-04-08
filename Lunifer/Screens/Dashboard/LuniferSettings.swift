@@ -81,63 +81,10 @@ struct LuniferSettings: View {
                                 settingsNavRow(title: "Wake Days")
                             }
 
-<<<<<<< HEAD
                             NavigationLink {
                                 SleepAndWearablesSettingsView(answers: $answers)
                             } label: {
                                 settingsNavRow(title: "Sleep & Wearables")
-=======
-                            // ── Wearable ──────────────────────
-                            if whoopManager.isConnected {
-                                SettingsSection(title: "Wearable") {
-                                    HStack(spacing: 8) {
-                                        Image("WhoopLogo")
-                                            .resizable()
-                                            .interpolation(.high)
-                                            .frame(width: 18, height: 18)
-                                        Text("WHOOP Connected")
-                                            .font(.custom("DM Sans", size: 14))
-                                            .foregroundColor(Color.white.opacity(0.6))
-                                        Spacer()
-                                    }
-                                    .padding(.horizontal, 16)
-                                    .padding(.vertical, 14)
-                                    .background(
-                                        RoundedRectangle(cornerRadius: 12)
-                                            .fill(Color.white.opacity(0.04))
-                                            .overlay(
-                                                RoundedRectangle(cornerRadius: 12)
-                                                    .stroke(Color.white.opacity(0.08), lineWidth: 1)
-                                            )
-                                    )
-
-                                    Button {
-                                        showWhoopDisconnectAlert = true
-                                    } label: {
-                                        Text("Disconnect WHOOP")
-                                            .font(.custom("DM Sans", size: 14))
-                                            .foregroundColor(Color.red.opacity(0.75))
-                                            .frame(maxWidth: .infinity, alignment: .center)
-                                            .padding(.vertical, 14)
-                                    }
-                                    .background(
-                                        RoundedRectangle(cornerRadius: 12)
-                                            .fill(Color.red.opacity(0.04))
-                                            .overlay(
-                                                RoundedRectangle(cornerRadius: 12)
-                                                    .stroke(Color.red.opacity(0.15), lineWidth: 1)
-                                            )
-                                    )
-                                    .alert("Disconnect WHOOP?", isPresented: $showWhoopDisconnectAlert) {
-                                        Button("Disconnect", role: .destructive) {
-                                            whoopManager.disconnect()
-                                        }
-                                        Button("Cancel", role: .cancel) { }
-                                    } message: {
-                                        Text("Your WHOOP data will be removed and sleep recommendations will revert to default.")
-                                    }
-                                }
->>>>>>> be35a4c (.)
                             }
 
                             // ── Account ───────────────────────
@@ -259,6 +206,8 @@ struct LuniferSettings: View {
             .toolbar(.hidden, for: .navigationBar)
         }
     }
+
+    // ── MARK: Private helpers ──────────────────────────────────────
 
     // ── Account deletion ──────────────────────────────────────────
     // Step 1: Determine auth provider and reauthenticate before deleting.
@@ -417,7 +366,8 @@ struct LuniferSettings: View {
             showSignOutErrorAlert = true
         }
     }
-}
+
+} // end LuniferSettings
 
 // ── MARK: About You ────────────────────────────────────────────
 
