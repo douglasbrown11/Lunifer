@@ -1,6 +1,6 @@
 {
   "hosting": {
-    "public": "public",
+    "public": "Privacy Policy & ToS",
     "cleanUrls": true,
     "ignore": [
       "firebase.json",

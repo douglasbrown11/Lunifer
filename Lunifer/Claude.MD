@@ -60,10 +60,10 @@ Lunifer is an iOS alarm app prototype built in SwiftUI. The current product comb
 - `Utils/Utils.swift`: shared colors, backgrounds, and reusable visual helpers
 - `Sounds/`: bundled alarm audio resources
 - `privacy-policy.html` (repo root): public privacy policy page template for app listings and OAuth metadata
-- `public/privacy-policy.html`: Firebase Hosting copy of the privacy policy page
-- `public/index.html`: minimal Firebase Hosting landing page for policy links
+- `Privacy Policy & ToS/privacy-policy.html`: Firebase Hosting copy of the privacy policy page
+- `Privacy Policy & ToS/index.html`: minimal Firebase Hosting landing page for policy links
 - Website: `https://lunifer-website.vercel.app/`
-- `cloudflare-worker/`: Cloudflare Worker backend for WHOOP token exchange, refresh, and sleep fetch
+- `Database/cloudflare-worker/`: Cloudflare Worker backend for WHOOP token exchange, refresh, and sleep fetch
 
 ## Survey Status
 `SurveyAnswers` currently contains:
@@ -308,13 +308,13 @@ WHOOP connectivity is implemented and currently affects onboarding plus sleep re
   - WHOOP token keys still exist in code for legacy/local cleanup paths, but production WHOOP token storage now lives in Cloudflare KV instead of the app keychain
 
 ### Backend
-- `cloudflare-worker/src/index.js`
+- `Database/cloudflare-worker/src/index.js`
   - Verifies Firebase ID tokens server-side
   - Exchanges WHOOP auth codes for tokens using Worker secrets
   - Refreshes WHOOP tokens server-side
   - Fetches WHOOP sleep-need data from WHOOP v2 endpoints
   - Stores per-user WHOOP token data in Cloudflare KV under a key derived from Firebase UID
-- `cloudflare-worker/wrangler.toml`
+- `Database/cloudflare-worker/wrangler.toml`
   - Worker name: `lunifer-whoop`
   - KV binding: `WHOOP_TOKENS`
   - `FIREBASE_PROJECT_ID` currently set to `lunifer-ce086`
@@ -345,7 +345,7 @@ WHOOP connectivity is implemented and currently affects onboarding plus sleep re
   - Defines WHOOP preference keys and `resetWhoopData()`
 - `Data/AccountDataManager.swift`
   - Clears WHOOP keychain tokens and WHOOP preferences on sign-out / delete account
-- `cloudflare-worker/src/index.js`
+- `Database/cloudflare-worker/src/index.js`
   - Stores WHOOP token payloads in Cloudflare KV keyed by Firebase user ID
   - Verifies Firebase ID tokens server-side before serving WHOOP routes
 - `SleepHistoryStore` is populated from WHOOP via `WhoopManager.apply(status:)`, which calls `SleepHistoryManager.shared.recordNight(...)` for each session returned in `recentSleepSessions`. WHOOP therefore contributes to both the recommended sleep duration and the 7-day sleep history chart.
