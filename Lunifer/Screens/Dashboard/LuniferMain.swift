@@ -5,6 +5,30 @@ import Combine
 import CoreMotion
 import UIKit
 
+// ── MARK: Added Alarm Model ───────────────────────────────────
+
+struct AddedAlarm: Codable, Identifiable {
+    var id: UUID
+    var timestamp: Double
+    var label: String
+    var sound: String
+    var snoozeMinutes: Int
+
+    var date: Date { Date(timeIntervalSince1970: timestamp) }
+
+    var displayTime: String {
+        let f = DateFormatter()
+        f.dateFormat = "h:mm"
+        return f.string(from: date)
+    }
+
+    var displayPeriod: String {
+        let f = DateFormatter()
+        f.dateFormat = "a"
+        return f.string(from: date)
+    }
+}
+
 // ── MARK: Dashboard ──────────────────────────────────────────
 
 struct LuniferMain: View {
@@ -24,12 +48,10 @@ struct LuniferMain: View {
     @State private var ticker = Date()
 
     // ── Added alarm state ─────────────────────────────────────
-    @State private var showAddAlarmSheet  = false
-    @State private var addAlarmTapped     = false
+    @State private var showAddAlarmSheet    = false
+    @State private var addAlarmTapped       = false
     @State private var addedAlarmPickerTime = Date()
-    @AppStorage("addedAlarmActive") private var addedAlarmActive: Bool = false
-    @AppStorage("addedAlarmTimestamp")  private var addedAlarmTimestamp: Double = 0
-    @AppStorage("addedAlarmLabel") private var addedAlarmLabel: String = ""
+    @State private var addedAlarms: [AddedAlarm] = []
     @State private var showMotionDeniedAlert = false
     @State private var showAlarmDeniedAlert = false
 
@@ -37,86 +59,96 @@ struct LuniferMain: View {
         ProcessInfo.processInfo.environment["XCODE_RUNNING_FOR_PREVIEWS"] == "1"
     }
 
-    private var addedAlarmDate: Date {
-        Date(timeIntervalSince1970: addedAlarmTimestamp)
+    private func loadAddedAlarms() {
+        guard let data = UserDefaults.standard.data(forKey: "addedAlarms"),
+              let decoded = try? JSONDecoder().decode([AddedAlarm].self, from: data)
+        else { return }
+        addedAlarms = decoded
     }
 
-    private var addedAlarmDisplayString: String {
-        let f = DateFormatter()
-        f.dateFormat = "h:mm"
-        return f.string(from: addedAlarmDate)
-    }
-
-    private var addedAlarmPeriod: String {
-        let f = DateFormatter()
-        f.dateFormat = "a"
-        return f.string(from: addedAlarmDate)
-    }
-
-    private var wakeUpTime: String { // calculate wakeup time based off of survey questions
-        if overrideActive {
-            let f = DateFormatter()
-            f.dateFormat = "h:mm"
-            return f.string(from: overrideTime)
+    private func saveAddedAlarms() {
+        if let data = try? JSONEncoder().encode(addedAlarms) {
+            UserDefaults.standard.set(data, forKey: "addedAlarms")
         }
-        let targetMinutes = 8 * 60
-        let routineMinutes = answers.routine.auto
-            ? 60
-            : answers.routine.hours * 60 + answers.routine.minutes
-        let commuteMinutes: Int
-        if answers.lifestyle == "student" || answers.lifestyle == "commuter" {
-            commuteMinutes = answers.commute.auto ? 30 : answers.commute.hours * 60 + answers.commute.minutes
-        } else {
-            commuteMinutes = 0
-        }
-        let wakeMinutes = ((targetMinutes - routineMinutes - commuteMinutes) % (24 * 60) + 24 * 60) % (24 * 60)
-        let hour    = wakeMinutes / 60
-        let minute  = wakeMinutes % 60
-        let display = hour > 12 ? hour - 12 : (hour == 0 ? 12 : hour)
-        return String(format: "%d:%02d", display, minute)
     }
 
-    //__________________________________________________________________________________________________________
+    // ── Resolved alarm date ───────────────────────────────────
+    // Single source of truth for tomorrow's Lunifer alarm time.
+    // Initialised synchronously to an 8 AM default, then replaced
+    // in .task with the result of the 4-step fallback chain:
+    //   1. First calendar event tomorrow
+    //   2. Historical average first-event time for this weekday
+    //   3. Historical average wake time for this weekday
+    //   4. 8:00 AM hard fallback
+    @State private var resolvedAlarmDate: Date = {
+        var comps = Calendar.current.dateComponents([.year, .month, .day], from: Date())
+        comps.hour = 8; comps.minute = 0; comps.second = 0
+        return Calendar.current.date(from: comps) ?? Date()
+    }()
+
+    /// The Lunifer-calculated alarm date (no manual override applied).
+    /// All downstream logic that needs a raw schedule reference uses this.
+    private var calculatedAlarmDate: Date { resolvedAlarmDate }
+
+    private var wakeUpTime: String {
+        let f = DateFormatter(); f.dateFormat = "h:mm"
+        return f.string(from: overrideActive ? overrideTime : resolvedAlarmDate)
+    }
+
     private var wakeUpPeriod: String {
-        if overrideActive {
-            let f = DateFormatter()
-            f.dateFormat = "a"
-            return f.string(from: overrideTime)
-        }
-        let targetMinutes = 8 * 60
-        let routineMinutes = answers.routine.auto
-            ? 60
-            : answers.routine.hours * 60 + answers.routine.minutes
-        let commuteMinutes: Int
-        if answers.lifestyle == "student" || answers.lifestyle == "commuter" {
-            commuteMinutes = answers.commute.auto ? 30 : answers.commute.hours * 60 + answers.commute.minutes
-        } else {
-            commuteMinutes = 0
-        }
-        let wakeMinutes = ((targetMinutes - routineMinutes - commuteMinutes) % (24 * 60) + 24 * 60) % (24 * 60)
-        let hour = wakeMinutes / 60
-        return hour >= 12 ? "PM" : "AM"
+        let f = DateFormatter(); f.dateFormat = "a"
+        return f.string(from: overrideActive ? overrideTime : resolvedAlarmDate)
     }
 
-    private var calculatedAlarmDate: Date {
-        let targetMinutes = 8 * 60
-        let routineMinutes = answers.routine.auto
+    // ── Alarm date resolution helpers ─────────────────────────
+
+    /// Returns the survey-derived routine + commute buffer in seconds.
+    private func bufferSeconds() -> TimeInterval {
+        let routine = answers.routine.auto
             ? 60
             : answers.routine.hours * 60 + answers.routine.minutes
-        let commuteMinutes: Int
-        if answers.lifestyle == "student" || answers.lifestyle == "commuter" {
-            commuteMinutes = answers.commute.auto ? 30 : answers.commute.hours * 60 + answers.commute.minutes
-        } else {
-            commuteMinutes = 0
+        let commute: Int = (answers.lifestyle == "student" || answers.lifestyle == "commuter")
+            ? (answers.commute.auto ? 30 : answers.commute.hours * 60 + answers.commute.minutes)
+            : 0
+        return Double(routine + commute) * 60
+    }
+
+    /// Builds a Date for today using the supplied hour and minute.
+    private func todayAt(hour: Int, minute: Int) -> Date {
+        var comps = Calendar.current.dateComponents([.year, .month, .day], from: Date())
+        comps.hour = hour; comps.minute = minute; comps.second = 0
+        return Calendar.current.date(from: comps) ?? Date()
+    }
+
+    /// Resolves the best alarm date for tomorrow using a 4-step fallback chain.
+    /// Asynchronous because steps 1–2 may require a calendar fetch.
+    private func resolveAlarmDate() async -> Date {
+        let cal = Calendar.current
+        let tomorrow = cal.date(byAdding: .day, value: 1, to: cal.startOfDay(for: Date()))!
+        let tomorrowWeekday = cal.component(.weekday, from: tomorrow)
+        let buffer = bufferSeconds()
+
+        // Step 1: Live calendar event tomorrow
+        await CalendarManager.shared.fetchEvents()
+        if let event = CalendarManager.shared.firstEventTomorrow {
+            return event.startDate.addingTimeInterval(-buffer)
         }
-        let wakeMinutes = ((targetMinutes - routineMinutes - commuteMinutes) % (24 * 60) + 24 * 60) % (24 * 60)
-        let hour   = wakeMinutes / 60
-        let minute = wakeMinutes % 60
-        var components = Calendar.current.dateComponents([.year, .month, .day], from: Date())
-        components.hour   = hour
-        components.minute = minute
-        components.second = 0
-        return Calendar.current.date(from: components) ?? Date()
+
+        // Step 2: Historical average first-event time for this weekday
+        if let typical = CalendarManager.shared.typicalFirstEventTime(forWeekday: tomorrowWeekday) {
+            return todayAt(hour: typical.hour, minute: typical.minute)
+                .addingTimeInterval(-buffer)
+        }
+
+        // Step 3: Historical average wake time for this weekday
+        // Wake times already reflect how early the user needed to be up,
+        // so routine + commute are not subtracted again.
+        if let avgWake = SleepHistoryStore.shared.averageWakeTime(forWeekday: tomorrowWeekday) {
+            return todayAt(hour: avgWake.hour, minute: avgWake.minute)
+        }
+
+        // Step 4: 8 AM hard fallback (cold-start, no data yet)
+        return todayAt(hour: 8, minute: 0).addingTimeInterval(-buffer)
     }
 
     // ── Rest period helpers ───────────────────────────────────
@@ -181,7 +213,9 @@ struct LuniferMain: View {
         var check = Calendar.current.date(byAdding: .day, value: skip + 1, to: Date())!
         for _ in 0..<8 {
             if answers.wakeDays.contains(weekdayID(for: check)) {
-                // Re-derive wake minutes (same formula as wakeUpTime / wakeUpPeriod)
+                // TODO: Replace with calendar-driven resolution for the specific future date.
+                // For now uses the 8 AM fallback; full per-day resolution requires
+                // fetching events for each candidate date, which is a follow-up task.
                 let targetMinutes  = 8 * 60
                 let routineMins    = answers.routine.auto ? 60 : answers.routine.hours * 60 + answers.routine.minutes
                 let commuteMins: Int = (answers.lifestyle == "student" || answers.lifestyle == "commuter")
@@ -306,15 +340,19 @@ struct LuniferMain: View {
                     overrideTime = savedTime
                 }
             }
-            // Clear a stale added alarm card if its fire time has already passed.
-            if addedAlarmActive && addedAlarmDate < Date() {
-                addedAlarmActive = false
-                addedAlarmTimestamp = 0
-                addedAlarmLabel = ""
-            }
+            // Load persisted added alarms and prune any whose fire time has passed.
+            loadAddedAlarms()
+            let now = Date()
+            addedAlarms.removeAll { $0.date < now }
+            saveAddedAlarms()
             // Skip system-service calls (AlarmKit, CoreMotion, notifications)
             // when running inside the Xcode preview canvas.
             guard !isRunningPreview else { return }
+
+            // Resolve the alarm date before starting any services so that the
+            // wake notification and commute polling all use the same target.
+            resolvedAlarmDate = await resolveAlarmDate()
+
             await SleepTracker.shared.startTracking()
             BatteryAlarmNotification.shared.startMonitoring()
             LuniferAlarm.shared.startAdaptiveRescheduling()
@@ -338,6 +376,27 @@ struct LuniferMain: View {
                 arrComps.second = 0
                 let arrival = Calendar.current.date(from: arrComps) ?? Date()
                 CommuteManager.shared.startPolling(answers: answers, arrivalDate: arrival)
+            }
+
+            // ── Rest-day early-event check ────────────────────
+            // If tomorrow is a scheduled rest day but the user's calendar
+            // has an event starting before 10:00 AM, prompt them to let
+            // Lunifer set an alarm. The notification fires at 7 PM (or
+            // immediately if the app is opened after 7 PM). Only one
+            // notification is sent per calendar day.
+            if consecutiveRestDaysFromTomorrow > 0 {
+                await CalendarManager.shared.fetchEvents()
+                if let event = CalendarManager.shared.firstEventTomorrow {
+                    let cal = Calendar.current
+                    let eventMinuteOfDay = cal.component(.hour, from: event.startDate) * 60
+                        + cal.component(.minute, from: event.startDate)
+                    if eventMinuteOfDay < 10 * 60 {
+                        RestDayEventNotification.shared.scheduleIfNeeded(
+                            event: event,
+                            answers: answers
+                        )
+                    }
+                }
             }
         }
         // Re-evaluate rest period every minute so the midnight transition
@@ -639,51 +698,58 @@ struct LuniferMain: View {
                     }
                 }
 
-                // ── Added Alarm card ──────────────────────
-                if addedAlarmActive && !alarmExpanded {
-                    VStack(spacing: 8) {
-                        Text("ADDED ALARM")
+                // ── Added Alarm cards ─────────────────────
+                if !addedAlarms.isEmpty && !alarmExpanded {
+                    VStack(spacing: 0) {
+                        Text(addedAlarms.count == 1 ? "ADDED ALARM" : "ADDED ALARMS")
                             .font(.custom("DM Sans", size: 10))
                             .foregroundColor(Color.white.opacity(0.3))
                             .kerning(2.5)
                             .frame(maxWidth: .infinity, alignment: .leading)
                             .padding(.horizontal, 60)
                             .padding(.top, 20)
+                            .padding(.bottom, 4)
 
-                        if !addedAlarmLabel.isEmpty {
-                            Text(addedAlarmLabel)
-                                .font(.custom("DM Sans", size: 13))
-                                .foregroundColor(Color.white.opacity(0.45))
-                                .frame(maxWidth: .infinity, alignment: .leading)
-                                .padding(.horizontal, 60)
-                        }
-
-                        HStack(spacing: 0) {
-                            HStack(alignment: .lastTextBaseline, spacing: 5) {
-                                Text(addedAlarmDisplayString)
-                                    .font(.custom("Libre Franklin", size: 40).weight(.light))
-                                    .foregroundColor(Color.white.opacity(0.80))
-                                    .monospacedDigit()
-                                Text(addedAlarmPeriod)
-                                    .font(.custom("Libre Franklin", size: 37).weight(.light))
-                                    .foregroundColor(Color.white.opacity(0.80))
-                            }
-                            Spacer()
-                            Button {
-                                withAnimation(.easeInOut(duration: 0.25)) {
-                                    addedAlarmActive = false
+                        ForEach(addedAlarms.sorted { $0.timestamp < $1.timestamp }) { alarm in
+                            VStack(spacing: 2) {
+                                if !alarm.label.isEmpty {
+                                    Text(alarm.label)
+                                        .font(.custom("DM Sans", size: 13))
+                                        .foregroundColor(Color.white.opacity(0.45))
+                                        .frame(maxWidth: .infinity, alignment: .leading)
+                                        .padding(.horizontal, 60)
                                 }
-                                addedAlarmLabel = ""
-                                Task { await LuniferAlarm.shared.cancelAddedAlarm() }
-                            } label: {
-                                Image(systemName: "xmark")
-                                    .font(.system(size: 13, weight: .light))
-                                    .foregroundColor(Color.white.opacity(0.4))
-                                    .padding(10)
-                                    .background(Circle().fill(Color.white.opacity(0.07)))
+
+                                HStack(spacing: 0) {
+                                    HStack(alignment: .lastTextBaseline, spacing: 5) {
+                                        Text(alarm.displayTime)
+                                            .font(.custom("Libre Franklin", size: 40).weight(.light))
+                                            .foregroundColor(Color.white.opacity(0.80))
+                                            .monospacedDigit()
+                                        Text(alarm.displayPeriod)
+                                            .font(.custom("Libre Franklin", size: 37).weight(.light))
+                                            .foregroundColor(Color.white.opacity(0.80))
+                                    }
+                                    Spacer()
+                                    Button {
+                                        let id = alarm.id
+                                        withAnimation(.easeInOut(duration: 0.25)) {
+                                            addedAlarms.removeAll { $0.id == id }
+                                        }
+                                        saveAddedAlarms()
+                                        Task { await LuniferAlarm.shared.cancelAddedAlarm(id: id) }
+                                    } label: {
+                                        Image(systemName: "xmark")
+                                            .font(.system(size: 13, weight: .light))
+                                            .foregroundColor(Color.white.opacity(0.4))
+                                            .padding(10)
+                                            .background(Circle().fill(Color.white.opacity(0.07)))
+                                    }
+                                }
+                                .padding(.horizontal, 60)
                             }
+                            .padding(.bottom, 8)
                         }
-                        .padding(.horizontal, 60)
                     }
                     .offset(y: luniferEnabled ? 0 : 8)
                 }
@@ -704,11 +770,20 @@ struct LuniferMain: View {
             }) {
                 AddAlarmSheet(
                     pickerTime: $addedAlarmPickerTime,
-                    onSet: { time in
-                        addedAlarmTimestamp = time.timeIntervalSince1970
-                        addedAlarmActive    = true
-                        showAddAlarmSheet   = false
-                        Task { await LuniferAlarm.shared.scheduleAddedAlarm(for: time) }
+                    onSet: { time, label, sound, snooze in
+                        let alarm = AddedAlarm(
+                            id: UUID(),
+                            timestamp: time.timeIntervalSince1970,
+                            label: label,
+                            sound: sound,
+                            snoozeMinutes: snooze
+                        )
+                        withAnimation(.easeInOut(duration: 0.25)) {
+                            addedAlarms.append(alarm)
+                        }
+                        saveAddedAlarms()
+                        showAddAlarmSheet = false
+                        Task { await LuniferAlarm.shared.scheduleAddedAlarm(for: time, alarmID: alarm.id) }
                     },
                     onCancel: {
                         showAddAlarmSheet = false
@@ -830,12 +905,12 @@ struct LuniferMain: View {
 
 struct AddAlarmSheet: View {
     @Binding var pickerTime: Date
-    let onSet:    (Date) -> Void
+    let onSet:    (Date, String, String, Int) -> Void   // time, label, sound, snoozeMinutes
     let onCancel: () -> Void
 
-    @AppStorage("addedAlarmSound") private var addedAlarmSound: String = "DeafultAlarm.wav"
-    @AppStorage("addedAlarmLabel") private var addedAlarmLabel: String = ""
-    @AppStorage("addedAlarmSnoozeMinutes") private var addedAlarmSnoozeMinutes: Int = 5
+    @State private var addedAlarmSound: String = "DeafultAlarm.wav"
+    @State private var addedAlarmLabel: String = ""
+    @State private var addedAlarmSnoozeMinutes: Int = 5
 
     var body: some View {
         NavigationStack {
@@ -901,13 +976,13 @@ struct AddAlarmSheet: View {
                     .padding(.bottom, 10)
 
                     // ── Sound row ─────────────────────────────
-                    NavigationLink(destination: AddedAlarmSoundView()) {
+                    NavigationLink(destination: AddedAlarmSoundView(sound: $addedAlarmSound)) {
                         HStack {
                             Text("Sound")
                                 .font(.custom("DM Sans", size: 15))
                                 .foregroundColor(Color.white.opacity(0.85))
                             Spacer()
-                            Text(SoundOption.displayName(for: addedAlarmSound))
+                            Text(SoundOption.displayName(for: addedAlarmSound))  // uses local @State
                                 .font(.custom("DM Sans", size: 14))
                                 .foregroundColor(Color.white.opacity(0.35))
                             Image(systemName: "chevron.right")
@@ -970,7 +1045,7 @@ struct AddAlarmSheet: View {
 
                     // ── Set Alarm button ──────────────────────
                     Button {
-                        onSet(pickerTime)
+                        onSet(pickerTime, addedAlarmLabel, addedAlarmSound, addedAlarmSnoozeMinutes)
                     } label: {
                         Text("Set Alarm")
                             .font(.custom("DM Sans", size: 15).weight(.medium))
@@ -1003,7 +1078,7 @@ struct AddAlarmSheet: View {
 
 struct AddedAlarmSoundView: View {
     @Environment(\.dismiss) private var dismiss
-    @AppStorage("addedAlarmSound") private var addedAlarmSound: String = "DeafultAlarm.wav"
+    @Binding var sound: String
     @State private var audioPlayer: AVAudioPlayer?
 
     var body: some View {
@@ -1034,7 +1109,7 @@ struct AddedAlarmSoundView: View {
                 VStack(spacing: 0) {
                     ForEach(SoundOption.all, id: \.filename) { option in
                         Button {
-                            addedAlarmSound = option.filename
+                            sound = option.filename
                             previewSound(option.filename)
                         } label: {
                             HStack {
@@ -1042,7 +1117,7 @@ struct AddedAlarmSoundView: View {
                                     .font(.custom("DM Sans", size: 15))
                                     .foregroundColor(Color.white.opacity(0.85))
                                 Spacer()
-                                if addedAlarmSound == option.filename {
+                                if sound == option.filename {
                                     Image(systemName: "checkmark")
                                         .font(.system(size: 13, weight: .medium))
                                         .foregroundColor(Color(red: 0.706, green: 0.588, blue: 0.902))
