@@ -74,8 +74,13 @@ class LuniferAlarm: ObservableObject {
     /// onset. Prevents repeated adjustments on subsequent timer ticks.
     private var sleepOnsetAdjusted: Bool = false
 
-    /// Maximum number of hours the alarm can be pushed past the original time.
+    /// Maximum number of hours the alarm can be pushed later than the original time.
     private let maxAdaptivePushHours: Double = 3.0
+
+    /// Maximum number of hours the alarm can be pulled earlier than the original time.
+    /// Prevents Path A from waking the user at an unreasonably early hour just
+    /// because they happened to fall asleep very early.
+    private let maxAdaptivePullHours: Double = 2.0
 
     // ─────────────────────────────────────────────────────────
     // SECTION 3: REQUESTING PERMISSION
@@ -208,20 +213,23 @@ class LuniferAlarm: ObservableObject {
     }
 
     // ─────────────────────────────────────────────────────────
-    // SECTION 4b: ADDED ALARM
+    // SECTION 4b: ADDED ALARMS
     // ─────────────────────────────────────────────────────────
-    // Schedules a second, independently managed alarm set by the user.
+    // Schedules independently managed alarms set by the user.
+    // Each alarm is keyed by a logical UUID (matching AddedAlarm.id)
+    // so individual alarms can be cancelled without affecting others.
     // Stored separately from the main Lunifer alarm so cancelling
     // one does not affect the other.
 
-    @Published var addedAlarmID: UUID? = nil
+    /// Maps logical AddedAlarm.id → AlarmKit UUID
+    @Published var addedAlarmIDs: [UUID: UUID] = [:]
 
-    func scheduleAddedAlarm(for date: Date) async {
+    func scheduleAddedAlarm(for date: Date, alarmID: UUID) async {
         if !isAuthorized { await requestAuthorization() }
         guard isAuthorized else { return }
 
-        // Cancel any previously added alarm first
-        await cancelAddedAlarm()
+        // Cancel any existing alarm with the same logical ID first
+        await cancelAddedAlarm(id: alarmID)
 
         let alert = AlarmPresentation.Alert(
             title: "Added Alarm",
@@ -244,26 +252,33 @@ class LuniferAlarm: ObservableObject {
             tintColor: Color(red: 0.55, green: 0.35, blue: 0.95)
         )
 
-        let id = UUID()
+        let alarmKitID = UUID()
         do {
             let _ = try await manager.schedule(
-                id: id,
+                id: alarmKitID,
                 configuration: .alarm(
                     schedule: .fixed(date),
                     attributes: attributes
                 )
             )
-            addedAlarmID = id
+            addedAlarmIDs[alarmID] = alarmKitID
             print("✅ Added alarm set for \(date.formatted(date: .omitted, time: .shortened))")
         } catch {
             print("❌ Failed to schedule added alarm: \(error.localizedDescription)")
         }
     }
 
-    func cancelAddedAlarm() async {
-        guard let id = addedAlarmID else { return }
-        try? manager.cancel(id: id)
-        addedAlarmID = nil
+    func cancelAddedAlarm(id: UUID) async {
+        guard let alarmKitID = addedAlarmIDs[id] else { return }
+        try? manager.cancel(id: alarmKitID)
+        addedAlarmIDs.removeValue(forKey: id)
+    }
+
+    func cancelAllAddedAlarms() async {
+        for (_, alarmKitID) in addedAlarmIDs {
+            try? manager.cancel(id: alarmKitID)
+        }
+        addedAlarmIDs.removeAll()
     }
 
     // ─────────────────────────────────────────────────────────
@@ -386,6 +401,13 @@ class LuniferAlarm: ObservableObject {
         // Only run while Lunifer is enabled
         guard UserDefaults.standard.bool(forKey: "luniferEnabled") else { return }
 
+        // If the user has manually overridden the alarm, respect that choice and
+        // make no further changes until the override clears after the alarm passes.
+        guard !UserDefaults.standard.bool(forKey: "overrideActive") else {
+            print("⏸️ Adaptive rescheduling paused — manual override is active")
+            return
+        }
+
         // Need a scheduled alarm to adjust
         guard let currentAlarm = scheduledWakeTime else { return }
 
@@ -439,10 +461,15 @@ class LuniferAlarm: ObservableObject {
         // 3-hour adaptive cap AND the calendar constraint.
         func clamped(_ proposed: Date) -> Date {
             var result = proposed
-            // Don't push more than 3 hours past the original alarm
             if let original = originalScheduledWakeTime {
+                // Don't push more than 3 hours later than the original alarm
                 let cap = original.addingTimeInterval(maxAdaptivePushHours * 3600)
                 result = min(result, cap)
+                // Don't pull more than 2 hours earlier than the original alarm.
+                // Prevents an unusually early sleep onset from producing an
+                // alarm time that would feel jarring (e.g. 4 AM).
+                let floor = original.addingTimeInterval(-maxAdaptivePullHours * 3600)
+                result = max(result, floor)
             }
             // Don't push past the point where routine + commute
             // would cause the user to miss their first event

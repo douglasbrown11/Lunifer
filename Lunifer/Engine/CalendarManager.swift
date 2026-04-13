@@ -174,6 +174,56 @@ final class CalendarManager: ObservableObject {
             .first
     }
 
+    // MARK: Historical Pattern Queries
+
+    /// Returns the average start time (hour, minute) of the earliest non-all-day
+    /// calendar event on a given weekday over the past 6 weeks.
+    ///
+    /// Used as the first fallback when no event exists for tomorrow but the user
+    /// has wake days that include tomorrow — e.g. a Friday with no meetings that
+    /// still requires an early start based on historical patterns.
+    ///
+    /// Requires at least 2 matching days to return a result, to avoid a single
+    /// anomalous event skewing the average.
+    ///
+    /// - Parameter weekday: EKWeekday integer (1 = Sunday … 7 = Saturday),
+    ///   matching Calendar.current.component(.weekday, from:).
+    func typicalFirstEventTime(forWeekday weekday: Int) -> (hour: Int, minute: Int)? {
+        guard authorizationStatus == .authorized else { return nil }
+
+        let cal = Calendar.current
+        let now = Date()
+        guard let sixWeeksAgo = cal.date(byAdding: .weekOfYear, value: -6, to: now),
+              let startOfToday = cal.date(bySettingHour: 0, minute: 0, second: 0, of: now),
+              let yesterday = cal.date(byAdding: .second, value: -1, to: startOfToday)
+        else { return nil }
+
+        // Collect the earliest event start per matching calendar day.
+        var earliestPerDay: [String: Date] = [:]
+
+        for event in fetchEKEvents(from: sixWeeksAgo, to: yesterday) {
+            guard !event.isAllDay else { continue }
+            guard cal.component(.weekday, from: event.startDate) == weekday else { continue }
+
+            // Key by calendar date so we group events on the same day together.
+            let dayKey = cal.startOfDay(for: event.startDate).description
+            if let existing = earliestPerDay[dayKey] {
+                if event.startDate < existing { earliestPerDay[dayKey] = event.startDate }
+            } else {
+                earliestPerDay[dayKey] = event.startDate
+            }
+        }
+
+        // Need at least 2 data points to produce a meaningful average.
+        guard earliestPerDay.count >= 2 else { return nil }
+
+        let totalMinutes = earliestPerDay.values.reduce(0) { sum, date in
+            sum + cal.component(.hour, from: date) * 60 + cal.component(.minute, from: date)
+        }
+        let avgMinutes = totalMinutes / earliestPerDay.count
+        return (hour: avgMinutes / 60, minute: avgMinutes % 60)
+    }
+
     // MARK: Private Helpers
 
     private func fetchEKEvents(from start: Date, to end: Date) -> [EKEvent] {

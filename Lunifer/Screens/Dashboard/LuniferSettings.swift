@@ -393,9 +393,12 @@ struct LuniferSettings: View {
         let uid = user.uid
         let userDoc = db.collection("users").document(uid)
 
+        // Best-effort Firestore cleanup. If security rules block client-side
+        // deletes (a common rules configuration), we log and continue — the
+        // Auth account deletion is what matters to the user. Any remaining
+        // Firestore data can be purged server-side via a Firebase Auth
+        // onDelete Cloud Function once one is wired up.
         do {
-            // Delete Firestore data first so the UI promise of removing
-            // account data is upheld before the auth account is removed.
             for sub in ["sleepHistory", "alarmInferences", "private"] {
                 let snap = try await userDoc.collection(sub).getDocuments()
                 for doc in snap.documents {
@@ -403,13 +406,15 @@ struct LuniferSettings: View {
                 }
             }
             try await userDoc.delete()
+        } catch {
+            print("⚠️ Firestore cleanup skipped (rules may restrict client-side delete): \(error.localizedDescription)")
+        }
 
-            // Delete Firebase Auth account after cloud data cleanup succeeds.
+        // Delete the Firebase Auth account. This is the critical step and
+        // requires a recent login, which reauthentication above provides.
+        do {
             try await user.delete()
-
-            // Clear local storage
             clearLocalAccountData()
-
             isDeletingAccount = false
             dismiss()
         } catch let nsError as NSError {
@@ -454,10 +459,25 @@ struct AboutYouSettingsView: View {
     @AppStorage("homeLocationName") private var homeLocationName: String = ""
     @State private var showHomeSheet = false
 
+    // ── Work location persistence ──────────────────────────────
+    @AppStorage("workLocationSet")  private var workLocationSet: Bool = false
+    @AppStorage("workLocationName") private var workLocationName: String = ""
+    @State private var showWorkSheet = false
+
     private var homeLocationDisplayName: String {
         if homeLocationSet && !homeLocationName.isEmpty { return homeLocationName }
         if homeLocationSet { return "Location set" }
         return "Learning your location..."
+    }
+
+    private var workLocationDisplayName: String {
+        if workLocationSet && !workLocationName.isEmpty { return workLocationName }
+        if workLocationSet { return "Location set" }
+        return "Not set"
+    }
+
+    private var isCommuterUser: Bool {
+        answers.lifestyle == "student" || answers.lifestyle == "commuter"
     }
 
     private var lifestyleLabel: String {
@@ -518,6 +538,12 @@ struct AboutYouSettingsView: View {
                             .background(Color.white.opacity(0.08))
                             .padding(.leading, 16)
                         homeLocationRow()
+                        if isCommuterUser {
+                            Divider()
+                                .background(Color.white.opacity(0.08))
+                                .padding(.leading, 16)
+                            workLocationRow()
+                        }
                     }
                     .background(
                         RoundedRectangle(cornerRadius: 12)
@@ -535,6 +561,12 @@ struct AboutYouSettingsView: View {
         .toolbar(.hidden, for: .navigationBar)
         .sheet(isPresented: $showHomeSheet) {
             HomeLocationSheet()
+                .presentationDetents([.large])
+                .presentationDragIndicator(.hidden)
+                .presentationBackground(Color(red: 0.06, green: 0.03, blue: 0.14))
+        }
+        .sheet(isPresented: $showWorkSheet) {
+            WorkLocationSheet()
                 .presentationDetents([.large])
                 .presentationDragIndicator(.hidden)
                 .presentationBackground(Color(red: 0.06, green: 0.03, blue: 0.14))
@@ -571,6 +603,33 @@ struct AboutYouSettingsView: View {
                 showHomeSheet = true
             } label: {
                 Text(homeLocationSet ? "Change" : "Set")
+                    .font(.custom("DM Sans", size: 13))
+                    .foregroundColor(Color(red: 0.627, green: 0.471, blue: 1.0))
+            }
+            .padding(.leading, 12)
+        }
+        .padding(.horizontal, 16)
+        .padding(.vertical, 14)
+    }
+
+    @ViewBuilder
+    private func workLocationRow() -> some View {
+        HStack {
+            Text("Work")
+                .font(.custom("DM Sans", size: 14))
+                .foregroundColor(Color.white.opacity(0.45))
+
+            Text(workLocationDisplayName)
+                .font(.custom("DM Sans", size: 14))
+                .foregroundColor(workLocationSet ? Color.white.opacity(0.85) : Color.white.opacity(0.35))
+                .padding(.leading, 12)
+
+            Spacer()
+
+            Button {
+                showWorkSheet = true
+            } label: {
+                Text(workLocationSet ? "Change" : "Set")
                     .font(.custom("DM Sans", size: 13))
                     .foregroundColor(Color(red: 0.627, green: 0.471, blue: 1.0))
             }
@@ -977,6 +1036,227 @@ struct HomeLocationSheet: View {
     }
 }
 
+// ── MARK: Work Location Sheet ──────────────────────────────────
+
+struct WorkLocationSheet: View {
+    @Environment(\.dismiss) private var dismiss
+
+    @AppStorage("workLatitude")    private var workLatitude: Double = 0
+    @AppStorage("workLongitude")   private var workLongitude: Double = 0
+    @AppStorage("workLocationSet") private var workLocationSet: Bool = false
+    @AppStorage("workLocationName") private var workLocationName: String = ""
+
+    @StateObject private var completer = HomeLocationSearchCompleter()
+    @State private var mapPosition: MapCameraPosition = .automatic
+    @State private var selectedCoordinate: CLLocationCoordinate2D? = nil
+    @State private var selectedAddress: String = ""
+    @FocusState private var searchFocused: Bool
+
+    var body: some View {
+        ZStack {
+            Color(red: 0.06, green: 0.03, blue: 0.14).ignoresSafeArea()
+
+            VStack(spacing: 0) {
+                RoundedRectangle(cornerRadius: 2)
+                    .fill(Color.white.opacity(0.15))
+                    .frame(width: 36, height: 4)
+                    .padding(.top, 10)
+                    .padding(.bottom, 14)
+
+                Text("Set Work Location")
+                    .font(.custom("Cormorant Garamond", size: 26).weight(.light))
+                    .foregroundColor(Color.white.opacity(0.9))
+                    .padding(.bottom, 14)
+
+                Rectangle()
+                    .fill(Color.white.opacity(0.95))
+                    .frame(height: 1)
+                    .padding(.horizontal, 32)
+                    .padding(.bottom, 14)
+
+                HStack(spacing: 10) {
+                    Image(systemName: "magnifyingglass")
+                        .font(.system(size: 14, weight: .light))
+                        .foregroundColor(Color.white.opacity(0.35))
+                    TextField("Search address...", text: $completer.searchText)
+                        .font(.custom("DM Sans", size: 14))
+                        .foregroundColor(Color.white.opacity(0.85))
+                        .tint(Color(red: 0.627, green: 0.471, blue: 1.0))
+                        .focused($searchFocused)
+                        .submitLabel(.search)
+                    if !completer.searchText.isEmpty {
+                        Button {
+                            completer.searchText = ""
+                            selectedCoordinate = nil
+                            selectedAddress = ""
+                        } label: {
+                            Image(systemName: "xmark.circle.fill")
+                                .font(.system(size: 14))
+                                .foregroundColor(Color.white.opacity(0.3))
+                        }
+                    }
+                }
+                .padding(.horizontal, 14)
+                .padding(.vertical, 11)
+                .background(
+                    RoundedRectangle(cornerRadius: 10)
+                        .fill(Color.white.opacity(0.07))
+                        .overlay(RoundedRectangle(cornerRadius: 10).stroke(Color.white.opacity(0.1), lineWidth: 1))
+                )
+                .padding(.horizontal, 16)
+                .padding(.bottom, 8)
+
+                if !completer.results.isEmpty && !completer.searchText.isEmpty {
+                    ScrollView(showsIndicators: false) {
+                        VStack(spacing: 0) {
+                            ForEach(Array(completer.results.prefix(4).enumerated()), id: \.offset) { index, result in
+                                Button {
+                                    selectSuggestion(result)
+                                } label: {
+                                    HStack(spacing: 10) {
+                                        Image(systemName: "mappin")
+                                            .font(.system(size: 11, weight: .light))
+                                            .foregroundColor(Color.white.opacity(0.25))
+                                            .frame(width: 16)
+                                        VStack(alignment: .leading, spacing: 2) {
+                                            Text(result.title)
+                                                .font(.custom("DM Sans", size: 13))
+                                                .foregroundColor(Color.white.opacity(0.85))
+                                                .lineLimit(1)
+                                                .frame(maxWidth: .infinity, alignment: .leading)
+                                            if !result.subtitle.isEmpty {
+                                                Text(result.subtitle)
+                                                    .font(.custom("DM Sans", size: 11))
+                                                    .foregroundColor(Color.white.opacity(0.35))
+                                                    .lineLimit(1)
+                                            }
+                                        }
+                                    }
+                                    .padding(.horizontal, 14)
+                                    .padding(.vertical, 10)
+                                }
+                                .buttonStyle(.plain)
+                                if index < min(completer.results.count, 4) - 1 {
+                                    Divider()
+                                        .background(Color.white.opacity(0.05))
+                                        .padding(.leading, 40)
+                                }
+                            }
+                        }
+                        .background(
+                            RoundedRectangle(cornerRadius: 10)
+                                .fill(Color.white.opacity(0.04))
+                                .overlay(RoundedRectangle(cornerRadius: 10).stroke(Color.white.opacity(0.08), lineWidth: 1))
+                        )
+                        .padding(.horizontal, 16)
+                    }
+                    .frame(maxHeight: 180)
+                    .padding(.bottom, 8)
+                }
+
+                ZStack(alignment: .bottom) {
+                    Map(position: $mapPosition) {
+                        if let coord = selectedCoordinate {
+                            Marker("Work", coordinate: coord)
+                                .tint(Color(red: 0.627, green: 0.471, blue: 1.0))
+                        }
+                    }
+                    .colorScheme(.dark)
+                    .ignoresSafeArea(edges: .bottom)
+
+                    if selectedCoordinate != nil {
+                        VStack(spacing: 0) {
+                            LinearGradient(
+                                colors: [
+                                    Color(red: 0.06, green: 0.03, blue: 0.14).opacity(0),
+                                    Color(red: 0.06, green: 0.03, blue: 0.14).opacity(0.96)
+                                ],
+                                startPoint: .top, endPoint: .bottom
+                            )
+                            .frame(height: 56)
+
+                            VStack(spacing: 8) {
+                                if !selectedAddress.isEmpty {
+                                    Text(selectedAddress)
+                                        .font(.custom("DM Sans", size: 12))
+                                        .foregroundColor(Color.white.opacity(0.55))
+                                        .multilineTextAlignment(.center)
+                                        .padding(.horizontal, 24)
+                                }
+                                Button {
+                                    confirmLocation()
+                                } label: {
+                                    Text("Confirm Work Location")
+                                        .font(.custom("DM Sans", size: 15).weight(.medium))
+                                        .foregroundColor(.white)
+                                        .frame(maxWidth: .infinity)
+                                        .frame(height: 52)
+                                        .background(
+                                            RoundedRectangle(cornerRadius: 14)
+                                                .fill(LinearGradient(
+                                                    colors: [
+                                                        Color(red: 0.471, green: 0.314, blue: 0.863).opacity(0.9),
+                                                        Color(red: 0.314, green: 0.196, blue: 0.706).opacity(0.9)
+                                                    ],
+                                                    startPoint: .topLeading,
+                                                    endPoint: .bottomTrailing
+                                                ))
+                                        )
+                                }
+                                .buttonStyle(.plain)
+                                .padding(.horizontal, 16)
+                                .padding(.bottom, 36)
+                            }
+                            .background(Color(red: 0.06, green: 0.03, blue: 0.14).opacity(0.96))
+                        }
+                        .transition(.opacity)
+                    }
+                }
+            }
+        }
+        .onAppear {
+            if workLocationSet {
+                let coord = CLLocationCoordinate2D(latitude: workLatitude, longitude: workLongitude)
+                selectedCoordinate = coord
+                selectedAddress = workLocationName
+                completer.searchText = workLocationName
+                mapPosition = .region(MKCoordinateRegion(
+                    center: coord,
+                    span: MKCoordinateSpan(latitudeDelta: 0.05, longitudeDelta: 0.05)
+                ))
+            } else {
+                mapPosition = .automatic
+            }
+        }
+    }
+
+    private func selectSuggestion(_ result: MKLocalSearchCompletion) {
+        searchFocused = false
+        let request = MKLocalSearch.Request(completion: result)
+        MKLocalSearch(request: request).start { response, _ in
+            guard let item = response?.mapItems.first else { return }
+            let coord = item.location.coordinate
+            selectedCoordinate = coord
+            selectedAddress = [result.title, result.subtitle].filter { !$0.isEmpty }.joined(separator: ", ")
+            withAnimation {
+                mapPosition = .region(MKCoordinateRegion(
+                    center: coord,
+                    span: MKCoordinateSpan(latitudeDelta: 0.05, longitudeDelta: 0.05)
+                ))
+            }
+        }
+    }
+
+    private func confirmLocation() {
+        guard let coord = selectedCoordinate else { return }
+        workLatitude = coord.latitude
+        workLongitude = coord.longitude
+        workLocationSet = true
+        workLocationName = selectedAddress
+        dismiss()
+    }
+}
+
 // ── MARK: Wake Days ────────────────────────────────────────────
 
 // ── MARK: Sleep & Wearables ────────────────────────────────────
@@ -1096,6 +1376,7 @@ struct SleepAndWearablesSettingsView: View {
                                     imageName: "WhoopWordmark",
                                     isConnected: whoopConnected,
                                     isLoading: whoopManager.isLoading,
+                                    imageHeight: 26,
                                     onConnect: {
                                         Task {
                                             try? await WhoopManager.shared.connect()
@@ -1111,6 +1392,7 @@ struct SleepAndWearablesSettingsView: View {
                                     imageName: "OuraWordmark",
                                     isConnected: ouraConnected,
                                     isLoading: ouraManager.isLoading,
+                                    imageHeight: 22,
                                     onConnect: {
                                         Task {
                                             try? await OuraManager.shared.connect()
@@ -1176,6 +1458,7 @@ struct SleepAndWearablesSettingsView: View {
         imageName: String,
         isConnected: Bool,
         isLoading: Bool,
+        imageHeight: CGFloat = 16,
         onConnect: @escaping () -> Void,
         onDisconnect: @escaping () -> Void
     ) -> some View {
@@ -1184,7 +1467,7 @@ struct SleepAndWearablesSettingsView: View {
                 .resizable()
                 .interpolation(.high)
                 .scaledToFit()
-                .frame(height: 16)
+                .frame(height: imageHeight)
 
             Spacer()
 

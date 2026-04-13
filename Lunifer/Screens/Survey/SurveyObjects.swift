@@ -1,10 +1,3 @@
-//
-//  SurveyObjects.swift
-//  Lunifer
-//
-//  Created by Douglas Brown on 3/13/26.
-//
-
 import SwiftUI
 
 // ── MARK: Calendar brand icons ───────────────────────────────
@@ -37,6 +30,8 @@ struct GoogleCalendarIcon: View {
     }
 }
 
+
+
 struct OutlookIcon: View {
     var body: some View {
         ZStack {
@@ -49,3 +44,5 @@ struct OutlookIcon: View {
         }
     }
 }
+
+

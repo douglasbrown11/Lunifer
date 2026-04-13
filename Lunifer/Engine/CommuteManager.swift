@@ -1,6 +1,8 @@
 import Foundation
 import Combine
 import BackgroundTasks
+import MapKit
+import CoreLocation
 
 // ─────────────────────────────────────────────────────────────
 // CommuteManager
@@ -39,12 +41,12 @@ import BackgroundTasks
 // either direction triggers CommuteNotification.scheduleDeltaAlert
 // and updates the persisted baseline.
 //
-// ── Routing stub ─────────────────────────────────────────────
-// refreshDuration() currently reads the static survey value.
-// Replace its body with an async MKDirections fetch using
-// stored home + work coordinates when routing is ready. The
-// delta detection, notification, and persistence plumbing will
-// all work automatically once live durations are produced.
+// ── Routing ───────────────────────────────────────────────────
+// refreshDuration() calls fetchLiveDuration(), which issues an
+// async MKDirections request from stored home → work coordinates.
+// Falls back to the survey-entered duration when either location
+// is not yet set. The delta detection, notification, and
+// persistence plumbing all operate on the returned value.
 
 @MainActor
 final class CommuteManager: ObservableObject {
@@ -131,7 +133,7 @@ final class CommuteManager: ObservableObject {
             Task { @MainActor [weak self] in
                 guard let self else { return }
                 if let answers = SurveyAnswersStore.shared.loadFromDefaults() {
-                    self.refreshDuration(answers: answers)
+                    await self.refreshDuration(answers: answers)
                 }
             }
         }
@@ -166,9 +168,9 @@ final class CommuteManager: ObservableObject {
     /// Checks for a duration change and fires a delta alert if the shift is ≥5 min.
     /// Also stops polling automatically once the leave time has passed.
     ///
-    /// ROUTING STUB: replace the duration derivation below with an async
-    /// MKDirections fetch from stored home → work coordinates when ready.
-    private func refreshDuration(answers: SurveyAnswers) {
+    /// Uses a live MKDirections fetch when both home and work coordinates are stored.
+    /// Falls back to the survey-entered duration if either location is missing.
+    private func refreshDuration(answers: SurveyAnswers) async {
         // Auto-stop once the user should have left
         let leave = arrivalDate.addingTimeInterval(-Double(currentDurationMinutes) * 60)
         guard Date() < leave else {
@@ -176,8 +178,9 @@ final class CommuteManager: ObservableObject {
             return
         }
 
-        let newDuration = Self.surveyDuration(from: answers)
-        let delta       = newDuration - previousDurationMinutes
+        let newDuration = await Self.fetchLiveDuration(answers: answers)
+
+        let delta = newDuration - previousDurationMinutes
 
         if abs(delta) >= 5 {
             let newLeave = arrivalDate.addingTimeInterval(-Double(newDuration) * 60)
@@ -191,6 +194,58 @@ final class CommuteManager: ObservableObject {
 
         currentDurationMinutes = newDuration
         lastFetched            = Date()
+    }
+
+    /// Fetches a live commute duration via MKDirections using stored home → work
+    /// coordinates. Returns the survey-entered fallback if either location is
+    /// missing or if the routing request fails.
+    static func fetchLiveDuration(answers: SurveyAnswers) async -> Int {
+        let defaults = UserDefaults.standard
+        let homeSet  = defaults.bool(forKey: AppPreferencesStore.Keys.homeLocationSet)
+        let workSet  = defaults.bool(forKey: AppPreferencesStore.Keys.workLocationSet)
+
+        guard homeSet && workSet else {
+            return surveyDuration(from: answers)
+        }
+
+        let homeLat = defaults.double(forKey: AppPreferencesStore.Keys.homeLatitude)
+        let homeLon = defaults.double(forKey: AppPreferencesStore.Keys.homeLongitude)
+        let workLat = defaults.double(forKey: AppPreferencesStore.Keys.workLatitude)
+        let workLon = defaults.double(forKey: AppPreferencesStore.Keys.workLongitude)
+
+        let origin      = MKMapItem(placemark: MKPlacemark(coordinate: CLLocationCoordinate2D(latitude: homeLat, longitude: homeLon)))
+        let destination = MKMapItem(placemark: MKPlacemark(coordinate: CLLocationCoordinate2D(latitude: workLat, longitude: workLon)))
+
+        let request = MKDirections.Request()
+        request.source           = origin
+        request.destination      = destination
+        request.transportType    = mkTransportType(for: answers.commuteMode)
+        request.departureDate    = Date()
+
+        do {
+            let response = try await MKDirections(request: request).calculate()
+            if let route = response.routes.first {
+                let minutes = Int(route.expectedTravelTime / 60)
+                print("🚗 Live commute: \(minutes) min via \(answers.commuteMode)")
+                return minutes
+            }
+        } catch {
+            print("🚗 MKDirections error: \(error.localizedDescription)")
+        }
+
+        return surveyDuration(from: answers)
+    }
+
+    /// Maps a Lunifer commute mode string to the closest MKDirectionsTransportType.
+    /// Note: MKDirections does not have a dedicated cycling type; "bike" falls back
+    /// to walking, which is the closest available approximation.
+    private static func mkTransportType(for commuteMode: String) -> MKDirectionsTransportType {
+        switch commuteMode {
+        case "transit": return .transit
+        case "walk":    return .walking
+        case "bike":    return .walking   // no cycling type in MKDirections
+        default:        return .automobile
+        }
     }
 
     // ── Internal — background ─────────────────────────────────
@@ -234,7 +289,7 @@ final class CommuteManager: ObservableObject {
 
         // Refresh using the latest survey answers from UserDefaults
         if let answers = SurveyAnswersStore.shared.loadFromDefaults() {
-            refreshDuration(answers: answers)
+            await refreshDuration(answers: answers)
         }
 
         task.setTaskCompleted(success: true)
