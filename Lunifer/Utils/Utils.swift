@@ -4,10 +4,6 @@ import SwiftUI
 
 extension Color {
     static let luniferBg        = Color(red: 0.071, green: 0.055, blue: 0.118)  // #120e1e
-    static let luniferAccent    = Color(red: 0.686, green: 0.549, blue: 0.867)  // soft purple
-    static let luniferText      = Color(red: 0.878, green: 0.839, blue: 1.0)    // #e0d8ff
-    static let luniferSubtext   = Color(red: 0.706, green: 0.627, blue: 0.863).opacity(0.5)
-    static let luniferDim       = Color(red: 0.627, green: 0.510, blue: 0.824).opacity(0.35)
 }
 
 // ── MARK: StarParticle ───────────────────────────────────────
