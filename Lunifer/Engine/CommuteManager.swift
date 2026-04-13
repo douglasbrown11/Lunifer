@@ -123,6 +123,10 @@ final class CommuteManager: ObservableObject {
         currentDurationMinutes = duration
         lastFetched            = Date()
 
+        // Request a location fix so the first routing call uses the user's
+        // actual position rather than their saved home address.
+        LocationManager.shared.requestCurrentLocation()
+
         // Schedule the initial leave reminder
         let leaveTime = arrivalDate.addingTimeInterval(-Double(duration) * 60)
         CommuteNotification.shared.scheduleLeaveReminder(leaveTime: leaveTime)
@@ -196,44 +200,94 @@ final class CommuteManager: ObservableObject {
         lastFetched            = Date()
     }
 
-    /// Fetches a live commute duration via MKDirections using stored home → work
-    /// coordinates. Returns the survey-entered fallback if either location is
-    /// missing or if the routing request fails.
+    /// Fetches a live commute duration using a three-step priority chain:
+    ///
+    /// 1. Calendar event location — if tomorrow's first event has a location
+    ///    string, geocode it and route from home to that address. This handles
+    ///    variable destinations automatically with no extra user input.
+    /// 2. Stored work location — the address saved in Settings, used on days
+    ///    where calendar events have no location.
+    /// 3. Survey fallback — the manually entered commute time, used when neither
+    ///    home nor work coordinates are available.
     static func fetchLiveDuration(answers: SurveyAnswers) async -> Int {
         let defaults = UserDefaults.standard
-        let homeSet  = defaults.bool(forKey: AppPreferencesStore.Keys.homeLocationSet)
-        let workSet  = defaults.bool(forKey: AppPreferencesStore.Keys.workLocationSet)
 
-        guard homeSet && workSet else {
-            return surveyDuration(from: answers)
+        // Origin priority:
+        //   1. Live GPS fix from LocationManager (user's actual morning position)
+        //   2. Saved home coordinates (fallback when location permission is denied
+        //      or the fix hasn't arrived yet)
+        //   3. Neither available — can't route, use survey value.
+        let originCoord: CLLocationCoordinate2D
+        if let live = LocationManager.shared.currentCoordinate {
+            originCoord = live
+        } else {
+            let homeSet = defaults.bool(forKey: AppPreferencesStore.Keys.homeLocationSet)
+            guard homeSet else { return surveyDuration(from: answers) }
+            originCoord = CLLocationCoordinate2D(
+                latitude:  defaults.double(forKey: AppPreferencesStore.Keys.homeLatitude),
+                longitude: defaults.double(forKey: AppPreferencesStore.Keys.homeLongitude)
+            )
         }
 
-        let homeLat = defaults.double(forKey: AppPreferencesStore.Keys.homeLatitude)
-        let homeLon = defaults.double(forKey: AppPreferencesStore.Keys.homeLongitude)
-        let workLat = defaults.double(forKey: AppPreferencesStore.Keys.workLatitude)
-        let workLon = defaults.double(forKey: AppPreferencesStore.Keys.workLongitude)
+        let origin = MKMapItem(placemark: MKPlacemark(coordinate: originCoord))
 
-        let origin      = MKMapItem(placemark: MKPlacemark(coordinate: CLLocationCoordinate2D(latitude: homeLat, longitude: homeLon)))
-        let destination = MKMapItem(placemark: MKPlacemark(coordinate: CLLocationCoordinate2D(latitude: workLat, longitude: workLon)))
+        // Step 1: Calendar event location
+        if let eventLocation = CalendarManager.shared.firstEventTomorrow?.location,
+           !eventLocation.trimmingCharacters(in: .whitespaces).isEmpty {
+            if let coord = await geocode(eventLocation) {
+                let destination = MKMapItem(placemark: MKPlacemark(coordinate: coord))
+                if let minutes = await routeMinutes(from: origin, to: destination, mode: answers.commuteMode) {
+                    print("🚗 Live commute (calendar): \(minutes) min to \(eventLocation)")
+                    return minutes
+                }
+            }
+        }
 
-        let request = MKDirections.Request()
-        request.source           = origin
-        request.destination      = destination
-        request.transportType    = mkTransportType(for: answers.commuteMode)
-        request.departureDate    = Date()
-
-        do {
-            let response = try await MKDirections(request: request).calculate()
-            if let route = response.routes.first {
-                let minutes = Int(route.expectedTravelTime / 60)
-                print("🚗 Live commute: \(minutes) min via \(answers.commuteMode)")
+        // Step 2: Stored work location
+        let workSet = defaults.bool(forKey: AppPreferencesStore.Keys.workLocationSet)
+        if workSet {
+            let workLat = defaults.double(forKey: AppPreferencesStore.Keys.workLatitude)
+            let workLon = defaults.double(forKey: AppPreferencesStore.Keys.workLongitude)
+            let destination = MKMapItem(placemark: MKPlacemark(
+                coordinate: CLLocationCoordinate2D(latitude: workLat, longitude: workLon)
+            ))
+            if let minutes = await routeMinutes(from: origin, to: destination, mode: answers.commuteMode) {
+                print("🚗 Live commute (saved work): \(minutes) min via \(answers.commuteMode)")
                 return minutes
             }
-        } catch {
-            print("🚗 MKDirections error: \(error.localizedDescription)")
         }
 
+        // Step 3: Survey fallback
         return surveyDuration(from: answers)
+    }
+
+    /// Geocodes a free-form address string to a coordinate using CLGeocoder.
+    /// Returns nil if geocoding fails or produces no results.
+    private static func geocode(_ address: String) async -> CLLocationCoordinate2D? {
+        await withCheckedContinuation { continuation in
+            CLGeocoder().geocodeAddressString(address) { placemarks, _ in
+                continuation.resume(returning: placemarks?.first?.location?.coordinate)
+            }
+        }
+    }
+
+    /// Issues a single MKDirections request and returns the expected travel time
+    /// in minutes for the fastest route, or nil if the request fails.
+    private static func routeMinutes(from origin: MKMapItem,
+                                     to destination: MKMapItem,
+                                     mode: String) async -> Int? {
+        let request = MKDirections.Request()
+        request.source        = origin
+        request.destination   = destination
+        request.transportType = mkTransportType(for: mode)
+        request.departureDate = Date()
+        do {
+            let response = try await MKDirections(request: request).calculate()
+            return response.routes.first.map { Int($0.expectedTravelTime / 60) }
+        } catch {
+            print("🚗 MKDirections error: \(error.localizedDescription)")
+            return nil
+        }
     }
 
     /// Maps a Lunifer commute mode string to the closest MKDirectionsTransportType.

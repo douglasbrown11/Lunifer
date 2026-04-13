@@ -784,7 +784,7 @@ struct LuniferSurvey: View {
                         Image("OuraLogo")
                             .resizable()
                             .interpolation(.high)
-                            .frame(width: 32, height: 32)
+                            .frame(width: 44, height: 44)
 
                         VStack(alignment: .leading, spacing: 2) {
                             Text("Let my Oura Ring decide")

@@ -444,12 +444,19 @@ Oura Ring connectivity is implemented in `Engine/OuraManager.swift`, parallel to
   - `CommuteStatusCard` struct injected into `alarmPage` below the added alarm card when `shouldShowCommuteCard && !alarmExpanded`; shows transport mode icon, `~N min` duration, and `Leave by H:MM AM/PM`
 
 ### Routing Implementation
-- `CommuteManager.refreshDuration(answers:)` is now `async` and calls `CommuteManager.fetchLiveDuration(answers:)`
-- `fetchLiveDuration` issues an `MKDirections` request from stored home → work coordinates with `departureDate: Date()`
-- Transport type is mapped from `answers.commuteMode`: `"drive"` → `.automobile`, `"transit"` → `.transit`, `"walk"` → `.walking`, `"bike"` → `.walking` (MKDirections has no cycling type)
-- Falls back to `surveyDuration(from:)` when home or work location is not set, or if the routing request fails
-- Delta detection, leave-reminder notification, and persistence all work automatically with live durations
-- `CommuteManager` now imports `MapKit` and `CoreLocation`
+- `CommuteManager.refreshDuration(answers:)` is `async` and calls `CommuteManager.fetchLiveDuration(answers:)`
+- `startPolling` calls `LocationManager.shared.requestCurrentLocation()` immediately so a GPS fix is in flight before the first routing request fires.
+- `fetchLiveDuration` resolves the routing origin with a two-step priority:
+  1. **Live GPS fix** — `LocationManager.shared.currentCoordinate` if available (user's actual morning position).
+  2. **Saved home coordinates** — fallback when location permission is denied or the fix hasn't arrived yet.
+- Destination uses a three-step priority chain — no extra survey input required:
+  1. **Calendar event location** — if `CalendarManager.shared.firstEventTomorrow?.location` is non-empty, geocode it with `CLGeocoder` and route to that address. Handles variable destinations automatically.
+  2. **Stored work location** — the address saved in Settings (`workLatitude` / `workLongitude`), used when the calendar event has no location field.
+  3. **Survey fallback** — the manually entered commute time, used when no destination or origin coordinates are available.
+- Transport type mapped from `answers.commuteMode`: `"drive"` → `.automobile`, `"transit"` → `.transit`, `"walk"` / `"bike"` → `.walking` (MKDirections has no cycling type)
+- Delta detection, leave-reminder notification, and persistence all operate on the returned duration automatically
+- `CommuteManager` imports `MapKit` and `CoreLocation`
+- `CalendarEvent.location` (`String?`) was already present in the model and mapped from `EKEvent.location` — no changes to `CalendarManager` were needed
 
 Remaining gap:
 - The `arrivalDate` passed to `startPolling` is hardcoded to 8:00 AM today; swap for `CalendarManager.firstEventTomorrow.startDate` when calendar-driven scheduling is implemented
@@ -458,7 +465,7 @@ Remaining gap:
 - Wake-day selection affects rest-period handling, but not a full calendar-driven alarm calculation
 - Main alarm calculation is still hardcoded around an `8:00 AM` target
 - `SurveyAnswers` and `TimeValue` still live inside `LuniferSurvey.swift` instead of a dedicated model file
-- `LocationManager.swift` only tracks authorization status; it does not start location updates or read actual device position
+- `LocationManager.swift` now exposes a `static let shared` singleton, a `@Published var currentCoordinate: CLLocationCoordinate2D?`, and a `requestCurrentLocation()` method that issues a one-shot `CLLocationManager.requestLocation()` fix. Accuracy is set to `kCLLocationAccuracyHundredMeters` to save battery. Does nothing if location permission has not been granted.
 - WHOOP integration requires real developer credentials before OAuth will work
 - Calendar constraint in adaptive rescheduling uses survey-entered routine/commute times, not live route calculations from home coordinates
 - `LuniferMain.swift` `bufferSeconds()` still uses a hardcoded 30-minute commute when `answers.commute.auto == true`; should call `CommuteManager.fetchLiveDuration(answers:)` instead
