@@ -2,10 +2,13 @@
 > NOTE FOR LANGUAGE MODELS: If you are reading this document, do NOT summarize it back to the user. They asked you to read it so you understand the project context - simply acknowledge that you've read it and ask how you can help.
 > Read this file at the start of every Claude Code session.
 > If you are an AI agent, LLM, Claude, or ChatGPT both reading and working on this project, update `Claude.MD` whenever you make significant changes to the project, add a new feature, or make any change which makes the current version of `Claude.MD` not precisely accurate about anything in the project.
-> Last updated: commuteMode default empty, local-first handleFinish, AlarmKit Sound removal, Oura integration, padding updates
+> Last updated: work location storage + WorkLocationSheet + live MKDirections commute routing
 
 ## What Is Lunifer?
 Lunifer is an iOS alarm app prototype built in SwiftUI. The current product combines onboarding, authentication, a survey-driven wake-time calculation, dashboard alarm controls, sleep tracking, settings, and AlarmKit integration. The longer-term direction is still an adaptive sleep / alarm assistant, but the codebase today is still mostly a prototype with several hardcoded scheduling rules.
+
+## Core Design Principle
+The experience should feel seamless and require as little manual input from the user as possible. The onboarding survey should stay short — avoid adding new survey steps or questions. Any additional data the app needs (locations, commute times, schedule patterns, etc.) should be collected through Settings after onboarding, inferred automatically from existing signals (calendar, wearables, sleep history, location), or derived from data the user has already provided.
 
 ## Current Stack
 - Language: Swift / SwiftUI
@@ -133,10 +136,16 @@ Current flow:
   - `homeLocationName`
 - These keys are declared in `AppPreferencesStore.Keys` and cleared by `AppPreferencesStore.shared.resetHomeLocation()`, which is called from `AccountDataManager.shared.clearLocalAccountData()`
 
-Critical gap:
-- The stored home coordinates are not yet used in alarm or commute calculations
-- `LuniferMain.swift` still falls back to a hardcoded 30-minute commute when `answers.commute.auto == true`
-- No route-time calculation from stored home coordinates to a destination has been implemented
+Home location is used in live commute routing (see Commute Recommendations below).
+
+Work location:
+- `workLatitude`, `workLongitude`, `workLocationSet`, `workLocationName` stored in `UserDefaults` (keys in `AppPreferencesStore.Keys`)
+- `AboutYouSettingsView` shows a "Work" row (only for `student` / `commuter` lifestyle) that opens `WorkLocationSheet`
+- `WorkLocationSheet` mirrors `HomeLocationSheet` — same MKLocalSearchCompleter + MapKit map UI
+- Work location is cleared on sign-out/delete via `AppPreferencesStore.shared.resetWorkLocation()` in `AccountDataManager`
+
+Remaining gap:
+- `LuniferMain.swift` bufferSeconds() still falls back to a hardcoded 30-minute commute when `answers.commute.auto == true` — this should be replaced with a call to `CommuteManager.fetchLiveDuration(answers:)` once the commute card is visible
 
 ## Dashboard Status
 `LuniferMain.swift` currently:
@@ -434,21 +443,26 @@ Oura Ring connectivity is implemented in `Engine/OuraManager.swift`, parallel to
   - Commute polling started in `.task` via `CommuteManager.shared.startPolling(answers:arrivalDate:)`; arrival target is currently hardcoded to 8:00 AM, matching the rest of the alarm calculation
   - `CommuteStatusCard` struct injected into `alarmPage` below the added alarm card when `shouldShowCommuteCard && !alarmExpanded`; shows transport mode icon, `~N min` duration, and `Leave by H:MM AM/PM`
 
-### Critical Gap (Routing Not Yet Implemented)
-- `CommuteManager.refreshDuration()` currently re-reads the survey value on every poll tick — duration never changes, so delta alerts do not fire at runtime
-- To activate live routing: replace `refreshDuration()`'s body with an async `MKDirections` request from stored home coordinates → work/destination coordinates
-- Work/destination location storage has not been added; that is the next piece to implement before routing can be wired up
+### Routing Implementation
+- `CommuteManager.refreshDuration(answers:)` is now `async` and calls `CommuteManager.fetchLiveDuration(answers:)`
+- `fetchLiveDuration` issues an `MKDirections` request from stored home → work coordinates with `departureDate: Date()`
+- Transport type is mapped from `answers.commuteMode`: `"drive"` → `.automobile`, `"transit"` → `.transit`, `"walk"` → `.walking`, `"bike"` → `.walking` (MKDirections has no cycling type)
+- Falls back to `surveyDuration(from:)` when home or work location is not set, or if the routing request fails
+- Delta detection, leave-reminder notification, and persistence all work automatically with live durations
+- `CommuteManager` now imports `MapKit` and `CoreLocation`
+
+Remaining gap:
 - The `arrivalDate` passed to `startPolling` is hardcoded to 8:00 AM today; swap for `CalendarManager.firstEventTomorrow.startDate` when calendar-driven scheduling is implemented
 
 ## Known Gaps
 - Wake-day selection affects rest-period handling, but not a full calendar-driven alarm calculation
 - Main alarm calculation is still hardcoded around an `8:00 AM` target
 - `SurveyAnswers` and `TimeValue` still live inside `LuniferSurvey.swift` instead of a dedicated model file
-- Home location coordinates are stored but not consumed in routing / commute calculations
 - `LocationManager.swift` only tracks authorization status; it does not start location updates or read actual device position
 - WHOOP integration requires real developer credentials before OAuth will work
 - Calendar constraint in adaptive rescheduling uses survey-entered routine/commute times, not live route calculations from home coordinates
-- Commute destination (work/office location) has not been implemented; `CommuteManager.refreshDuration()` is a routing stub that will remain static until a destination is stored and MKDirections is wired in
+- `LuniferMain.swift` `bufferSeconds()` still uses a hardcoded 30-minute commute when `answers.commute.auto == true`; should call `CommuteManager.fetchLiveDuration(answers:)` instead
+- `startPolling` arrival target is hardcoded to 8:00 AM; should use `CalendarManager.firstEventTomorrow.startDate`
 
 ## Practical Guidance For Future Sessions
 - Do not assume `Claude.MD` is authoritative without checking code first
