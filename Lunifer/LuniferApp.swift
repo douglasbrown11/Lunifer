@@ -3,6 +3,7 @@ import Firebase
 import FirebaseAuth
 import GoogleSignIn
 import BackgroundTasks
+import UserNotifications
 
 // "@main" tells Swift this is where the app starts — only one struct in the
 // entire project can have this attribute.
@@ -33,6 +34,15 @@ struct LuniferApp: App {
         // had no prior baseline, causing false long-duration entries to be
         // written to UserDefaults.
         SleepHistoryStore.shared.purgeBadEntries()
+
+        // Register the rest-day event notification category so iOS knows
+        // about the "Wake me up" / "Not needed" action buttons before any
+        // notification of that type is delivered.
+        RestDayEventNotification.registerCategory()
+
+        // Set the app-wide notification delegate. This must be assigned before
+        // the app finishes launching so no early notifications are missed.
+        UNUserNotificationCenter.current().delegate = LuniferNotificationDelegate.shared
     }
 
     // "body" defines what the app actually shows on screen.

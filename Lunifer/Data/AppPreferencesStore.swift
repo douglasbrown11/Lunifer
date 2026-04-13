@@ -13,18 +13,20 @@ final class AppPreferencesStore {
         static let overrideActive = "overrideActive"
         static let overrideTimestamp = "overrideTimestamp"
 
-        // Added alarm
-        static let addedAlarmActive = "addedAlarmActive"
-        static let addedAlarmTimestamp = "addedAlarmTimestamp"
-        static let addedAlarmSound = "addedAlarmSound"
-        static let addedAlarmLabel = "addedAlarmLabel"
-        static let addedAlarmSnoozeMinutes = "addedAlarmSnoozeMinutes"
+        // Added alarms (stored as a JSON-encoded [AddedAlarm] array)
+        static let addedAlarms = "addedAlarms"
 
         // Home location
         static let homeLatitude = "homeLatitude"
         static let homeLongitude = "homeLongitude"
         static let homeLocationSet = "homeLocationSet"
         static let homeLocationName = "homeLocationName"
+
+        // Work / destination location
+        static let workLatitude = "workLatitude"
+        static let workLongitude = "workLongitude"
+        static let workLocationSet = "workLocationSet"
+        static let workLocationName = "workLocationName"
 
         // WHOOP integration
         static let whoopConnected = "whoopConnected"
@@ -50,6 +52,9 @@ final class AppPreferencesStore {
         static let commuteArrivalTimestamp        = "commuteArrivalTimestamp"
         static let commutePreviousDurationMinutes = "commutePreviousDurationMinutes"
         static let commutePollingActive           = "commutePollingActive"
+
+        // Rest-day event notification deduplication
+        static let restDayNotificationSentDate = "lunifer_restday_notification_sent_date"
 
         // Battery monitoring internals
         static let batteryDrainSamples = "lunifer_battery_drain_samples"
@@ -77,6 +82,13 @@ final class AppPreferencesStore {
         defaults.removeObject(forKey: Keys.homeLongitude)
         defaults.set(false, forKey: Keys.homeLocationSet)
         defaults.removeObject(forKey: Keys.homeLocationName)
+    }
+
+    func resetWorkLocation() {
+        defaults.removeObject(forKey: Keys.workLatitude)
+        defaults.removeObject(forKey: Keys.workLongitude)
+        defaults.set(false, forKey: Keys.workLocationSet)
+        defaults.removeObject(forKey: Keys.workLocationName)
     }
 
     func resetAlarmOverride() {

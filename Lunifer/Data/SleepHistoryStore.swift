@@ -108,6 +108,37 @@ final class SleepHistoryStore {
         }
     }
 
+    /// Returns the average wake time (hour, minute) for the given weekday
+    /// across all stored sleep history entries that have a recorded wake time.
+    ///
+    /// Used as the second fallback in the alarm calculation when no calendar
+    /// event or historical calendar pattern is available. Because this is the
+    /// actual recorded wake time (not an arrival time), the caller should use
+    /// it directly as the alarm target without subtracting routine or commute —
+    /// those offsets are already implicit in when the user actually got up.
+    ///
+    /// Requires at least 2 matching entries. Returns nil during cold-start
+    /// (first couple of weeks) so the hardcoded 8 AM fallback applies instead.
+    ///
+    /// - Parameter weekday: Calendar.current weekday component (1 = Sunday … 7 = Saturday).
+    func averageWakeTime(forWeekday weekday: Int) -> (hour: Int, minute: Int)? {
+        let cal = Calendar.current
+
+        let wakeDates: [Date] = loadRawEntries().compactMap { dict in
+            let wakeTS = dict["wake"] as? Double ?? 0
+            guard wakeTS > 0 else { return nil }
+            return Date(timeIntervalSince1970: wakeTS)
+        }.filter { cal.component(.weekday, from: $0) == weekday }
+
+        guard wakeDates.count >= 2 else { return nil }
+
+        let totalMinutes = wakeDates.reduce(0) { sum, date in
+            sum + cal.component(.hour, from: date) * 60 + cal.component(.minute, from: date)
+        }
+        let avgMinutes = totalMinutes / wakeDates.count
+        return (hour: avgMinutes / 60, minute: avgMinutes % 60)
+    }
+
     func clearLocalData() {
         defaults.removeObject(forKey: storageKey)
     }

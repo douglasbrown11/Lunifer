@@ -712,54 +712,57 @@ struct LuniferSurvey: View {
                     Task { await connectWhoop() }
                 }
             } content: {
-                HStack(spacing: 12) {
-                    Image("WhoopLogo")
-                        .resizable()
-                        .interpolation(.high)
-                        .frame(width: 32, height: 32)
+                ZStack {
+                    HStack(spacing: 8) {
+                        Image("WhoopLogo")
+                            .resizable()
+                            .interpolation(.high)
+                            .frame(width: 32, height: 32)
 
-                    VStack(alignment: .leading, spacing: 2) {
-                        Text("Let my WHOOP decide")
-                            .font(.custom("DM Sans", size: 14))
-                            .foregroundColor(whoopSelected
-                                             ? Color.white.opacity(0.95)
-                                             : Color.white.opacity(0.7))
+                        VStack(alignment: .leading, spacing: 2) {
+                            Text("Let my WHOOP decide")
+                                .font(.custom("DM Sans", size: 14))
+                                .foregroundColor(whoopSelected
+                                                 ? Color.white.opacity(0.95)
+                                                 : Color.white.opacity(0.7))
 
-                        if whoopLoading {
-                            Text("Connecting to WHOOP…")
-                                .font(.custom("DM Sans", size: 12))
-                                .foregroundColor(Color.white.opacity(0.4))
-                        } else if let hours = whoopRecommendedHours {
-                            Text("Tonight: \(SleepDurationModel.formatted(hours))")
-                                .font(.custom("DM Sans", size: 12))
-                                .foregroundColor(Color(red: 0.627, green: 0.471, blue: 1.0).opacity(0.85))
-                        } else if let error = whoopError {
-                            Text(error)
-                                .font(.custom("DM Sans", size: 12))
-                                .foregroundColor(Color(red: 1, green: 0.392, blue: 0.392).opacity(0.8))
-                                .fixedSize(horizontal: false, vertical: true)
+                            if whoopLoading {
+                                Text("Connecting to WHOOP…")
+                                    .font(.custom("DM Sans", size: 12))
+                                    .foregroundColor(Color.white.opacity(0.4))
+                            } else if let hours = whoopRecommendedHours {
+                                Text("Tonight: \(SleepDurationModel.formatted(hours))")
+                                    .font(.custom("DM Sans", size: 12))
+                                    .foregroundColor(Color(red: 0.627, green: 0.471, blue: 1.0).opacity(0.85))
+                            } else if let error = whoopError {
+                                Text(error)
+                                    .font(.custom("DM Sans", size: 12))
+                                    .foregroundColor(Color(red: 1, green: 0.392, blue: 0.392).opacity(0.8))
+                                    .fixedSize(horizontal: false, vertical: true)
+                            }
                         }
                     }
+                    .frame(maxWidth: .infinity, alignment: .center)
 
-                    Spacer()
-                   
-
-                    if whoopLoading {
-                        ProgressView().tint(Color.white.opacity(0.5)).scaleEffect(0.85)
-                    } else if whoopRecommendedHours != nil {
-                        Image(systemName: "checkmark.circle.fill")
-                            .foregroundColor(Color(red: 0.4, green: 0.9, blue: 0.5))
-                            .font(.system(size: 16))
-                    } else if whoopSelected && whoopError != nil {
-                        Button {
-                            whoopError = nil
-                            Task { await connectWhoop() }
-                        } label: {
-                            Text("Retry")
-                                .font(.custom("DM Sans", size: 12))
-                                .foregroundColor(Color(red: 0.627, green: 0.471, blue: 1.0))
+                    HStack {
+                        Spacer()
+                        if whoopLoading {
+                            ProgressView().tint(Color.white.opacity(0.5)).scaleEffect(0.85)
+                        } else if whoopRecommendedHours != nil {
+                            Image(systemName: "checkmark.circle.fill")
+                                .foregroundColor(Color(red: 0.4, green: 0.9, blue: 0.5))
+                                .font(.system(size: 16))
+                        } else if whoopSelected && whoopError != nil {
+                            Button {
+                                whoopError = nil
+                                Task { await connectWhoop() }
+                            } label: {
+                                Text("Retry")
+                                    .font(.custom("DM Sans", size: 12))
+                                    .foregroundColor(Color(red: 0.627, green: 0.471, blue: 1.0))
+                            }
+                            .buttonStyle(.plain)
                         }
-                        .buttonStyle(.plain)
                     }
                 }
             }
@@ -776,53 +779,57 @@ struct LuniferSurvey: View {
                     Task { await connectOura() }
                 }
             } content: {
-                HStack(spacing: 12) {
-                    Image("OuraLogo")
-                        .resizable()
-                        .interpolation(.high)
-                        .frame(width: 32, height: 32)
+                ZStack {
+                    HStack(spacing: 8) {
+                        Image("OuraLogo")
+                            .resizable()
+                            .interpolation(.high)
+                            .frame(width: 32, height: 32)
 
-                    VStack(alignment: .leading, spacing: 2) {
-                        Text("Let my Oura Ring decide")
-                            .font(.custom("DM Sans", size: 14))
-                            .foregroundColor(ouraSelected
-                                             ? Color.white.opacity(0.95)
-                                             : Color.white.opacity(0.7))
+                        VStack(alignment: .leading, spacing: 2) {
+                            Text("Let my Oura Ring decide")
+                                .font(.custom("DM Sans", size: 14))
+                                .foregroundColor(ouraSelected
+                                                 ? Color.white.opacity(0.95)
+                                                 : Color.white.opacity(0.7))
 
-                        if ouraLoading {
-                            Text("Connecting to Oura…")
-                                .font(.custom("DM Sans", size: 12))
-                                .foregroundColor(Color.white.opacity(0.4))
-                        } else if let hours = ouraRecommendedHours {
-                            Text("Tonight: \(SleepDurationModel.formatted(hours))")
-                                .font(.custom("DM Sans", size: 12))
-                                .foregroundColor(Color(red: 0.627, green: 0.471, blue: 1.0).opacity(0.85))
-                        } else if let error = ouraError {
-                            Text(error)
-                                .font(.custom("DM Sans", size: 12))
-                                .foregroundColor(Color(red: 1, green: 0.392, blue: 0.392).opacity(0.8))
-                                .fixedSize(horizontal: false, vertical: true)
+                            if ouraLoading {
+                                Text("Connecting to Oura…")
+                                    .font(.custom("DM Sans", size: 12))
+                                    .foregroundColor(Color.white.opacity(0.4))
+                            } else if let hours = ouraRecommendedHours {
+                                Text("Tonight: \(SleepDurationModel.formatted(hours))")
+                                    .font(.custom("DM Sans", size: 12))
+                                    .foregroundColor(Color(red: 0.627, green: 0.471, blue: 1.0).opacity(0.85))
+                            } else if let error = ouraError {
+                                Text(error)
+                                    .font(.custom("DM Sans", size: 12))
+                                    .foregroundColor(Color(red: 1, green: 0.392, blue: 0.392).opacity(0.8))
+                                    .fixedSize(horizontal: false, vertical: true)
+                            }
                         }
                     }
+                    .frame(maxWidth: .infinity, alignment: .center)
 
-                    Spacer()
-
-                    if ouraLoading {
-                        ProgressView().tint(Color.white.opacity(0.5)).scaleEffect(0.85)
-                    } else if ouraRecommendedHours != nil {
-                        Image(systemName: "checkmark.circle.fill")
-                            .foregroundColor(Color(red: 0.4, green: 0.9, blue: 0.5))
-                            .font(.system(size: 16))
-                    } else if ouraSelected && ouraError != nil {
-                        Button {
-                            ouraError = nil
-                            Task { await connectOura() }
-                        } label: {
-                            Text("Retry")
-                                .font(.custom("DM Sans", size: 12))
-                                .foregroundColor(Color(red: 0.627, green: 0.471, blue: 1.0))
+                    HStack {
+                        Spacer()
+                        if ouraLoading {
+                            ProgressView().tint(Color.white.opacity(0.5)).scaleEffect(0.85)
+                        } else if ouraRecommendedHours != nil {
+                            Image(systemName: "checkmark.circle.fill")
+                                .foregroundColor(Color(red: 0.4, green: 0.9, blue: 0.5))
+                                .font(.system(size: 16))
+                        } else if ouraSelected && ouraError != nil {
+                            Button {
+                                ouraError = nil
+                                Task { await connectOura() }
+                            } label: {
+                                Text("Retry")
+                                    .font(.custom("DM Sans", size: 12))
+                                    .foregroundColor(Color(red: 0.627, green: 0.471, blue: 1.0))
+                            }
+                            .buttonStyle(.plain)
                         }
-                        .buttonStyle(.plain)
                     }
                 }
             }

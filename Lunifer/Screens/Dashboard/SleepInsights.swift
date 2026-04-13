@@ -71,6 +71,7 @@ struct SleepInsights: View {
                             }
                         }
                         .buttonStyle(.plain)
+                        .padding(.horizontal, 3)
                     }
 
                     Text("SLEEP")
@@ -123,7 +124,7 @@ struct SleepInsights: View {
                                 .stroke(Color.white.opacity(0.08), lineWidth: 1)
                         )
                 )
-                .padding(.horizontal, 38)
+                .padding(.horizontal, 60)
 
                 Spacer().frame(height: 20)
 
@@ -133,7 +134,7 @@ struct SleepInsights: View {
                     .foregroundColor(Color.white.opacity(0.35))
                     .kerning(2.5)
                     .frame(maxWidth: .infinity, alignment: .leading)
-                    .padding(.horizontal, 38)
+                    .padding(.horizontal, 60)
                     .padding(.bottom, 10)
 
                 Group {
@@ -169,7 +170,7 @@ struct SleepInsights: View {
                                 .stroke(Color.white.opacity(0.08), lineWidth: 1)
                         )
                 )
-                .padding(.horizontal, 38)
+                .padding(.horizontal, 60)
 
                 Spacer()
         }
