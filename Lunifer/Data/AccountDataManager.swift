@@ -8,7 +8,6 @@ final class AccountDataManager {
         SleepHistoryStore.shared.clearLocalData()
         SleepTrackingStore.shared.clearLocalData()
         AppPreferencesStore.shared.resetBatteryMonitoringState()
-        AppPreferencesStore.shared.resetHomeLocation()
         AppPreferencesStore.shared.resetWorkLocation()
         AppPreferencesStore.shared.resetAlarmOverride()
         // Clear WHOOP tokens and prefs

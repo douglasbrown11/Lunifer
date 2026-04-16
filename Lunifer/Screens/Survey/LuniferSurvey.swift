@@ -19,7 +19,7 @@ struct SurveyAnswers: Codable {
     var calendar: String?  = nil
     var sleep   = TimeValue(hours: 8, minutes: 0,  auto: false)
     var routine = TimeValue(hours: 1, minutes: 0,  auto: false)
-    var commute = TimeValue(hours: 0, minutes: 30, auto: false)
+    var commute = TimeValue(hours: 0, minutes: 30, auto: true)
     /// Transport mode for commute: "drive", "transit", "walk", or "bike"
     var commuteMode: String = ""
 
@@ -256,16 +256,10 @@ struct LuniferSurvey: View {
         @EnvironmentObject private var calendarManager: CalendarManager
         @Environment(\.openURL) private var openURL
 
-        @StateObject private var locationManager = LocationManager()
-
         @State private var step      = 0
         @State private var saving    = false
         @State private var saveError: String? = nil
         @State private var answers   = SurveyAnswers()
-        @State private var showLocationDeniedAlert = false
-        @State private var showLocationUpgradeAlert = false
-        @State private var showLocationSettingsAlert = false
-        @State private var hasShownLocationDeniedAlert = false
         // WHOOP integration state
         @State private var whoopSelected: Bool = false
         @State private var whoopLoading: Bool = false
@@ -302,13 +296,8 @@ struct LuniferSurvey: View {
                 if whoopSelected { return whoopRecommendedHours != nil }
                 if ouraSelected  { return ouraRecommendedHours  != nil }
                 return true
-            case 6: // commute step
-                guard !answers.commuteMode.isEmpty else { return false }
-                if answers.commute.auto {
-                    return locationManager.authorizationStatus == .authorizedAlways
-                } else {
-                    return answers.commute.hours > 0 || answers.commute.minutes > 0
-                }
+            case 6: // commute step — only requires a transport mode selection
+                return !answers.commuteMode.isEmpty
             default: return true
             }
         }
@@ -389,39 +378,6 @@ struct LuniferSurvey: View {
                 }
             }
             .frame(maxWidth: .infinity, maxHeight: .infinity)
-            .alert("Always Allow Location Access Required", isPresented: $showLocationDeniedAlert) {
-                Button("OK") {
-                    hasShownLocationDeniedAlert = true
-                    answers.commute.auto = false
-                    answers.commute.hours = 0
-                    answers.commute.minutes = 0
-                }
-            } message: {
-                Text("In order for Lunifer to learn this, you must select \"Always Allow\" so Lunifer can track your commute.")
-            }
-            .alert("Turn On Location Access in Settings", isPresented: $showLocationSettingsAlert) {
-                Button("Not Now", role: .cancel) {
-                    answers.commute.auto = false
-                }
-                Button("Open Settings") {
-                    answers.commute.auto = false
-                    if let settingsURL = URL(string: UIApplication.openSettingsURLString) {
-                        openURL(settingsURL)
-                    }
-                }
-            } message: {
-                Text("Location access was previously denied. iOS will not show the permission prompt again. Open Settings and change Location to \"Always\" to let Lunifer learn your commute.")
-            }
-            .alert("Allow Always to Learn Your Commute", isPresented: $showLocationUpgradeAlert) {
-                Button("Not Now", role: .cancel) {
-                    answers.commute.auto = false
-                }
-                Button("Continue") {
-                    locationManager.requestAlwaysAuthorization()
-                }
-            } message: {
-                Text("You selected \"Allow While Using App.\" To let Lunifer automatically learn your commute, please choose \"Always Allow\" on the next prompt.")
-            }
         }
         
         // ── MARK: Step content ───────────────────────────────────
@@ -784,7 +740,7 @@ struct LuniferSurvey: View {
                         Image("OuraLogo")
                             .resizable()
                             .interpolation(.high)
-                            .frame(width: 44, height: 44)
+                            .frame(width: 48, height: 48)
 
                         VStack(alignment: .leading, spacing: 2) {
                             Text("Let my Oura Ring decide")
@@ -856,19 +812,30 @@ struct LuniferSurvey: View {
             }
         }
         
-        // Step 6 — Commute (student / commuter only)
+        // Step 6 — Commute mode (student / commuter only)
+        // Duration is no longer asked — CommuteManager calculates it live via
+        // MKDirections and falls back to 30 minutes when routing is unavailable.
         private var stepCommute: some View {
             VStack(alignment: .center, spacing: 0) {
-                Text("How long is your commute?")
+                Text("How do you commute?")
                     .font(.custom("Cormorant Garamond", size: 22))
                     .fixedSize(horizontal: false, vertical: true)
                     .multilineTextAlignment(.center)
                     .fontWeight(.light)
                     .foregroundColor(Color.white.opacity(0.95))
                     .frame(maxWidth: .infinity, alignment: .center)
-                    .padding(.bottom, 16)
+                    .padding(.bottom, 8)
 
-                // ── Transport mode icons ─────────────────
+                Text("Lunifer will calculate your commute time automatically.")
+                    .font(.custom("DM Sans", size: 13))
+                    .fontWeight(.light)
+                    .foregroundColor(Color.white.opacity(0.4))
+                    .multilineTextAlignment(.center)
+                    .frame(maxWidth: .infinity, alignment: .center)
+                    .padding(.bottom, 20)
+                    .padding(.horizontal, 40)
+
+                // ── Transport mode icons ─────────────────────
                 HStack(spacing: 0) {
                     ForEach([
                         ("drive",   "car.fill"),
@@ -902,47 +869,11 @@ struct LuniferSurvey: View {
                 .padding(.horizontal, 40)
                 .padding(.bottom, 14)
 
-                TimeScalePicker(value: $answers.commute,
-                                autoLabel: "Let Lunifer calculate this from my location")
-                .padding(.horizontal, 40)
-                .onChange(of: answers.commute.auto) { _, isAuto in
-                    guard isAuto else { return }
-                    requestCommuteAuthorizationIfNeeded()
-                }
-                .onAppear {
-                    if answers.commute.auto {
-                        requestCommuteAuthorizationIfNeeded()
-                    }
-                }
-                .onChange(of: locationManager.authorizationStatus) { _, status in
-                    guard answers.commute.auto else { return }
-                    if status == .authorizedWhenInUse {
-                        showLocationUpgradeAlert = true
-                    } else if status == .denied || status == .restricted {
-                        showLocationDeniedAlert = true
-                    }
-                }
-
-                // ── Location permission status hint ───────────
                 if answers.commuteMode.isEmpty {
                     Text("Select a commute type above to continue.")
                         .font(.custom("DM Sans", size: 13))
                         .foregroundColor(Color.white.opacity(0.35))
-                        .padding(.top, 14)
-                        .padding(.horizontal, 40)
-                        .transition(.opacity)
-                } else if answers.commute.auto && locationManager.authorizationStatus == .authorizedAlways {
-                    Label("Location access granted", systemImage: "checkmark.circle.fill")
-                        .font(.custom("DM Sans", size: 13))
-                        .foregroundColor(Color(red: 0.4, green: 0.9, blue: 0.5))
-                        .padding(.top, 14)
-                        .padding(.horizontal, 40)
-                        .transition(.opacity)
-                } else if !answers.commute.auto && answers.commute.hours == 0 && answers.commute.minutes == 0 {
-                    Text("Enter a non-zero commute time to continue.")
-                        .font(.custom("DM Sans", size: 13))
-                        .foregroundColor(Color.white.opacity(0.35))
-                        .padding(.top, 14)
+                        .padding(.top, 4)
                         .padding(.horizontal, 40)
                         .transition(.opacity)
                 }
@@ -1027,25 +958,6 @@ struct LuniferSurvey: View {
             ouraLoading = false
         }
 
-        private func requestCommuteAuthorizationIfNeeded() {
-            switch locationManager.authorizationStatus {
-            case .notDetermined:
-                locationManager.requestAlwaysAuthorization()
-            case .authorizedWhenInUse:
-                showLocationUpgradeAlert = true
-            case .authorizedAlways:
-                break
-            case .denied, .restricted:
-                if hasShownLocationDeniedAlert {
-                    showLocationSettingsAlert = true
-                } else {
-                    showLocationDeniedAlert = true
-                }
-            @unknown default:
-                break
-            }
-        }
-        
         // ── MARK: Firestore save ─────────────────────────────────
         // Mirrors handleFinish() in luniferSurvey.jsx exactly
         
@@ -1054,9 +966,12 @@ struct LuniferSurvey: View {
                 saveError = "Not signed in. Please sign in and try again."
                 return
             }
-            if showCommute && answers.commuteMode.isEmpty {
-                saveError = "Please select your commute type to continue."
-                return
+            // Always persist commute as auto-mode with the 30-min cold-start default.
+            // CommuteManager provides live MKDirections durations at runtime;
+            // the stored hours/minutes values are only used as a fallback when
+            // routing is unavailable.
+            if showCommute {
+                answers.commute = TimeValue(hours: 0, minutes: 30, auto: true)
             }
             let snapshot = answers
             Task { @MainActor in
@@ -1081,6 +996,15 @@ struct LuniferSurvey: View {
                 }
 
                 await LuniferAlarm.shared.requestAuthorization()
+
+                // Request location access for commuters/students so CommuteManager
+                // can perform live MKDirections routing. Requested here rather than
+                // in the survey step so it follows the alarm permission prompt naturally
+                // at the end of onboarding rather than mid-survey.
+                if snapshot.lifestyle == "student" || snapshot.lifestyle == "commuter" {
+                    LocationManager.shared.requestAlwaysAuthorization()
+                }
+
                 onFinish?(snapshot)
                 saving = false
             }

@@ -16,12 +16,6 @@ final class AppPreferencesStore {
         // Added alarms (stored as a JSON-encoded [AddedAlarm] array)
         static let addedAlarms = "addedAlarms"
 
-        // Home location
-        static let homeLatitude = "homeLatitude"
-        static let homeLongitude = "homeLongitude"
-        static let homeLocationSet = "homeLocationSet"
-        static let homeLocationName = "homeLocationName"
-
         // Work / destination location
         static let workLatitude = "workLatitude"
         static let workLongitude = "workLongitude"
@@ -75,13 +69,6 @@ final class AppPreferencesStore {
         defaults.removeObject(forKey: Keys.batteryLastCheckTime)
         defaults.removeObject(forKey: Keys.batteryLastCheckLevel)
         defaults.removeObject(forKey: Keys.batteryLastWarnedAlarm)
-    }
-
-    func resetHomeLocation() {
-        defaults.removeObject(forKey: Keys.homeLatitude)
-        defaults.removeObject(forKey: Keys.homeLongitude)
-        defaults.set(false, forKey: Keys.homeLocationSet)
-        defaults.removeObject(forKey: Keys.homeLocationName)
     }
 
     func resetWorkLocation() {

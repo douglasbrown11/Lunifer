@@ -43,10 +43,10 @@ import CoreLocation
 //
 // ── Routing ───────────────────────────────────────────────────
 // refreshDuration() calls fetchLiveDuration(), which issues an
-// async MKDirections request from stored home → work coordinates.
-// Falls back to the survey-entered duration when either location
-// is not yet set. The delta detection, notification, and
-// persistence plumbing all operate on the returned value.
+// async MKDirections request from the user's live GPS position.
+// Falls back to the survey-entered duration when no GPS fix is
+// available. The delta detection, notification, and persistence
+// plumbing all operate on the returned value.
 
 @MainActor
 final class CommuteManager: ObservableObject {
@@ -131,9 +131,9 @@ final class CommuteManager: ObservableObject {
         let leaveTime = arrivalDate.addingTimeInterval(-Double(duration) * 60)
         CommuteNotification.shared.scheduleLeaveReminder(leaveTime: leaveTime)
 
-        // Foreground: 10-min Timer (suspends automatically when app backgrounds)
+        // Foreground: 5-min Timer (suspends automatically when app backgrounds)
         stopTimer()
-        pollingTimer = Timer.scheduledTimer(withTimeInterval: 10 * 60, repeats: true) { [weak self] _ in
+        pollingTimer = Timer.scheduledTimer(withTimeInterval: 5 * 60, repeats: true) { [weak self] _ in
             Task { @MainActor [weak self] in
                 guard let self else { return }
                 if let answers = SurveyAnswersStore.shared.loadFromDefaults() {
@@ -145,7 +145,7 @@ final class CommuteManager: ObservableObject {
         // Background: BGAppRefreshTask for when app is suspended
         scheduleBackgroundRefresh()
 
-        print("🚗 CommuteManager polling started — \(duration) min, arrive by \(arrivalDate)")
+        print("🚗 CommuteManager polling started — \(duration) min, arrive by \(arrivalDate) (5-min interval)")
     }
 
     /// Tears down both the foreground timer and the background task chain,
@@ -200,33 +200,23 @@ final class CommuteManager: ObservableObject {
         lastFetched            = Date()
     }
 
-    /// Fetches a live commute duration using a three-step priority chain:
+    /// Fetches a live commute duration using a three-step priority chain.
+    /// Origin is always the user's live GPS fix; falls back to survey value if unavailable.
     ///
     /// 1. Calendar event location — if tomorrow's first event has a location
-    ///    string, geocode it and route from home to that address. This handles
-    ///    variable destinations automatically with no extra user input.
+    ///    string, geocode it and route to that address. Handles variable
+    ///    destinations automatically with no extra user input.
     /// 2. Stored work location — the address saved in Settings, used on days
     ///    where calendar events have no location.
-    /// 3. Survey fallback — the manually entered commute time, used when neither
-    ///    home nor work coordinates are available.
+    /// 3. Survey fallback — the manually entered commute time, used when no
+    ///    destination coordinates are available.
     static func fetchLiveDuration(answers: SurveyAnswers) async -> Int {
         let defaults = UserDefaults.standard
 
-        // Origin priority:
-        //   1. Live GPS fix from LocationManager (user's actual morning position)
-        //   2. Saved home coordinates (fallback when location permission is denied
-        //      or the fix hasn't arrived yet)
-        //   3. Neither available — can't route, use survey value.
-        let originCoord: CLLocationCoordinate2D
-        if let live = LocationManager.shared.currentCoordinate {
-            originCoord = live
-        } else {
-            let homeSet = defaults.bool(forKey: AppPreferencesStore.Keys.homeLocationSet)
-            guard homeSet else { return surveyDuration(from: answers) }
-            originCoord = CLLocationCoordinate2D(
-                latitude:  defaults.double(forKey: AppPreferencesStore.Keys.homeLatitude),
-                longitude: defaults.double(forKey: AppPreferencesStore.Keys.homeLongitude)
-            )
+        // Origin: live GPS fix from LocationManager (user's actual position).
+        // Falls back to survey value if location permission is denied or no fix available.
+        guard let originCoord = LocationManager.shared.currentCoordinate else {
+            return surveyDuration(from: answers)
         }
 
         let origin = MKMapItem(placemark: MKPlacemark(coordinate: originCoord))
@@ -306,8 +296,8 @@ final class CommuteManager: ObservableObject {
 
     private func scheduleBackgroundRefresh() {
         let request = BGAppRefreshTaskRequest(identifier: Self.backgroundTaskID)
-        // Request a refresh in ~10 minutes; iOS may delay based on usage patterns
-        request.earliestBeginDate = Date().addingTimeInterval(10 * 60)
+        // Request a refresh in ~5 minutes; iOS may delay based on usage patterns
+        request.earliestBeginDate = Date().addingTimeInterval(5 * 60)
         do {
             try BGTaskScheduler.shared.submit(request)
             print("✅ Commute background refresh scheduled")

@@ -102,13 +102,21 @@ struct LuniferMain: View {
 
     // ── Alarm date resolution helpers ─────────────────────────
 
-    /// Returns the survey-derived routine + commute buffer in seconds.
+    /// Returns the routine + commute buffer in seconds for synchronous callers.
+    ///
+    /// When commute auto-mode is on, reads the cached live duration from
+    /// CommuteManager (populated by resolveAlarmDate() earlier in the session).
+    /// Falls back to 30 minutes on cold start before any live fetch has run.
     private func bufferSeconds() -> TimeInterval {
         let routine = answers.routine.auto
             ? 60
             : answers.routine.hours * 60 + answers.routine.minutes
         let commute: Int = (answers.lifestyle == "student" || answers.lifestyle == "commuter")
-            ? (answers.commute.auto ? 30 : answers.commute.hours * 60 + answers.commute.minutes)
+            ? (answers.commute.auto
+                ? (CommuteManager.shared.currentDurationMinutes > 0
+                    ? CommuteManager.shared.currentDurationMinutes
+                    : 30)
+                : answers.commute.hours * 60 + answers.commute.minutes)
             : 0
         return Double(routine + commute) * 60
     }
@@ -120,13 +128,46 @@ struct LuniferMain: View {
         return Calendar.current.date(from: comps) ?? Date()
     }
 
+    /// Builds a Date for tomorrow using the supplied hour and minute.
+    /// Used by resolveAlarmDate() so fallback steps land on the correct calendar date
+    /// rather than today (which would already be in the past by evening).
+    private func tomorrowAt(hour: Int, minute: Int) -> Date {
+        let cal = Calendar.current
+        let tomorrow = cal.date(byAdding: .day, value: 1, to: cal.startOfDay(for: Date())) ?? Date()
+        var comps = cal.dateComponents([.year, .month, .day], from: tomorrow)
+        comps.hour = hour; comps.minute = minute; comps.second = 0
+        return cal.date(from: comps) ?? Date()
+    }
+
     /// Resolves the best alarm date for tomorrow using a 4-step fallback chain.
-    /// Asynchronous because steps 1–2 may require a calendar fetch.
+    /// Asynchronous because steps 1–2 may require a calendar fetch and, when
+    /// commute auto-mode is on, a live MKDirections fetch for accurate buffer math.
     private func resolveAlarmDate() async -> Date {
         let cal = Calendar.current
         let tomorrow = cal.date(byAdding: .day, value: 1, to: cal.startOfDay(for: Date()))!
         let tomorrowWeekday = cal.component(.weekday, from: tomorrow)
-        let buffer = bufferSeconds()
+
+        // Compute the wake-up buffer (routine + commute) asynchronously so that
+        // auto-commute users get a live MKDirections duration rather than the
+        // 30-minute placeholder that bufferSeconds() returns pre-fetch.
+        let routineMinutes = answers.routine.auto
+            ? 60
+            : answers.routine.hours * 60 + answers.routine.minutes
+        let commuteMinutes: Int
+        if answers.lifestyle == "student" || answers.lifestyle == "commuter" {
+            if answers.commute.auto {
+                let live = await CommuteManager.fetchLiveDuration(answers: answers)
+                // Cache in the shared manager so bufferSeconds() (and the commute
+                // card) can read it synchronously for the rest of this session.
+                CommuteManager.shared.currentDurationMinutes = live
+                commuteMinutes = live
+            } else {
+                commuteMinutes = answers.commute.hours * 60 + answers.commute.minutes
+            }
+        } else {
+            commuteMinutes = 0
+        }
+        let buffer = Double(routineMinutes + commuteMinutes) * 60
 
         // Step 1: Live calendar event tomorrow
         await CalendarManager.shared.fetchEvents()
@@ -136,7 +177,7 @@ struct LuniferMain: View {
 
         // Step 2: Historical average first-event time for this weekday
         if let typical = CalendarManager.shared.typicalFirstEventTime(forWeekday: tomorrowWeekday) {
-            return todayAt(hour: typical.hour, minute: typical.minute)
+            return tomorrowAt(hour: typical.hour, minute: typical.minute)
                 .addingTimeInterval(-buffer)
         }
 
@@ -144,11 +185,11 @@ struct LuniferMain: View {
         // Wake times already reflect how early the user needed to be up,
         // so routine + commute are not subtracted again.
         if let avgWake = SleepHistoryStore.shared.averageWakeTime(forWeekday: tomorrowWeekday) {
-            return todayAt(hour: avgWake.hour, minute: avgWake.minute)
+            return tomorrowAt(hour: avgWake.hour, minute: avgWake.minute)
         }
 
         // Step 4: 8 AM hard fallback (cold-start, no data yet)
-        return todayAt(hour: 8, minute: 0).addingTimeInterval(-buffer)
+        return tomorrowAt(hour: 8, minute: 0).addingTimeInterval(-buffer)
     }
 
     // ── Rest period helpers ───────────────────────────────────
@@ -360,21 +401,41 @@ struct LuniferMain: View {
             // Request alarm authorization — waits for the user to respond
             await LuniferAlarm.shared.requestAuthorization()
             checkAlarmAuthorization()
+
+            // Schedule the Lunifer alarm from the resolved date if Lunifer is enabled
+            // and the user has not set a manual override. This is the step that actually
+            // hands the computed wake time to AlarmKit so the alarm will fire.
+            if luniferEnabled && !overrideActive {
+                let routineMins = answers.routine.auto
+                    ? 60
+                    : answers.routine.hours * 60 + answers.routine.minutes
+                let commuteMins: Int = (answers.lifestyle == "student" || answers.lifestyle == "commuter")
+                    ? (answers.commute.auto
+                        ? (CommuteManager.shared.currentDurationMinutes > 0
+                            ? CommuteManager.shared.currentDurationMinutes
+                            : 30)
+                        : answers.commute.hours * 60 + answers.commute.minutes)
+                    : 0
+                await LuniferAlarm.shared.scheduleAlarm(
+                    for: resolvedAlarmDate,
+                    eventTitle: CalendarManager.shared.firstEventTomorrow?.title ?? "your first event",
+                    routineMinutes: routineMins,
+                    commuteMinutes: commuteMins
+                )
+            }
+
             // Small delay so the motion permission prompt has time to resolve
             // before we check the result
             try? await Task.sleep(nanoseconds: 500_000_000)
             checkMotionAuthorization()
 
             // Start commute monitoring on scheduled wake days for commuters/students.
-            // CommuteManager will schedule the leave reminder and watch for duration
-            // deltas. The arrival target mirrors the hardcoded 8:00 AM used throughout
-            // the alarm calculation — swap this for a calendar-driven date when ready.
+            // fetchEvents() was already called inside resolveAlarmDate(), so
+            // firstEventTomorrow is populated. Use the event start as the arrival
+            // target; fall back to wake time + buffer when no event is found.
             if isCommuterUser && answers.wakeDays.contains(weekdayID(for: Date())) {
-                var arrComps = Calendar.current.dateComponents([.year, .month, .day], from: Date())
-                arrComps.hour   = 8
-                arrComps.minute = 0
-                arrComps.second = 0
-                let arrival = Calendar.current.date(from: arrComps) ?? Date()
+                let arrival = CalendarManager.shared.firstEventTomorrow?.startDate
+                    ?? resolvedAlarmDate.addingTimeInterval(bufferSeconds())
                 CommuteManager.shared.startPolling(answers: answers, arrivalDate: arrival)
             }
 
@@ -756,7 +817,7 @@ struct LuniferMain: View {
 
                 // ── Commute card ──────────────────────────
                 if shouldShowCommuteCard && !alarmExpanded {
-                    CommuteStatusCard(answers: answers)
+                    CommuteStatusCard(answers: answers, alarmDate: calculatedAlarmDate)
                         .transition(.opacity)
                 }
 
@@ -1284,21 +1345,27 @@ struct SoundSettingsView: View {
 
 struct CommuteStatusCard: View {
     let answers: SurveyAnswers
+    /// The resolved Lunifer alarm time for today, used to derive the leave-by time.
+    let alarmDate: Date
 
+    /// Live commute duration. Prefers the cached MKDirections result from
+    /// CommuteManager when auto-mode is on; falls back to the survey value.
     private var commuteMinutes: Int {
-        answers.commute.auto
+        if answers.commute.auto && CommuteManager.shared.currentDurationMinutes > 0 {
+            return CommuteManager.shared.currentDurationMinutes
+        }
+        return answers.commute.auto
             ? 30
             : answers.commute.hours * 60 + answers.commute.minutes
     }
 
-    /// leave time = 8:00 AM target − commute duration
+    /// Leave time = alarm time + morning routine duration.
+    /// (Alarm fires → routine → leave → commute → arrive at destination.)
     private var leaveTime: Date {
-        var comps    = Calendar.current.dateComponents([.year, .month, .day], from: Date())
-        comps.hour   = 8
-        comps.minute = 0
-        comps.second = 0
-        let arrival  = Calendar.current.date(from: comps) ?? Date()
-        return arrival.addingTimeInterval(-Double(commuteMinutes) * 60)
+        let routineMinutes = answers.routine.auto
+            ? 60
+            : answers.routine.hours * 60 + answers.routine.minutes
+        return alarmDate.addingTimeInterval(Double(routineMinutes) * 60)
     }
 
     private var leaveTimeString: String {
