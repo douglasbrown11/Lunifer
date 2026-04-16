@@ -342,7 +342,6 @@ class LuniferAlarm: ObservableObject {
         if let alarm = alertingAlarm {
             try? manager.cancel(id: alarm.id)
         }
-        AlarmBehaviourLogger.shared.logSnooze(at: Date())
         alertingAlarm = nil
         let snoozeDate = Date().addingTimeInterval(Double(minutes) * 60)
         await scheduleAlarm(for: snoozeDate)
@@ -577,21 +576,17 @@ class LuniferAlarm: ObservableObject {
 // ─────────────────────────────────────────────────────────────
 // SECTION 7: BEHAVIOUR LOGGER
 // ─────────────────────────────────────────────────────────────
-// Records inferences about the user's alarm behaviour — not raw events,
-// but derived conclusions about whether the alarm was well-timed.
+// Records inferences about the user's alarm behaviour and saves
+// a single document to Firestore per morning session.
 //
-// Instead of storing every individual tap, we accumulate state across
-// one alarm session (fire → snoozes → final dismiss) and then save
-// a single inference document to Firestore when the session ends.
+// The primary signals logged are:
+//   - Whether the user dismissed the alarm normally
+//   - Whether the user woke before the alarm (alarm was too late)
 //
-// The inference answers: "Was this alarm set at the right time?"
+// Snooze count is intentionally NOT recorded — it is not used
+// in the sleep duration recommendation algorithm.
 //
-//   snoozeCount == 0 → alarm was on time
-//   snoozeCount 1–2  → alarm was slightly early
-//   snoozeCount 3+   → alarm was too early
-//   wokeBeforeAlarm  → alarm was too late (or sleep need was lower)
-//
-// Over 30+ nights this gives the ML model a clean signal to personalise
+// Over time this gives the model a clean signal to personalise
 // future alarm times by day of week and sleep pattern.
 
 class AlarmBehaviourLogger {
@@ -599,11 +594,9 @@ class AlarmBehaviourLogger {
     static let shared = AlarmBehaviourLogger()
 
     // ── Session state ─────────────────────────────────────────
-    // Tracks the current alarm session from fire → dismiss.
 
     private var scheduledWakeTime: Date? = nil
     private var alarmFiredAt: Date?      = nil
-    private var snoozeCount: Int         = 0
 
     // ── Lifecycle hooks ───────────────────────────────────────
 
@@ -611,21 +604,13 @@ class AlarmBehaviourLogger {
     func logScheduled(for date: Date) {
         scheduledWakeTime = date
         alarmFiredAt      = nil
-        snoozeCount       = 0
         print("📅 Alarm scheduled for \(date.formatted(date: .omitted, time: .shortened))")
     }
 
     /// Called when the alarm fires. Starts a new session.
     func logAlarmFired(at date: Date) {
         alarmFiredAt = date
-        snoozeCount  = 0
         print("🔔 Alarm fired at \(date.formatted(date: .omitted, time: .shortened))")
-    }
-
-    /// Called each time the user taps Snooze.
-    func logSnooze(at date: Date) {
-        snoozeCount += 1
-        print("😴 Snooze #\(snoozeCount) at \(date.formatted(date: .omitted, time: .shortened))")
     }
 
     /// Called when the user taps Dismiss. Finalises the session
@@ -636,7 +621,7 @@ class AlarmBehaviourLogger {
     }
 
     /// Called when the user woke before the alarm fired.
-    /// (Used when HealthKit integration is added later.)
+    /// (Used when HealthKit / SleepTracker integration surfaces this signal.)
     func logWokeBeforeAlarm(at date: Date) {
         saveInference(outcome: "woke_before_alarm", at: date)
         resetSession()
@@ -644,26 +629,18 @@ class AlarmBehaviourLogger {
 
     // ── Inference logic ───────────────────────────────────────
 
-    /// Derives a conclusion about alarm accuracy and saves it to Firestore.
-    /// This single document per morning is what the ML model reads.
+    /// Saves a single inference document to Firestore for the morning session.
     private func saveInference(outcome: String, at date: Date) {
         guard let uid = Auth.auth().currentUser?.uid else { return }
 
-        // Derive how well the alarm was timed from snooze behaviour
-        let assessment: String
-        switch (outcome, snoozeCount) {
-        case ("woke_before_alarm", _): assessment = "too_late"
-        case (_, 0):                   assessment = "on_time"
-        case (_, 1...2):               assessment = "slightly_early"
-        default:                       assessment = "too_early"
-        }
+        // Assessment based on wake outcome only — snooze frequency is not used.
+        let assessment: String = (outcome == "woke_before_alarm") ? "too_late" : "on_time"
 
         var inference: [String: Any] = [
-            "date":        date,
-            "dayOfWeek":   Calendar.current.component(.weekday, from: date),
-            "snoozeCount": snoozeCount,
-            "outcome":     outcome,
-            "assessment":  assessment  // The key signal for the ML model
+            "date":       date,
+            "dayOfWeek":  Calendar.current.component(.weekday, from: date),
+            "outcome":    outcome,
+            "assessment": assessment
         ]
         if let scheduled = scheduledWakeTime { inference["scheduledWakeTime"] = scheduled }
         if let fired     = alarmFiredAt      { inference["alarmFiredAt"]      = fired     }
@@ -675,7 +652,7 @@ class AlarmBehaviourLogger {
                 if let error {
                     print("❌ Failed to save alarm inference: \(error.localizedDescription)")
                 } else {
-                    print("✅ Alarm inference saved — assessment: \(assessment), snoozes: \(self.snoozeCount)")
+                    print("✅ Alarm inference saved — assessment: \(assessment)")
                 }
             }
     }
@@ -683,6 +660,5 @@ class AlarmBehaviourLogger {
     private func resetSession() {
         scheduledWakeTime = nil
         alarmFiredAt      = nil
-        snoozeCount       = 0
     }
 }

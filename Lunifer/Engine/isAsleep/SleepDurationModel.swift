@@ -22,9 +22,8 @@ import FirebaseAuth
 //
 // The model starts with the midpoint of the recommended range
 // for the user's age group, then adjusts based on:
-//   1. Snooze frequency (more snoozes → needs more sleep)
-//   2. Pre-alarm waking (waking before alarm → needs less sleep)
-//   3. Actual measured sleep duration (from SleepTracker)
+//   1. Pre-alarm waking (waking before alarm → needs less sleep)
+//   2. Actual measured sleep duration (from SleepTracker)
 
 struct SleepDurationModel {
 
@@ -87,13 +86,11 @@ struct SleepDurationModel {
     ///
     /// - Parameters:
     ///   - ageString: User's age from survey
-    ///   - snoozeRate: Average snoozes per alarm over the last 7 days (0.0 – 5.0+)
     ///   - preAlarmWakeRate: Fraction of days the user woke before the alarm (0.0 – 1.0)
     ///   - avgActualDuration: Average actual sleep duration from SleepTracker (hours), nil if no data yet
     /// - Returns: Recommended sleep duration in hours
     static func recommendedDuration(
         ageString: String,
-        snoozeRate: Double = 0,
         preAlarmWakeRate: Double = 0,
         avgActualDuration: Double? = nil
     ) -> Double {
@@ -101,17 +98,6 @@ struct SleepDurationModel {
         let range = rangeForAge(ageString)
 
         var adjustment: Double = 0
-
-        // ── Snooze adjustment ────────────────────────────────
-        // If the user snoozes a lot, they're not getting enough sleep.
-        // Each average snooze per day shifts the recommendation up by 10 min.
-        // Capped at +30 min so we don't recommend unrealistic amounts.
-        //
-        // snoozeRate 0   → +0 min
-        // snoozeRate 1   → +10 min
-        // snoozeRate 3+  → +30 min (capped)
-        let snoozeAdjustment = min(snoozeRate * (10.0 / 60.0), 0.5)
-        adjustment += snoozeAdjustment
 
         // ── Pre-alarm wake adjustment ────────────────────────
         // If the user regularly wakes before the alarm, they may
