@@ -359,20 +359,20 @@ hours = total_ms / 3_600_000
 hours is clamped to [5, 12]
 ```
 
-### Setup Required Before Testing
-1. Create a WHOOP Developer app.
-2. Set redirect URI to `lunifer://whoop/callback`.
-3. Replace `API.clientID` in `WhoopManager.swift` with the real WHOOP client ID.
-4. Ensure the `lunifer` URL scheme is available to the app.
-5. Deploy the Cloudflare Worker backend and set Worker secrets for `WHOOP_CLIENT_ID` and `WHOOP_CLIENT_SECRET`.
-6. Create and bind the Cloudflare KV namespace used for `WHOOP_TOKENS`.
-7. Ensure the privacy policy is publicly hosted and linked in the WHOOP dashboard.
-8. `Backend.baseURL` in `WhoopManager.swift` now points at the deployed Worker URL; update it if the Worker URL changes.
+### Setup Status — COMPLETE
+1. ✅ WHOOP Developer app created.
+2. ✅ Redirect URI set to `lunifer://whoop/callback`.
+3. ✅ `API.clientID` in `WhoopManager.swift` set to real WHOOP client ID (`42b74796-f1a2-449d-8ba4-372a7b9c66ca`).
+4. ✅ `lunifer` URL scheme registered in the app.
+5. ✅ Cloudflare Worker deployed and all four secrets configured: `WHOOP_CLIENT_ID`, `WHOOP_CLIENT_SECRET`, `OURA_CLIENT_ID`, `OURA_CLIENT_SECRET`.
+6. ✅ Cloudflare KV namespace (`WHOOP_TOKENS`) created and bound.
+7. ✅ Privacy policy publicly hosted and linked in the WHOOP dashboard.
+8. ✅ `Backend.baseURL` in both `WhoopManager.swift` and `OuraManager.swift` points at the deployed Worker URL (`https://lunifer-whoop.dougiebrown516.workers.dev`).
 
 ### Current WHOOP Limitations
 - WHOOP affects both the recommended sleep duration and the 7-day sleep history chart (via `recentSleepSessions` in the backend response → `SleepHistoryManager.shared.recordNight(...)`)
 - Disconnect UI exists in `SleepAndWearablesSettingsView` for both WHOOP and Oura, with confirmation alerts
-- The integration depends on Cloudflare Worker deployment and secret configuration before it will function end-to-end
+- ~~The integration depends on Cloudflare Worker deployment and secret configuration before it will function end-to-end~~ — **Resolved April 2026. All Worker secrets are configured and the integration is live.**
 
 ## Oura Ring Integration
 Oura Ring connectivity is implemented in `Engine/OuraManager.swift`, parallel to WHOOP.
@@ -515,7 +515,7 @@ Routing and arrival target:
 - `LocationManager.swift` now exposes a `static let shared` singleton, a `@Published var currentCoordinate: CLLocationCoordinate2D?`, and a `requestCurrentLocation()` method that issues a one-shot `CLLocationManager.requestLocation()` fix. Accuracy is set to `kCLLocationAccuracyHundredMeters` to save battery. Does nothing if location permission has not been granted.
 - WHOOP integration requires real developer credentials before OAuth will work
 - Calendar constraint in adaptive rescheduling uses survey-entered routine/commute times, not live route calculations from home coordinates
-- `AlarmBehaviourLogger` logs snooze/dismiss events to Firestore but the data is not yet read back into `SleepDurationModel` — the adaptive sleep recommendation feedback loop is not closed
+- `AlarmBehaviourLogger` logs dismiss events to Firestore but the data is not yet read back into `SleepDurationModel` — the adaptive sleep recommendation feedback loop is not closed. Snooze frequency is intentionally excluded from the inference system.
 
 ## Practical Guidance For Future Sessions
 - Do not assume `Claude.MD` is authoritative without checking code first
