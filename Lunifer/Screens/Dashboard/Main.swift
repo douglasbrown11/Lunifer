@@ -235,45 +235,22 @@ struct LuniferMain: View {
         _ = ticker // re-evaluate each minute alongside the rest-period check
         guard isCommuterUser else { return false }
         guard answers.wakeDays.contains(weekdayID(for: Date())) else { return false }
-        let commuteMinutes = answers.commute.auto
-            ? 30
-            : answers.commute.hours * 60 + answers.commute.minutes
-        guard commuteMinutes > 0 else { return false }
-        let routineMinutes = answers.routine.auto
-            ? 60
-            : answers.routine.hours * 60 + answers.routine.minutes
-        // leaveTime = wakeTime + routineMinutes = arrivalTarget - commuteMinutes
-        let leaveTime = calculatedAlarmDate.addingTimeInterval(Double(routineMinutes) * 60)
+        // Only show while the user is between waking up and their first event starting.
+        // If there is no calendar event today, the card (and nudge) are not shown.
+        guard let firstEvent = CalendarManager.shared.todayEvents.first else { return false }
         let now = Date()
-        return now >= calculatedAlarmDate && now < leaveTime
+        return now >= calculatedAlarmDate && now < firstEvent.startDate
     }
 
-    /// Day name, time string, and AM/PM for the first alarm after the rest period.
-    private var nextAlarmInfo: (day: String, time: String, period: String)? {
+    /// Day name of the next day Lunifer will set an alarm for after the rest period.
+    private var nextAlarmDay: String? {
         let skip = consecutiveRestDaysFromTomorrow
         var check = Calendar.current.date(byAdding: .day, value: skip + 1, to: Date())!
         for _ in 0..<8 {
             if answers.wakeDays.contains(weekdayID(for: check)) {
-                // TODO: Replace with calendar-driven resolution for the specific future date.
-                // For now uses the 8 AM fallback; full per-day resolution requires
-                // fetching events for each candidate date, which is a follow-up task.
-                let targetMinutes  = 8 * 60
-                let routineMins    = answers.routine.auto ? 60 : answers.routine.hours * 60 + answers.routine.minutes
-                let commuteMins: Int = (answers.lifestyle == "student" || answers.lifestyle == "commuter")
-                    ? (answers.commute.auto ? 30 : answers.commute.hours * 60 + answers.commute.minutes)
-                    : 0
-                let wakeMinutes = ((targetMinutes - routineMins - commuteMins) % (24 * 60) + 24 * 60) % (24 * 60)
-                let hour        = wakeMinutes / 60
-                let minute      = wakeMinutes % 60
-                let displayHour = hour > 12 ? hour - 12 : (hour == 0 ? 12 : hour)
-
                 let df = DateFormatter()
                 df.dateFormat = "EEEE"
-                return (
-                    day:    df.string(from: check),
-                    time:   String(format: "%d:%02d", displayHour, minute),
-                    period: hour >= 12 ? "PM" : "AM"
-                )
+                return df.string(from: check)
             }
             check = Calendar.current.date(byAdding: .day, value: 1, to: check)!
         }
@@ -950,8 +927,8 @@ struct LuniferMain: View {
 
                 Spacer().frame(height: 28)
 
-                if let next = nextAlarmInfo {
-                    Text("Next Alarm \(next.day)")
+                if let day = nextAlarmDay {
+                    Text("Next Alarm \(day)")
                         .font(.custom("DM Sans", size: 14))
                         .foregroundColor(Color.white.opacity(0.35))
                 }
@@ -1333,88 +1310,7 @@ struct SoundSettingsView: View {
         audioPlayer?.play()
     }
 }
-
-
-// ── MARK: Commute Status Card ─────────────────────────────────
-// Shown on the alarm page after the alarm fires, while the user
-// still has time before they need to leave. Displays the survey-
-// entered commute duration and the derived leave-by time.
-// When live routing is added to CommuteManager, bind this view
-// to CommuteManager.shared.currentDurationMinutes instead of
-// re-deriving the duration from answers directly.
-
-struct CommuteStatusCard: View {
-    let answers: SurveyAnswers
-    /// The resolved Lunifer alarm time for today, used to derive the leave-by time.
-    let alarmDate: Date
-
-    /// Live commute duration. Prefers the cached MKDirections result from
-    /// CommuteManager when auto-mode is on; falls back to the survey value.
-    private var commuteMinutes: Int {
-        if answers.commute.auto && CommuteManager.shared.currentDurationMinutes > 0 {
-            return CommuteManager.shared.currentDurationMinutes
-        }
-        return answers.commute.auto
-            ? 30
-            : answers.commute.hours * 60 + answers.commute.minutes
-    }
-
-    /// Leave time = alarm time + morning routine duration.
-    /// (Alarm fires → routine → leave → commute → arrive at destination.)
-    private var leaveTime: Date {
-        let routineMinutes = answers.routine.auto
-            ? 60
-            : answers.routine.hours * 60 + answers.routine.minutes
-        return alarmDate.addingTimeInterval(Double(routineMinutes) * 60)
-    }
-
-    private var leaveTimeString: String {
-        let f        = DateFormatter()
-        f.dateFormat = "h:mm a"
-        return f.string(from: leaveTime)
-    }
-
-    private var modeIcon: String {
-        switch answers.commuteMode {
-        case "transit": return "tram.fill"
-        case "walk":    return "figure.walk"
-        case "bike":    return "bicycle"
-        default:        return "car.fill"
-        }
-    }
-
-    var body: some View {
-        VStack(spacing: 8) {
-
-            Text("COMMUTE")
-                .font(.custom("DM Sans", size: 10))
-                .foregroundColor(Color.white.opacity(0.3))
-                .kerning(2.5)
-                .frame(maxWidth: .infinity, alignment: .leading)
-                .padding(.horizontal, 60)
-                .padding(.top, 20)
-
-            HStack(alignment: .center, spacing: 0) {
-                VStack(alignment: .leading, spacing: 6) {
-                    HStack(alignment: .lastTextBaseline, spacing: 8) {
-                        Image(systemName: modeIcon)
-                            .font(.system(size: 14, weight: .light))
-                            .foregroundColor(Color(red: 0.706, green: 0.588, blue: 0.902))
-                        Text("~\(commuteMinutes) min")
-                            .font(.custom("Libre Franklin", size: 36).weight(.light))
-                            .foregroundColor(Color.white.opacity(0.80))
-                            .monospacedDigit()
-                    }
-                    Text("Leave by \(leaveTimeString)")
-                        .font(.custom("DM Sans", size: 13))
-                        .foregroundColor(Color.white.opacity(0.40))
-                }
-                Spacer()
-            }
-            .padding(.horizontal, 60)
-        }
-    }
-}
+// CommuteStatusCard lives in LuniferCommuteDashboard.swift
 
 private struct LuniferMainPreview: View {
     @State private var answers: SurveyAnswers = {
