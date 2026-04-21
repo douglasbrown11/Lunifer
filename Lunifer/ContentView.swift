@@ -18,7 +18,7 @@ struct ContentView: View {
             case .intro:
                 LuniferIntro(onFinish: { screen = .auth })
             case .auth:
-                LuniferAuth(onSignedIn: { isNewUser in
+                LuniferSignin(onSignedIn: { isNewUser in
                     await handleSignedIn(isNewUser: isNewUser)
                 })
             case .survey:
