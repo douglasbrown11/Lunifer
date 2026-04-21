@@ -5,8 +5,7 @@ import GoogleSignIn
 import BackgroundTasks
 import UserNotifications
 
-// "@main" tells Swift this is where the app starts — only one struct in the
-// entire project can have this attribute.
+// "@main" tells Swift this is where the app starts
 @main
 struct LuniferApp: App {
 

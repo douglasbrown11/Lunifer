@@ -1272,7 +1272,15 @@ struct WakeDaysSettingsView: View {
                 }
                 .padding(.horizontal, 24)
                 .padding(.top, 24)
-                .padding(.bottom, 32)
+                .padding(.bottom, 12)
+
+                Text("Choose the days you need Lunifer to wake you up.")
+                    .font(.custom("DM Sans", size: 14))
+                    .foregroundColor(Color.white.opacity(0.4))
+                    .frame(maxWidth: .infinity, alignment: .center)
+                    .multilineTextAlignment(.center)
+                    .padding(.horizontal, 24)
+                    .padding(.bottom, 28)
 
                 // ── Day buttons ───────────────────────────
                 HStack(spacing: 10) {

@@ -5,14 +5,14 @@ import GoogleSignIn
 
 // ── MARK: Types ──────────────────────────────────────────────
 
-private enum AuthMode {
+private enum SigninMode {
     case signIn, create
 }
 
 // ── MARK: Error mapping ──────────────────────────────────────
 // Mirrors the getFriendlyError() function in luniferAuth.jsx
 
-private func friendlyAuthError(_ error: Error) -> String {
+private func friendlySigninError(_ error: Error) -> String {
     let nsError = error as NSError
 
     // Google Sign In cancellation (kGIDSignInErrorDomain, code -5)
@@ -88,12 +88,12 @@ private struct LuniferInputField: View {
     }
 }
 
-// ── MARK: LuniferAuth ────────────────────────────────────────
+// ── MARK: LuniferSignin ───────────────────────────────────────
 
-struct LuniferAuth: View {
+struct LuniferSignin: View {
     var onSignedIn: (_ isNewUser: Bool) async -> Void = { _ in }
 
-    @State private var mode: AuthMode = .create
+    @State private var mode: SigninMode = .create
     @State private var email = ""
     @State private var password = ""
     @State private var loading = false
@@ -163,7 +163,7 @@ struct LuniferAuth: View {
                     .padding(.bottom, 16)
 
                     // ── Primary button ───────────────────────
-                    Button { handleEmailAuth() } label: {
+                    Button { handleEmailSignin() } label: {
                         ZStack {
                             if loading {
                                 ProgressView().tint(.white)
@@ -325,7 +325,7 @@ struct LuniferAuth: View {
 
     // ── MARK: Actions ────────────────────────────────────────
 
-    private func handleEmailAuth() {
+    private func handleEmailSignin() {
         guard canSubmit else { return }
         guard agreedToTerms else {
             withAnimation { errorMessage = "Please agree to the Terms of Service and Privacy Policy to continue." }
@@ -343,7 +343,7 @@ struct LuniferAuth: View {
                     await onSignedIn(false)
                 }
             } catch {
-                errorMessage = friendlyAuthError(error)
+                errorMessage = friendlySigninError(error)
             }
             loading = false
         }
@@ -398,7 +398,7 @@ struct LuniferAuth: View {
                             continuation.resume(returning: credential)
                         } else {
                             continuation.resume(throwing: NSError(
-                                domain: "LuniferAuth",
+                                domain: "LuniferSignin",
                                 code: -1,
                                 userInfo: [NSLocalizedDescriptionKey: "No credential returned."]
                             ))
@@ -408,7 +408,7 @@ struct LuniferAuth: View {
                 let authResult = try await Auth.auth().signIn(with: credential)
                 await onSignedIn(authResult.additionalUserInfo?.isNewUser ?? false)
             } catch {
-                errorMessage = friendlyAuthError(error)
+                errorMessage = friendlySigninError(error)
             }
             loading = false
         }
@@ -450,7 +450,7 @@ struct LuniferAuth: View {
                 let authResult = try await Auth.auth().signIn(with: credential)
                 await onSignedIn(authResult.additionalUserInfo?.isNewUser ?? false)
             } catch {
-                errorMessage = friendlyAuthError(error)
+                errorMessage = friendlySigninError(error)
             }
             loading = false
         }
@@ -460,5 +460,5 @@ struct LuniferAuth: View {
 // ── MARK: Preview ────────────────────────────────────────────
 
 #Preview {
-    LuniferAuth()
+    LuniferSignin()
 }

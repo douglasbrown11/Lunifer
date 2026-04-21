@@ -183,11 +183,11 @@ struct LuniferCommuteDashboard: View {
 // so the duration/leave-by layout is visible; on a real device this
 // value is populated by CommuteManager.fetchLiveDuration().
 
-#Preview("Commute Card — Nudge") {
-    LuniferCommuteDashboard(showNudge: true)
-}
+//#Preview("Commute Card — Nudge") {
+//    LuniferCommuteDashboard(showNudge: true)
+//}
 
-#Preview("Commute Card — Live Duration") {
-    let _ = { CommuteManager.shared.currentDurationMinutes = 28 }()
-    return LuniferCommuteDashboard(showNudge: false)
-}
+//#Preview("Commute Card — Live Duration") {
+ //   let _ = { CommuteManager.shared.currentDurationMinutes = 28 }()
+//    return LuniferCommuteDashboard(showNudge: false)
+//}
