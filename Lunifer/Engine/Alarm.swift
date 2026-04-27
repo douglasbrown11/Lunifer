@@ -14,8 +14,6 @@ import FirebaseAuth
 // This is also useful for the ML model — every alarm we log includes
 // this context so the model can learn from it.
 //
-// "nonisolated" is a Swift 6 requirement — it just means this struct
-// can be safely used from any part of the app without threading issues.
 
 struct LuniferAlarmMetadata: AlarmMetadata {
     var scheduledWakeTime: Date      // The time we calculated the alarm for

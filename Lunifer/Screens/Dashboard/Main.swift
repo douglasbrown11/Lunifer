@@ -31,6 +31,7 @@ struct AddedAlarm: Codable, Identifiable {
 
 // ── MARK: Dashboard ──────────────────────────────────────────
 
+
 struct LuniferMain: View {
     @Binding var answers: SurveyAnswers
     @State private var showSettings = false
@@ -377,6 +378,7 @@ struct LuniferMain: View {
             await WakeNotification.shared.schedule(wakeDate: calculatedAlarmDate, answers: answers)
             // Request alarm authorization — waits for the user to respond
             await LuniferAlarm.shared.requestAuthorization()
+
             checkAlarmAuthorization()
 
             // Schedule the Lunifer alarm from the resolved date if Lunifer is enabled
@@ -582,13 +584,13 @@ struct LuniferMain: View {
                     ZStack {
                         HStack(alignment: .lastTextBaseline, spacing: 6) {
                             Text(wakeUpTime)
-                                .font(.custom("Libre Franklin", size: 63).weight(.light))
+                                .font(.libreFranklin(size: 63))
                                 .foregroundColor(Color.white.opacity(0.95))
                                 .monospacedDigit()
                                 .minimumScaleFactor(0.5)
                                 .lineLimit(1)
                             Text(wakeUpPeriod)
-                                .font(.custom("Libre Franklin", size: 60).weight(.light))
+                                .font(.libreFranklin(size: 60))
                                 .foregroundColor(Color.white.opacity(0.95))
                         }
                         .frame(maxWidth: .infinity, alignment: .center)
@@ -761,11 +763,11 @@ struct LuniferMain: View {
                                 HStack(spacing: 0) {
                                     HStack(alignment: .lastTextBaseline, spacing: 5) {
                                         Text(alarm.displayTime)
-                                            .font(.custom("Libre Franklin", size: 40).weight(.light))
+                                            .font(.libreFranklin(size: 40))
                                             .foregroundColor(Color.white.opacity(0.80))
                                             .monospacedDigit()
                                         Text(alarm.displayPeriod)
-                                            .font(.custom("Libre Franklin", size: 37).weight(.light))
+                                            .font(.libreFranklin(size: 37))
                                             .foregroundColor(Color.white.opacity(0.80))
                                     }
                                     Spacer()

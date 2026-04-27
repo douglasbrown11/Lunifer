@@ -38,7 +38,7 @@ final class SleepTracker: ObservableObject {
 
     static let shared = SleepTracker()
 
-    // Background task identifier — must match Info.plist
+    // Background task identifier or string identifier — must match Info.plist
     nonisolated static let backgroundTaskID = "com.lunifer.sleepAnalysis"
 
     // MARK: - Published state

@@ -1,13 +1,10 @@
 import Foundation
-import FirebaseFirestore
-import FirebaseAuth
 
 // ─────────────────────────────────────────────────────────────
 // SleepDurationModel
 // ─────────────────────────────────────────────────────────────
-// Calculates the recommended sleep duration for a user based on
-// age and survey data, then adapts over time using behavioral
-// signals from SleepTracker and AlarmBehaviourLogger.
+// Calculates age-based baseline sleep duration values and formats
+// durations for display.
 //
 // DATA SOURCES:
 //   - National Sleep Foundation guidelines (2021)
@@ -19,11 +16,6 @@ import FirebaseAuth
 //   Young     (18–25):  7.0 –  9.0 hours
 //   Adults    (26–64):  7.0 –  9.0 hours
 //   Older     (65+):    7.0 –  8.0 hours
-//
-// The model starts with the midpoint of the recommended range
-// for the user's age group, then adjusts based on:
-//   1. Pre-alarm waking (waking before alarm → needs less sleep)
-//   2. Actual measured sleep duration (from SleepTracker)
 
 struct SleepDurationModel {
 
@@ -59,76 +51,6 @@ struct SleepDurationModel {
             // Midpoint: 7.5
             return 7.5
         }
-    }
-
-    /// Returns the recommended range (min, max) in hours for the user's age.
-    static func rangeForAge(_ ageString: String) -> (min: Double, max: Double) {
-        let age = Int(ageString) ?? 22
-
-        switch age {
-        case ...13:
-            return (9.0, 11.0)
-        case 14...17:
-            return (8.0, 10.0)
-        case 18...25:
-            return (7.0, 9.0)
-        case 26...64:
-            return (7.0, 9.0)
-        default:
-            return (7.0, 8.0)
-        }
-    }
-
-    // MARK: - Adaptive recommendation
-
-    /// Calculates the current recommended sleep duration, starting from
-    /// the age-based baseline and adjusting for behavioral signals.
-    ///
-    /// - Parameters:
-    ///   - ageString: User's age from survey
-    ///   - preAlarmWakeRate: Fraction of days the user woke before the alarm (0.0 – 1.0)
-    ///   - avgActualDuration: Average actual sleep duration from SleepTracker (hours), nil if no data yet
-    /// - Returns: Recommended sleep duration in hours
-    static func recommendedDuration(
-        ageString: String,
-        preAlarmWakeRate: Double = 0,
-        avgActualDuration: Double? = nil
-    ) -> Double {
-        let baseline = baselineForAge(ageString)
-        let range = rangeForAge(ageString)
-
-        var adjustment: Double = 0
-
-        // ── Pre-alarm wake adjustment ────────────────────────
-        // If the user regularly wakes before the alarm, they may
-        // be sleeping more than they need, OR their body clock is
-        // well-calibrated. We nudge the recommendation down slightly.
-        //
-        // preAlarmWakeRate 0.0 → no change
-        // preAlarmWakeRate 0.5 → -7.5 min
-        // preAlarmWakeRate 1.0 → -15 min
-        let wakeAdjustment = preAlarmWakeRate * (-15.0 / 60.0)
-        adjustment += wakeAdjustment
-
-        // ── Actual duration convergence ──────────────────────
-        // If we have measured sleep data, slowly converge toward
-        // what the user actually sleeps — but only if it's within
-        // the healthy range for their age.
-        //
-        // This gives a 20% pull toward actual behavior per update.
-        // Over a week of data it will meaningfully shift the
-        // recommendation toward reality.
-        if let actual = avgActualDuration {
-            let clampedActual = max(range.min, min(actual, range.max))
-            let currentRecommendation = baseline + adjustment
-            let convergence = (clampedActual - currentRecommendation) * 0.2
-            adjustment += convergence
-        }
-
-        // Clamp to the healthy range for this age group
-        let recommended = max(range.min, min(baseline + adjustment, range.max))
-
-        return recommended
     }
 
     // MARK: - Formatting

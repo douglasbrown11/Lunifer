@@ -2,7 +2,9 @@ import SwiftUI
 import FirebaseFirestore
 import FirebaseAuth
 import CoreLocation
+import CoreMotion
 import UIKit
+import UserNotifications
 
 // ── MARK: Models ─────────────────────────────────────────────
 
@@ -206,7 +208,7 @@ struct TimeScalePicker: View {
                                 TimeButton(label: "↓") { value.hours = max(0,  value.hours - 1) }
                             }
                             Text(String(format: "%02d", value.hours))
-                                .font(.custom("Roboto", size: 44).weight(.light))
+                                .font(.libreFranklin(size: 44))
                                 .foregroundColor(Color.white.opacity(0.95))
                                 .monospacedDigit()
                                 .frame(minWidth: 56, alignment: .center)
@@ -215,7 +217,7 @@ struct TimeScalePicker: View {
 
                     // Colon separator
                     Text(":")
-                        .font(.custom("Roboto", size: 32).weight(.light))
+                        .font(.libreFranklin(size: 32))
                         .foregroundColor(Color.white.opacity(0.2))
                         .padding(.top, 24)
 
@@ -228,7 +230,7 @@ struct TimeScalePicker: View {
 
                         HStack(spacing: 8) {
                             Text(String(format: "%02d", value.minutes))
-                                .font(.custom("Roboto", size: 44).weight(.light))
+                                .font(.libreFranklin(size: 44))
                                 .foregroundColor(Color.white.opacity(0.95))
                                 .monospacedDigit()
                                 .frame(minWidth: 56, alignment: .center)
@@ -422,7 +424,7 @@ struct LuniferSurvey: View {
                     )) {
                         ForEach(1...125, id: \.self) { age in
                             Text("\(age)")
-                                .font(.custom("Roboto", size: 22).weight(.light))
+                                .font(.libreFranklin(size: 22))
                                 .tag(age)
                         }
                     }
@@ -885,6 +887,18 @@ struct LuniferSurvey: View {
         // ── MARK: Navigation ─────────────────────────────────────
         
         private func advance() {
+            // Request CoreMotion permission as the user leaves the sleep step.
+            // There is no explicit requestAuthorization() for CoreMotion — iOS shows
+            // the "Motion & Fitness" prompt the first time startActivityUpdates is called.
+            // We start updates briefly here just to surface the prompt, then stop.
+            if step == 4 && CMMotionActivityManager.authorizationStatus() == .notDetermined {
+                Task {
+                    let m = CMMotionActivityManager()
+                    m.startActivityUpdates(to: .main) { _ in }
+                    try? await Task.sleep(nanoseconds: 500_000_000)
+                    m.stopActivityUpdates()
+                }
+            }
             step += 1
         }
         
@@ -996,6 +1010,13 @@ struct LuniferSurvey: View {
                 }
 
                 await LuniferAlarm.shared.requestAuthorization()
+
+                // Request standard notification permission (UNUserNotificationCenter).
+                // This is separate from AlarmKit authorization and is required for
+                // WakeNotification, BatteryAlarmNotification, CommuteNotification,
+                // and RestDayEventNotification. Without this, all four are silently skipped.
+                _ = try? await UNUserNotificationCenter.current()
+                    .requestAuthorization(options: [.alert, .sound, .badge])
 
                 // Request location access for commuters/students so CommuteManager
                 // can perform live MKDirections routing. Requested here rather than

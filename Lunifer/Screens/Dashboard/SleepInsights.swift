@@ -80,7 +80,7 @@ struct SleepInsights: View {
                         .kerning(2.5)
 
                     Text(SleepDurationModel.formatted(recommendedHours))
-                        .font(.custom("Libre Franklin", size: 44).weight(.light))
+                        .font(.libreFranklin(size: 44))
                         .foregroundColor(Color.white.opacity(0.95))
 
                     // "recommended to you via [logo]" — or plain text if no wearable

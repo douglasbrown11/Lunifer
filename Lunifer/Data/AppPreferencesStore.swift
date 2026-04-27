@@ -16,12 +16,6 @@ final class AppPreferencesStore {
         // Added alarms (stored as a JSON-encoded [AddedAlarm] array)
         static let addedAlarms = "addedAlarms"
 
-        // Work / destination location
-        static let workLatitude = "workLatitude"
-        static let workLongitude = "workLongitude"
-        static let workLocationSet = "workLocationSet"
-        static let workLocationName = "workLocationName"
-
         // WHOOP integration
         static let whoopConnected = "whoopConnected"
         static let whoopRecommendedSleepHours = "whoopRecommendedSleepHours"
@@ -69,13 +63,6 @@ final class AppPreferencesStore {
         defaults.removeObject(forKey: Keys.batteryLastCheckTime)
         defaults.removeObject(forKey: Keys.batteryLastCheckLevel)
         defaults.removeObject(forKey: Keys.batteryLastWarnedAlarm)
-    }
-
-    func resetWorkLocation() {
-        defaults.removeObject(forKey: Keys.workLatitude)
-        defaults.removeObject(forKey: Keys.workLongitude)
-        defaults.set(false, forKey: Keys.workLocationSet)
-        defaults.removeObject(forKey: Keys.workLocationName)
     }
 
     func resetAlarmOverride() {

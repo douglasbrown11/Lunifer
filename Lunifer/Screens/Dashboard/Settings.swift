@@ -1,12 +1,4 @@
-import SwiftUI
-import UIKit
-import MapKit
-import CoreLocation
-import Combine
-import FirebaseCore
-import FirebaseAuth
-import FirebaseFirestore
-import GoogleSignIn
+import SwiftUI, import UIKit, import Combine, import FirebaseCore, import FirebaseAuth, import FirebaseFirestore, import GoogleSignIn
 
 // ── MARK: Settings (root) ─────────────────────────────────────
 
@@ -454,17 +446,6 @@ struct AboutYouSettingsView: View {
     @Environment(\.dismiss) private var dismiss
     @State private var editingField: String? = nil
 
-    // ── Work location persistence ──────────────────────────────
-    @AppStorage("workLocationSet")  private var workLocationSet: Bool = false
-    @AppStorage("workLocationName") private var workLocationName: String = ""
-    @State private var showWorkSheet = false
-
-    private var workLocationDisplayName: String {
-        if workLocationSet && !workLocationName.isEmpty { return workLocationName }
-        if workLocationSet { return "Location set" }
-        return "Not set"
-    }
-
     private var isCommuterUser: Bool {
         answers.lifestyle == "student" || answers.lifestyle == "commuter"
     }
@@ -523,12 +504,6 @@ struct AboutYouSettingsView: View {
                             .background(Color.white.opacity(0.08))
                             .padding(.leading, 16)
                         aboutYouRow(label: "Calendar", value: calendarLabel, field: "calendar")
-                        if isCommuterUser {
-                            Divider()
-                                .background(Color.white.opacity(0.08))
-                                .padding(.leading, 16)
-                            workLocationRow()
-                        }
                     }
                     .background(
                         RoundedRectangle(cornerRadius: 12)
@@ -544,12 +519,6 @@ struct AboutYouSettingsView: View {
             }
         }
         .toolbar(.hidden, for: .navigationBar)
-        .sheet(isPresented: $showWorkSheet) {
-            WorkLocationSheet()
-                .presentationDetents([.large])
-                .presentationDragIndicator(.hidden)
-                .presentationBackground(Color(red: 0.06, green: 0.03, blue: 0.14))
-        }
         .onChange(of: answers.age) { _, _ in
             answers.saveToDefaults()
             answers.saveToFirestore()
@@ -562,33 +531,6 @@ struct AboutYouSettingsView: View {
             answers.saveToDefaults()
             answers.saveToFirestore()
         }
-    }
-
-    @ViewBuilder
-    private func workLocationRow() -> some View {
-        HStack {
-            Text("Work")
-                .font(.custom("DM Sans", size: 14))
-                .foregroundColor(Color.white.opacity(0.45))
-
-            Text(workLocationDisplayName)
-                .font(.custom("DM Sans", size: 14))
-                .foregroundColor(workLocationSet ? Color.white.opacity(0.85) : Color.white.opacity(0.35))
-                .padding(.leading, 12)
-
-            Spacer()
-
-            Button {
-                showWorkSheet = true
-            } label: {
-                Text(workLocationSet ? "Change" : "Set")
-                    .font(.custom("DM Sans", size: 13))
-                    .foregroundColor(Color(red: 0.627, green: 0.471, blue: 1.0))
-            }
-            .padding(.leading, 12)
-        }
-        .padding(.horizontal, 16)
-        .padding(.vertical, 14)
     }
 
     @ViewBuilder
@@ -737,252 +679,6 @@ struct AboutYouSettingsView: View {
     }
 }
 
-// ── MARK: Home Location Search Completer ───────────────────────
-
-final class HomeLocationSearchCompleter: NSObject, ObservableObject, MKLocalSearchCompleterDelegate {
-    @Published var results: [MKLocalSearchCompletion] = []
-    @Published var searchText: String = "" {
-        didSet { completer.queryFragment = searchText }
-    }
-
-    private let completer = MKLocalSearchCompleter()
-
-    override init() {
-        super.init()
-        completer.delegate = self
-        completer.resultTypes = .address
-    }
-
-    func completerDidUpdateResults(_ completer: MKLocalSearchCompleter) {
-        results = completer.results
-    }
-
-    func completer(_ completer: MKLocalSearchCompleter, didFailWithError error: Error) {
-        results = []
-    }
-}
-
-// ── MARK: Work Location Sheet ──────────────────────────────────
-
-struct WorkLocationSheet: View {
-    @Environment(\.dismiss) private var dismiss
-
-    @AppStorage("workLatitude")    private var workLatitude: Double = 0
-    @AppStorage("workLongitude")   private var workLongitude: Double = 0
-    @AppStorage("workLocationSet") private var workLocationSet: Bool = false
-    @AppStorage("workLocationName") private var workLocationName: String = ""
-
-    @StateObject private var completer = HomeLocationSearchCompleter()
-    @State private var mapPosition: MapCameraPosition = .automatic
-    @State private var selectedCoordinate: CLLocationCoordinate2D? = nil
-    @State private var selectedAddress: String = ""
-    @FocusState private var searchFocused: Bool
-
-    var body: some View {
-        ZStack {
-            Color(red: 0.06, green: 0.03, blue: 0.14).ignoresSafeArea()
-
-            VStack(spacing: 0) {
-                RoundedRectangle(cornerRadius: 2)
-                    .fill(Color.white.opacity(0.15))
-                    .frame(width: 36, height: 4)
-                    .padding(.top, 10)
-                    .padding(.bottom, 14)
-
-                Text("Set Work Location")
-                    .font(.custom("Cormorant Garamond", size: 26).weight(.light))
-                    .foregroundColor(Color.white.opacity(0.9))
-                    .padding(.bottom, 14)
-
-                Rectangle()
-                    .fill(Color.white.opacity(0.95))
-                    .frame(height: 1)
-                    .padding(.horizontal, 32)
-                    .padding(.bottom, 14)
-
-                HStack(spacing: 10) {
-                    Image(systemName: "magnifyingglass")
-                        .font(.system(size: 14, weight: .light))
-                        .foregroundColor(Color.white.opacity(0.35))
-                    TextField("Search address...", text: $completer.searchText)
-                        .font(.custom("DM Sans", size: 14))
-                        .foregroundColor(Color.white.opacity(0.85))
-                        .tint(Color(red: 0.627, green: 0.471, blue: 1.0))
-                        .focused($searchFocused)
-                        .submitLabel(.search)
-                    if !completer.searchText.isEmpty {
-                        Button {
-                            completer.searchText = ""
-                            selectedCoordinate = nil
-                            selectedAddress = ""
-                        } label: {
-                            Image(systemName: "xmark.circle.fill")
-                                .font(.system(size: 14))
-                                .foregroundColor(Color.white.opacity(0.3))
-                        }
-                    }
-                }
-                .padding(.horizontal, 14)
-                .padding(.vertical, 11)
-                .background(
-                    RoundedRectangle(cornerRadius: 10)
-                        .fill(Color.white.opacity(0.07))
-                        .overlay(RoundedRectangle(cornerRadius: 10).stroke(Color.white.opacity(0.1), lineWidth: 1))
-                )
-                .padding(.horizontal, 16)
-                .padding(.bottom, 8)
-
-                if !completer.results.isEmpty && !completer.searchText.isEmpty {
-                    ScrollView(showsIndicators: false) {
-                        VStack(spacing: 0) {
-                            ForEach(Array(completer.results.prefix(4).enumerated()), id: \.offset) { index, result in
-                                Button {
-                                    selectSuggestion(result)
-                                } label: {
-                                    HStack(spacing: 10) {
-                                        Image(systemName: "mappin")
-                                            .font(.system(size: 11, weight: .light))
-                                            .foregroundColor(Color.white.opacity(0.25))
-                                            .frame(width: 16)
-                                        VStack(alignment: .leading, spacing: 2) {
-                                            Text(result.title)
-                                                .font(.custom("DM Sans", size: 13))
-                                                .foregroundColor(Color.white.opacity(0.85))
-                                                .lineLimit(1)
-                                                .frame(maxWidth: .infinity, alignment: .leading)
-                                            if !result.subtitle.isEmpty {
-                                                Text(result.subtitle)
-                                                    .font(.custom("DM Sans", size: 11))
-                                                    .foregroundColor(Color.white.opacity(0.35))
-                                                    .lineLimit(1)
-                                            }
-                                        }
-                                    }
-                                    .padding(.horizontal, 14)
-                                    .padding(.vertical, 10)
-                                }
-                                .buttonStyle(.plain)
-                                if index < min(completer.results.count, 4) - 1 {
-                                    Divider()
-                                        .background(Color.white.opacity(0.05))
-                                        .padding(.leading, 40)
-                                }
-                            }
-                        }
-                        .background(
-                            RoundedRectangle(cornerRadius: 10)
-                                .fill(Color.white.opacity(0.04))
-                                .overlay(RoundedRectangle(cornerRadius: 10).stroke(Color.white.opacity(0.08), lineWidth: 1))
-                        )
-                        .padding(.horizontal, 16)
-                    }
-                    .frame(maxHeight: 180)
-                    .padding(.bottom, 8)
-                }
-
-                ZStack(alignment: .bottom) {
-                    Map(position: $mapPosition) {
-                        if let coord = selectedCoordinate {
-                            Marker("Work", coordinate: coord)
-                                .tint(Color(red: 0.627, green: 0.471, blue: 1.0))
-                        }
-                    }
-                    .colorScheme(.dark)
-                    .ignoresSafeArea(edges: .bottom)
-
-                    if selectedCoordinate != nil {
-                        VStack(spacing: 0) {
-                            LinearGradient(
-                                colors: [
-                                    Color(red: 0.06, green: 0.03, blue: 0.14).opacity(0),
-                                    Color(red: 0.06, green: 0.03, blue: 0.14).opacity(0.96)
-                                ],
-                                startPoint: .top, endPoint: .bottom
-                            )
-                            .frame(height: 56)
-
-                            VStack(spacing: 8) {
-                                if !selectedAddress.isEmpty {
-                                    Text(selectedAddress)
-                                        .font(.custom("DM Sans", size: 12))
-                                        .foregroundColor(Color.white.opacity(0.55))
-                                        .multilineTextAlignment(.center)
-                                        .padding(.horizontal, 24)
-                                }
-                                Button {
-                                    confirmLocation()
-                                } label: {
-                                    Text("Confirm Work Location")
-                                        .font(.custom("DM Sans", size: 15).weight(.medium))
-                                        .foregroundColor(.white)
-                                        .frame(maxWidth: .infinity)
-                                        .frame(height: 52)
-                                        .background(
-                                            RoundedRectangle(cornerRadius: 14)
-                                                .fill(LinearGradient(
-                                                    colors: [
-                                                        Color(red: 0.471, green: 0.314, blue: 0.863).opacity(0.9),
-                                                        Color(red: 0.314, green: 0.196, blue: 0.706).opacity(0.9)
-                                                    ],
-                                                    startPoint: .topLeading,
-                                                    endPoint: .bottomTrailing
-                                                ))
-                                        )
-                                }
-                                .buttonStyle(.plain)
-                                .padding(.horizontal, 16)
-                                .padding(.bottom, 36)
-                            }
-                            .background(Color(red: 0.06, green: 0.03, blue: 0.14).opacity(0.96))
-                        }
-                        .transition(.opacity)
-                    }
-                }
-            }
-        }
-        .onAppear {
-            if workLocationSet {
-                let coord = CLLocationCoordinate2D(latitude: workLatitude, longitude: workLongitude)
-                selectedCoordinate = coord
-                selectedAddress = workLocationName
-                completer.searchText = workLocationName
-                mapPosition = .region(MKCoordinateRegion(
-                    center: coord,
-                    span: MKCoordinateSpan(latitudeDelta: 0.05, longitudeDelta: 0.05)
-                ))
-            } else {
-                mapPosition = .automatic
-            }
-        }
-    }
-
-    private func selectSuggestion(_ result: MKLocalSearchCompletion) {
-        searchFocused = false
-        let request = MKLocalSearch.Request(completion: result)
-        MKLocalSearch(request: request).start { response, _ in
-            guard let item = response?.mapItems.first else { return }
-            let coord = item.location.coordinate
-            selectedCoordinate = coord
-            selectedAddress = [result.title, result.subtitle].filter { !$0.isEmpty }.joined(separator: ", ")
-            withAnimation {
-                mapPosition = .region(MKCoordinateRegion(
-                    center: coord,
-                    span: MKCoordinateSpan(latitudeDelta: 0.05, longitudeDelta: 0.05)
-                ))
-            }
-        }
-    }
-
-    private func confirmLocation() {
-        guard let coord = selectedCoordinate else { return }
-        workLatitude = coord.latitude
-        workLongitude = coord.longitude
-        workLocationSet = true
-        workLocationName = selectedAddress
-        dismiss()
-    }
-}
-
 // ── MARK: Wake Days ────────────────────────────────────────────
 
 // ── MARK: Sleep & Wearables ────────────────────────────────────
@@ -1021,11 +717,11 @@ struct SleepAndWearablesSettingsView: View {
     private var isWhoopDriven: Bool { whoopConnected && whoopSleepHours > 0 }
     private var isOuraDriven:  Bool { !isWhoopDriven && ouraConnected && ouraSleepHours > 0 }
 
-    private var sleepSourceLabel: String {
+    private var sleepSourceLabel: String? {
         if isWhoopDriven { return "Set by WHOOP" }
         if isOuraDriven  { return "Set by Oura Ring" }
         if answers.sleep.auto { return "Learning from your data" }
-        return "Set manually"
+        return nil
     }
 
     var body: some View {
@@ -1061,11 +757,13 @@ struct SleepAndWearablesSettingsView: View {
                                 HStack {
                                     VStack(alignment: .leading, spacing: 4) {
                                         Text(SleepDurationModel.formatted(recommendedHours))
-                                            .font(.custom("Libre Franklin", size: 23).weight(.light))
+                                            .font(.libreFranklin(size: 23))
                                             .foregroundColor(Color.white.opacity(0.95))
-                                        Text(sleepSourceLabel)
-                                            .font(.custom("DM Sans", size: 12))
-                                            .foregroundColor(Color.white.opacity(0.4))
+                                        if let label = sleepSourceLabel {
+                                            Text(label)
+                                                .font(.custom("DM Sans", size: 12))
+                                                .foregroundColor(Color.white.opacity(0.4))
+                                        }
                                     }
                                     Spacer()
                                     Button {
