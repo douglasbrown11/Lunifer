@@ -10,12 +10,6 @@ import UserNotifications
 //
 // ── TIMING ───────────────────────────────────────────────────
 // Estimated bedtime = wakeTime − user's sleep duration
-// Notification fires 1 hour before that bedtime so the user
-// has time to start winding down.
-//
-//   Example: wake at 7:00 AM, sleeps 8h → bedtime 11:00 PM
-//   Notification fires at 10:00 PM
-//
 // ── NOTIFICATION FORMAT ──────────────────────────────────────
 //   Title:  "11:00 PM → 7:00 AM"
 //   Body:   "Lunifer is waking you up at 7:00 AM tomorrow"

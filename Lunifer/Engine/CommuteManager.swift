@@ -200,19 +200,15 @@ final class CommuteManager: ObservableObject {
         lastFetched            = Date()
     }
 
-    /// Fetches a live commute duration using a three-step priority chain.
+    /// Fetches a live commute duration using a two-step priority chain.
     /// Origin is always the user's live GPS fix; falls back to survey value if unavailable.
     ///
     /// 1. Calendar event location — if tomorrow's first event has a location
     ///    string, geocode it and route to that address. Handles variable
     ///    destinations automatically with no extra user input.
-    /// 2. Stored work location — the address saved in Settings, used on days
-    ///    where calendar events have no location.
-    /// 3. Survey fallback — the manually entered commute time, used when no
+    /// 2. Survey fallback — the manually entered commute time, used when no
     ///    destination coordinates are available.
     static func fetchLiveDuration(answers: SurveyAnswers) async -> Int {
-        let defaults = UserDefaults.standard
-
         // Origin: live GPS fix from LocationManager (user's actual position).
         // Falls back to survey value if location permission is denied or no fix available.
         guard let originCoord = LocationManager.shared.currentCoordinate else {
@@ -233,21 +229,7 @@ final class CommuteManager: ObservableObject {
             }
         }
 
-        // Step 2: Stored work location
-        let workSet = defaults.bool(forKey: AppPreferencesStore.Keys.workLocationSet)
-        if workSet {
-            let workLat = defaults.double(forKey: AppPreferencesStore.Keys.workLatitude)
-            let workLon = defaults.double(forKey: AppPreferencesStore.Keys.workLongitude)
-            let destination = MKMapItem(placemark: MKPlacemark(
-                coordinate: CLLocationCoordinate2D(latitude: workLat, longitude: workLon)
-            ))
-            if let minutes = await routeMinutes(from: origin, to: destination, mode: answers.commuteMode) {
-                print("🚗 Live commute (saved work): \(minutes) min via \(answers.commuteMode)")
-                return minutes
-            }
-        }
-
-        // Step 3: Survey fallback
+        // Step 2: Survey fallback
         return surveyDuration(from: answers)
     }
 

@@ -1,9 +1,33 @@
 import SwiftUI
+import UIKit
 
 // ── MARK: Colours & Fonts ───────────────────────────────────
 
 extension Color {
     static let luniferBg        = Color(red: 0.071, green: 0.055, blue: 0.118)  // #120e1e
+}
+
+extension Font {
+    /// Loads Libre Franklin at a specific weight via the variable font's `wght` axis.
+    ///
+    /// Using `.custom("Libre Franklin", size:).weight(.light)` triggers a SwiftUI
+    /// font-descriptor warning because UIKit can't apply a weight modifier to a
+    /// variable font via the family-name lookup alone. This helper sets the wght
+    /// variation axis directly on the UIFontDescriptor, suppressing the warning
+    /// and producing the correct Light (300) rendering.
+    ///
+    /// - Parameters:
+    ///   - size:   Point size.
+    ///   - weight: Variable-font axis value (default 300 = Light). Pass 400 for Regular.
+    static func libreFranklin(size: CGFloat, weight: CGFloat = 300) -> Font {
+        let descriptor = UIFontDescriptor(fontAttributes: [
+            .family: "Libre Franklin",
+            kCTFontVariationAttribute as UIFontDescriptor.AttributeName: [
+                2003265652: weight   // wght axis tag (0x77676874)
+            ]
+        ])
+        return Font(UIFont(descriptor: descriptor, size: size))
+    }
 }
 
 // ── MARK: StarParticle ───────────────────────────────────────

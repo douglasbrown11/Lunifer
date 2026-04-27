@@ -6,8 +6,7 @@ import UserNotifications
 
 // ─────────────────────────────────────────────────────────────
 // SleepFeatureCollector (Background-Safe)
-// ─────────────────────────────────────────────────────────────
-// Collects the raw signals needed for sleep prediction.
+// ─────────────────────────────────────────────────────────────.
 //
 // KEY DESIGN: This collector works even when the app is suspended.
 // Instead of relying on real-time timers (which iOS kills in background),

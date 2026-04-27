@@ -1,5 +1,6 @@
 import Foundation
 
+
 final class AccountDataManager {
     static let shared = AccountDataManager()
 
@@ -8,7 +9,6 @@ final class AccountDataManager {
         SleepHistoryStore.shared.clearLocalData()
         SleepTrackingStore.shared.clearLocalData()
         AppPreferencesStore.shared.resetBatteryMonitoringState()
-        AppPreferencesStore.shared.resetWorkLocation()
         AppPreferencesStore.shared.resetAlarmOverride()
         // Clear WHOOP tokens and prefs
         KeychainHelper.delete(forKey: KeychainHelper.Keys.whoopAccessToken)

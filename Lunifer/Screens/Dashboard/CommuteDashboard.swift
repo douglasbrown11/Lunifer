@@ -36,15 +36,15 @@ struct CommuteStatusCard: View {
     /// The resolved Lunifer alarm time for today, used to derive the leave-by time.
     let alarmDate: Date
 
-    /// True when CommuteManager has a real destination to route to — either a
-    /// location string on today's first calendar event, or a saved work location.
+    /// True when CommuteManager has a real destination to route to — a
+    /// location string on today's first calendar event.
     /// When false, a nudge is shown encouraging the user to add event locations.
     private var hasRoutingDestination: Bool {
         if let loc = CalendarManager.shared.todayEvents.first?.location,
            !loc.trimmingCharacters(in: .whitespaces).isEmpty {
             return true
         }
-        return UserDefaults.standard.bool(forKey: AppPreferencesStore.Keys.workLocationSet)
+        return false
     }
 
     /// Live commute duration. Prefers the cached MKDirections result from
@@ -102,7 +102,7 @@ struct CommuteStatusCard: View {
                                 .font(.system(size: 14, weight: .light))
                                 .foregroundColor(Color(red: 0.706, green: 0.588, blue: 0.902))
                             Text("~\(commuteMinutes) min")
-                                .font(.custom("Libre Franklin", size: 36).weight(.light))
+                                .font(.libreFranklin(size: 36))
                                 .foregroundColor(Color.white.opacity(0.80))
                                 .monospacedDigit()
                         }
