@@ -2,6 +2,8 @@ import SwiftUI
 import UIKit
 import FirebaseAuth
 import GoogleSignIn
+import AuthenticationServices
+import CryptoKit
 
 // ── MARK: Types ──────────────────────────────────────────────
 
@@ -22,6 +24,11 @@ private func friendlySigninError(_ error: Error) -> String {
 
     // Microsoft / ASWebAuthenticationSession cancellation
     if nsError.domain == "com.apple.AuthenticationServices.WebAuthenticationSession" && nsError.code == 1 {
+        return "Sign in was cancelled."
+    }
+
+    // Sign in with Apple cancellation
+    if let asError = error as? ASAuthorizationError, asError.code == .canceled {
         return "Sign in was cancelled."
     }
 
@@ -99,6 +106,11 @@ struct LuniferSignin: View {
     @State private var loading = false
     @State private var errorMessage: String?
     @State private var agreedToTerms: Bool = false
+
+    /// Holds the raw (un-hashed) nonce while a Sign in with Apple flow is
+    /// in progress. Firebase requires the original nonce when exchanging
+    /// the Apple identity token for an `OAuthCredential`.
+    @State private var currentAppleNonce: String? = nil
 
     private var canSubmit: Bool { !email.isEmpty && password.count >= 6 }
 
@@ -205,6 +217,28 @@ struct LuniferSignin: View {
                         Rectangle().fill(Color.white.opacity(0.08)).frame(height: 1)
                     }
                     .padding(.bottom, 20)
+
+                    // ── Apple button ─────────────────────────
+                    // Required by App Store Review Guideline 4.8 whenever
+                    // any third-party login is offered. Visual style matches
+                    // the Google and Outlook buttons below.
+                    Button { handleAppleSignIn() } label: {
+                        HStack(spacing: 10) {
+                            AppleLogoView()
+                            Text("Continue with Apple")
+                                .font(.custom("DM Sans", size: 15))
+                                .foregroundColor(Color.white.opacity(0.8))
+                        }
+                        .frame(maxWidth: .infinity, alignment: .center)
+                        .frame(maxWidth: .infinity)
+                        .frame(height: 50)
+                        .background(
+                            RoundedRectangle(cornerRadius: 12)
+                                .fill(Color.white.opacity(0.06))
+                        )
+                    }
+                    .disabled(loading)
+                    .padding(.bottom, 12)
 
                     // ── Google button ────────────────────────
                     Button { handleGoogleSignIn() } label: {
@@ -349,6 +383,97 @@ struct LuniferSignin: View {
         }
     }
 
+    // ── MARK: Apple sign-in ──────────────────────────────────
+    // SETUP REQUIRED before this works:
+    //   1. Xcode → Lunifer target → Signing & Capabilities → + Capability → "Sign in with Apple".
+    //      (The Lunifer.entitlements file already contains the
+    //      `com.apple.developer.applesignin` key.)
+    //   2. Apple Developer Portal → Identifiers → select the Lunifer App ID →
+    //      enable "Sign In with Apple", then re-download the provisioning profile.
+    //   3. Firebase Console → Authentication → Sign-in method → enable Apple.
+    //      No client ID is needed for native iOS Apple Sign-In through Firebase.
+    //
+    // FLOW:
+    //   • Generate a random nonce and SHA-256-hash it.
+    //   • Pass the hashed nonce to ASAuthorizationAppleIDRequest so Apple
+    //     binds the resulting identity token to it.
+    //   • After Apple returns the identity token, exchange the *raw* nonce
+    //     plus identity token for a Firebase OAuthCredential.
+
+    private func handleAppleSignIn() {
+        guard agreedToTerms else {
+            withAnimation { errorMessage = "Please agree to the Terms of Service and Privacy Policy to continue." }
+            return
+        }
+
+        Task { @MainActor in
+            loading = true
+            errorMessage = nil
+
+            // Generate and remember the raw nonce. The hashed version is
+            // what we send to Apple; the raw version is what Firebase needs.
+            let rawNonce = AppleSignInNonce.makeRandomNonce()
+            currentAppleNonce = rawNonce
+
+            let request = ASAuthorizationAppleIDProvider().createRequest()
+            request.requestedScopes = [.fullName, .email]
+            request.nonce = AppleSignInNonce.sha256(rawNonce)
+
+            let coordinator = AppleSignInCoordinator()
+            let controller = ASAuthorizationController(authorizationRequests: [request])
+            controller.delegate = coordinator
+            controller.presentationContextProvider = coordinator
+
+            do {
+                let credential = try await coordinator.perform(controller: controller)
+
+                guard let identityTokenData = credential.identityToken,
+                      let identityTokenString = String(data: identityTokenData, encoding: .utf8) else {
+                    errorMessage = "Something went wrong. Please try again."
+                    currentAppleNonce = nil
+                    loading = false
+                    return
+                }
+
+                // Build a full-name string only when Apple actually returned
+                // name components (only on first sign-up). This becomes the
+                // Firebase Auth `displayName` for new users.
+                let fullName: String? = {
+                    guard let components = credential.fullName else { return nil }
+                    let formatter = PersonNameComponentsFormatter()
+                    let formatted = formatter.string(from: components)
+                    return formatted.isEmpty ? nil : formatted
+                }()
+
+                let firebaseCredential = OAuthProvider.appleCredential(
+                    withIDToken: identityTokenString,
+                    rawNonce: rawNonce,
+                    fullName: credential.fullName
+                )
+
+                let authResult = try await Auth.auth().signIn(with: firebaseCredential)
+
+                // First-sign-in only: Apple returns the user's name once.
+                // Persist it to the Firebase Auth profile so the rest of
+                // the app can read `Auth.auth().currentUser?.displayName`.
+                if let fullName,
+                   authResult.additionalUserInfo?.isNewUser == true,
+                   (authResult.user.displayName ?? "").isEmpty {
+                    let change = authResult.user.createProfileChangeRequest()
+                    change.displayName = fullName
+                    try? await change.commitChanges()
+                }
+
+                currentAppleNonce = nil
+                await onSignedIn(authResult.additionalUserInfo?.isNewUser ?? false)
+            } catch {
+                currentAppleNonce = nil
+                errorMessage = friendlySigninError(error)
+            }
+            loading = false
+        }
+    }
+
     // ── MARK: Microsoft sign-in ──────────────────────────────
     // SETUP REQUIRED before this works:
     //   1. Firebase Console → Authentication → Sign-in method → Add provider → Microsoft
@@ -454,6 +579,114 @@ struct LuniferSignin: View {
             }
             loading = false
         }
+    }
+}
+
+// ── MARK: Apple Sign-In helpers ──────────────────────────────
+// Random nonce generation + SHA-256 hashing, as required by
+// Firebase's Apple Sign-In integration. Reference:
+//   https://firebase.google.com/docs/auth/ios/apple
+
+private enum AppleSignInNonce {
+
+    /// Generates a cryptographically secure random nonce of the given
+    /// length. The character set matches Apple/Firebase's example.
+    static func makeRandomNonce(length: Int = 32) -> String {
+        precondition(length > 0)
+        let charset: [Character] = Array(
+            "0123456789ABCDEFGHIJKLMNOPQRSTUVXYZabcdefghijklmnopqrstuvwxyz-._"
+        )
+        var result = ""
+        var remaining = length
+        while remaining > 0 {
+            var randoms = [UInt8](repeating: 0, count: 16)
+            let status = SecRandomCopyBytes(kSecRandomDefault, randoms.count, &randoms)
+            if status != errSecSuccess {
+                fatalError("Unable to generate nonce. SecRandomCopyBytes failed with status \(status)")
+            }
+            for random in randoms where remaining > 0 {
+                if random < charset.count {
+                    result.append(charset[Int(random)])
+                    remaining -= 1
+                }
+            }
+        }
+        return result
+    }
+
+    /// Returns the lowercase hex SHA-256 of the input string.
+    static func sha256(_ input: String) -> String {
+        let data = Data(input.utf8)
+        let hashed = SHA256.hash(data: data)
+        return hashed.map { String(format: "%02x", $0) }.joined()
+    }
+}
+
+// ── MARK: Apple Sign-In coordinator ──────────────────────────
+// Bridges ASAuthorizationController's delegate callbacks into a
+// single async/await call. The coordinator keeps itself alive
+// for the duration of the auth flow by being captured in the
+// continuation's closure.
+
+private final class AppleSignInCoordinator: NSObject,
+                                            ASAuthorizationControllerDelegate,
+                                            ASAuthorizationControllerPresentationContextProviding {
+
+    private var continuation: CheckedContinuation<ASAuthorizationAppleIDCredential, Error>?
+    private var controller: ASAuthorizationController?
+
+    /// Performs the authorization flow and resumes with the resulting
+    /// Apple ID credential, or throws if the user cancels or an error
+    /// occurs.
+    func perform(controller: ASAuthorizationController) async throws -> ASAuthorizationAppleIDCredential {
+        try await withCheckedThrowingContinuation { continuation in
+            self.continuation = continuation
+            self.controller = controller
+            controller.performRequests()
+        }
+    }
+
+    // MARK: ASAuthorizationControllerDelegate
+
+    func authorizationController(controller: ASAuthorizationController,
+                                 didCompleteWithAuthorization authorization: ASAuthorization) {
+        defer { self.controller = nil }
+        guard let credential = authorization.credential as? ASAuthorizationAppleIDCredential else {
+            continuation?.resume(throwing: NSError(
+                domain: "LuniferSignin.Apple",
+                code: -1,
+                userInfo: [NSLocalizedDescriptionKey: "Unexpected Apple credential type."]
+            ))
+            continuation = nil
+            return
+        }
+        continuation?.resume(returning: credential)
+        continuation = nil
+    }
+
+    func authorizationController(controller: ASAuthorizationController,
+                                 didCompleteWithError error: Error) {
+        defer { self.controller = nil }
+        continuation?.resume(throwing: error)
+        continuation = nil
+    }
+
+    // MARK: ASAuthorizationControllerPresentationContextProviding
+
+    func presentationAnchor(for controller: ASAuthorizationController) -> ASPresentationAnchor {
+        // Find the topmost active key window so Apple's sheet has a valid anchor.
+        if let windowScene = UIApplication.shared.connectedScenes
+            .compactMap({ $0 as? UIWindowScene })
+            .first(where: { $0.activationState == .foregroundActive }),
+           let window = windowScene.windows.first(where: { $0.isKeyWindow }) {
+            return window
+        }
+        // Fallback: any window that exists. ASAuthorization requires a non-nil
+        // anchor, so returning a placeholder is preferable to crashing.
+        return UIApplication.shared.connectedScenes
+            .compactMap({ $0 as? UIWindowScene })
+            .flatMap({ $0.windows })
+            .first ?? UIWindow()
     }
 }
 

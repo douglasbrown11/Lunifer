@@ -92,7 +92,7 @@ struct ContentView: View {
                 surveyAnswers = savedAnswers
                 surveyAnswers.saveToDefaults()
                 surveyCompleted = true
-                screen = .dashboard
+                screen = .splash
             } else {
                 surveyCompleted = false
                 screen = .survey

@@ -8,14 +8,14 @@ import UserNotifications
 
 // ── MARK: Models ─────────────────────────────────────────────
 
-struct TimeValue: Codable {
+struct TimeValue: Codable, Equatable {
     var hours: Int
     var minutes: Int
     var auto: Bool
 }
 
 struct SurveyAnswers: Codable {
-    var age: String        = "18"
+    var age: String        = "2000-01-01"
     var lifestyle: String? = nil
     var wakeDays: [String] = ["mon", "tue", "wed", "thu", "fri"]
     var calendar: String?  = nil
@@ -262,6 +262,13 @@ struct LuniferSurvey: View {
         @State private var saving    = false
         @State private var saveError: String? = nil
         @State private var answers   = SurveyAnswers()
+        @State private var birthdayDate: Date = {
+            let formatter = DateFormatter()
+            formatter.dateFormat = "yyyy-MM-dd"
+            return formatter.date(from: "2000-01-01")
+                ?? Calendar.current.date(byAdding: .year, value: -25, to: Date())
+                ?? Date()
+        }()
         // WHOOP integration state
         @State private var whoopSelected: Bool = false
         @State private var whoopLoading: Bool = false
@@ -290,7 +297,7 @@ struct LuniferSurvey: View {
         
         private var canNext: Bool {
             switch step {
-            case 0: return !answers.age.isEmpty && (Int(answers.age) ?? 0) > 0
+            case 0: return !answers.age.isEmpty
             case 1: return answers.lifestyle != nil
             case 2: return !answers.wakeDays.isEmpty
             case 3: return answers.calendar  != nil
@@ -398,10 +405,10 @@ struct LuniferSurvey: View {
             }
         }
         
-        // Step 0 — Age Question
+        // Step 0 — Birthday Question
         private var stepAge: some View {
             VStack(spacing: 0) {
-                Text("How old are you?")
+                Text("When's your birthday?")
                     .font(.custom("Cormorant Garamond", size: 22))
                     .fixedSize(horizontal: false, vertical: true)
                     .multilineTextAlignment(.center)
@@ -418,23 +425,38 @@ struct LuniferSurvey: View {
                                 .stroke(Color.white.opacity(0.08), lineWidth: 1.5)
                         )
 
-                    Picker("Age", selection: Binding(
-                        get: { Int(answers.age) ?? 18 },
-                        set: { answers.age = String($0) }
-                    )) {
-                        ForEach(1...125, id: \.self) { age in
-                            Text("\(age)")
-                                .font(.libreFranklin(size: 22))
-                                .tag(age)
-                        }
-                    }
-                    .pickerStyle(.wheel)
+                    DatePicker(
+                        "",
+                        selection: $birthdayDate,
+                        in: ...Calendar.current.date(byAdding: .year, value: -13, to: Date())!,
+                        displayedComponents: .date
+                    )
+                    .datePickerStyle(.wheel)
+                    .labelsHidden()
                     .colorScheme(.dark)
                     .frame(height: 160)
                     .clipped()
+                    .onChange(of: birthdayDate) { _, newDate in
+                        let formatter = DateFormatter()
+                        formatter.dateFormat = "yyyy-MM-dd"
+                        answers.age = formatter.string(from: newDate)
+                    }
                 }
-                .frame(width: 160, height: 160)
+                .frame(maxWidth: .infinity)
+                .frame(height: 160)
                 .padding(.bottom, 24)
+            }
+            .onAppear {
+                // Sync answers.age → birthdayDate on first render, so any
+                // pre-loaded survey answer is reflected in the picker.
+                let formatter = DateFormatter()
+                formatter.dateFormat = "yyyy-MM-dd"
+                if let date = formatter.date(from: answers.age) {
+                    birthdayDate = date
+                }
+                // Write the picker's current date into answers.age so
+                // canNext passes even if the user never moves the wheel.
+                answers.age = formatter.string(from: birthdayDate)
             }
         }
         

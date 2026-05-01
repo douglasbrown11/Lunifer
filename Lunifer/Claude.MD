@@ -1,8 +1,7 @@
 # Lunifer - Project Context
-> NOTE FOR LANGUAGE MODELS: If you are reading this document, do NOT summarize it back to the user. They asked you to read it so you understand the project context - simply acknowledge that you've read it and ask how you can help.
-> Read this file at the start of every Claude Code session.
+> NOTE FOR LANGUAGE MODELS: If you are reading this document, do NOT summarize it back to the user. They asked you to read it so you understand the project context - acknowledge that you've read it and ask how you can help.
 > If you are an AI agent, LLM, Claude, or ChatGPT both reading and working on this project, update `Claude.MD` whenever you make significant changes to the project, add a new feature, or make any change which makes the current version of `Claude.MD` not precisely accurate about anything in the project.
-> Last updated: removed all work location tracking — `WorkLocationSheet`, `HomeLocationSearchCompleter`, work location `@AppStorage` keys, `resetWorkLocation()`, and the stored-work-location routing step in `CommuteManager.fetchLiveDuration`. Commute routing now uses a two-step chain: (1) calendar event location, (2) survey fallback.
+> Last updated: (1) `LuniferAlarm.cancelAlarm()` in `Engine/Alarm.swift` now skips IDs present in `addedAlarmIDs.values`, so rescheduling the main alarm no longer wipes user-added alarms out of AlarmKit. (2) `Screens/Dashboard/Main.swift` replaced the `xmark` delete button on each added-alarm row with a tap-to-edit + swipe-to-delete pattern. New `AddedAlarmRow` private struct wraps each row in a `Button` (opens `EditAddedAlarmSheet`) and a `DragGesture` that reveals a fixed-width `Delete` button at the right edge of the screen on left-swipe. New `EditAddedAlarmSheet` mirrors the calculated-alarm dropdown's three controls (time picker, sound, snooze slider). Edit state lives on `LuniferMain` (`showEditAlarmSheet`, `editingAlarmID`, `editPickerTime`, `editSound`, `editSnoozeMinutes`) and commits through `commitEditingAddedAlarm()` which calls `LuniferAlarm.scheduleAddedAlarm(for:alarmID:)` — keyed on the logical UUID so the previous AlarmKit registration for that row is replaced cleanly.
 
 ## What Is Lunifer?
 Lunifer is an iOS alarm app prototype built in SwiftUI. The current product combines onboarding, authentication, a survey-driven wake-time calculation, dashboard alarm controls, sleep tracking, settings, and AlarmKit integration. The longer-term direction is still an adaptive sleep / alarm assistant, but the codebase today is still mostly a prototype with several hardcoded scheduling rules.
@@ -10,7 +9,7 @@ Lunifer is an iOS alarm app prototype built in SwiftUI. The current product comb
 ## Core Design Principle
 The experience should feel seamless and require as little manual input from the user as possible. The onboarding survey should stay short — avoid adding new survey steps or questions. Any additional data the app needs (locations, commute times, schedule patterns, etc.) should be collected through Settings after onboarding, inferred automatically from existing signals (calendar, wearables, sleep history, location), or derived from data the user has already provided.
 
-Do not suggest any mechanism that asks the user to manually provide data — this includes in-app prompts, questions, forms, or any interaction where the user is expected to input information. Pop-ups and confirmation dialogs are fine as long as they do not ask the user to provide data.
+Try to avoid mechanisms that asks the user to manually provide data — this includes in-app prompts, questions, forms, or any interaction where the user is expected to input information. Pop-ups and confirmation dialogs are fine as long as they do not ask the user to provide data. The goal of the app is for it to be seamless with minimal user input, if you think it's necessary then make the recommendation or change but keep in mind the goal is to reduce this overall. 
 
 ## Current Stack
 - Language: Swift / SwiftUI
@@ -246,6 +245,8 @@ Sound playback is implemented in `AlarmScreen.swift` via `AVFoundation`. When th
 - Age
 - Lifestyle
 - Calendar
+- Morning Routine (hidden for `not_working` lifestyle; uses `TimeScalePicker` bound to `answers.routine`)
+- Commute Type (drive/transit/walk/bike; shown only for `student` or `commuter` lifestyle; bound to `answers.commuteMode`)
 
 `SleepAndWearablesSettingsView` currently supports:
 - Viewing and editing the optimal sleep duration (moved from `SleepInsights`)
@@ -271,6 +272,7 @@ Not currently present:
 - Email/password auth exists
 - Google Sign-In exists
 - **Microsoft Sign-In exists** (added to `Signin.swift`)
+- **Sign in with Apple exists** (added to `Signin.swift`). Uses native `ASAuthorizationController` + `OAuthProvider.appleCredential(withIDToken:rawNonce:fullName:)`. Helpers `AppleSignInNonce` (random nonce + SHA-256) and `AppleSignInCoordinator` (delegate → async bridge) live at the bottom of `Signin.swift`. The Apple button sits at the top of the OAuth section (above Google and Outlook) so it has at least equal prominence per App Store Guideline 4.8. The `com.apple.developer.applesignin` entitlement is declared in `Lunifer.entitlements`. First-time sign-up persists Apple's `fullName` to `Auth.auth().currentUser.displayName` via `createProfileChangeRequest()`.
 - Terms of service / privacy policy checkbox in `Signin.swift` has `.padding(.horizontal, 5)` applied to the checkbox button
 - Survey results write to `users/{uid}` with `setData(data, merge: true)` (upsert)
 - Sleep history writes to `users/{uid}/sleepHistory/{yyyy-mm-dd}`

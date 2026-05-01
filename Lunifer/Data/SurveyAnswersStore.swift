@@ -25,7 +25,7 @@ final class SurveyAnswersStore {
         guard let uid = Auth.auth().currentUser?.uid else { return }
 
         let data: [String: Any] = [
-            "age": Int(answers.age) ?? 0,
+            "age": answers.age,
             "lifestyle": answers.lifestyle ?? "",
             "wakeDays": answers.wakeDays,
             "calendar": answers.calendar ?? "",
@@ -69,7 +69,7 @@ final class SurveyAnswersStore {
         }
 
         let data: [String: Any] = [
-            "age": Int(answers.age) ?? 0,
+            "age": answers.age,
             "lifestyle": answers.lifestyle ?? "",
             "wakeDays": answers.wakeDays,
             "calendar": answers.calendar ?? "",
@@ -116,8 +116,13 @@ final class SurveyAnswersStore {
         guard let data = snapshot.data() else { return nil }
 
         var answers = SurveyAnswers()
-        if let age = data["age"] as? Int, age > 0 {
-            answers.age = String(age)
+        if let birthday = data["age"] as? String, !birthday.isEmpty {
+            // New format: birthday stored as "yyyy-MM-dd"
+            answers.age = birthday
+        } else if let legacyAge = data["age"] as? Int, legacyAge > 0 {
+            // Legacy format: plain integer age — keep as-is; SleepDurationModel
+            // handles both formats via its Int fallback path.
+            answers.age = String(legacyAge)
         }
         if let lifestyle = data["lifestyle"] as? String, !lifestyle.isEmpty {
             answers.lifestyle = lifestyle
