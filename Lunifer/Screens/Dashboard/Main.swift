@@ -56,6 +56,17 @@ struct LuniferMain: View {
     @State private var showMotionDeniedAlert = false
     @State private var showAlarmDeniedAlert = false
 
+    // ── Edit-added-alarm state ────────────────────────────────
+    // Tapping an added alarm card opens EditAddedAlarmSheet. The sheet
+    // mirrors the three controls in the calculated-alarm dropdown:
+    // time picker, sound, snooze minutes. The values are seeded from
+    // the row before the sheet appears and committed back via saveEdit().
+    @State private var showEditAlarmSheet   = false
+    @State private var editingAlarmID: UUID? = nil
+    @State private var editPickerTime: Date = Date()
+    @State private var editSound: String = "DeafultAlarm.wav"
+    @State private var editSnoozeMinutes: Int = 5
+
     private var isRunningPreview: Bool {
         ProcessInfo.processInfo.environment["XCODE_RUNNING_FOR_PREVIEWS"] == "1"
     }
@@ -71,6 +82,55 @@ struct LuniferMain: View {
         if let data = try? JSONEncoder().encode(addedAlarms) {
             UserDefaults.standard.set(data, forKey: "addedAlarms")
         }
+    }
+
+    // ── Edit helpers ──────────────────────────────────────────
+
+    /// Seeds the edit-sheet state from the tapped added alarm and presents
+    /// the sheet. The label is preserved as-is (the calculated alarm has no
+    /// label, so the edit menu intentionally exposes only time/sound/snooze).
+    private func startEditingAddedAlarm(_ alarm: AddedAlarm) {
+        editingAlarmID    = alarm.id
+        editPickerTime    = alarm.date
+        editSound         = alarm.sound
+        editSnoozeMinutes = alarm.snoozeMinutes
+        showEditAlarmSheet = true
+    }
+
+    /// Persists the edit-sheet values back to the added alarm and re-schedules
+    /// it through AlarmKit. scheduleAddedAlarm() is keyed on the logical UUID
+    /// so it cancels the previous AlarmKit registration for this row before
+    /// scheduling the new one.
+    private func commitEditingAddedAlarm() {
+        guard let id = editingAlarmID,
+              let index = addedAlarms.firstIndex(where: { $0.id == id }) else {
+            showEditAlarmSheet = false
+            editingAlarmID = nil
+            return
+        }
+        let existing = addedAlarms[index]
+        let updated = AddedAlarm(
+            id: id,
+            timestamp: editPickerTime.timeIntervalSince1970,
+            label: existing.label,
+            sound: editSound,
+            snoozeMinutes: editSnoozeMinutes
+        )
+        addedAlarms[index] = updated
+        saveAddedAlarms()
+        Task { await LuniferAlarm.shared.scheduleAddedAlarm(for: updated.date, alarmID: id) }
+        showEditAlarmSheet = false
+        editingAlarmID = nil
+    }
+
+    /// Removes the alarm from the dashboard list and tears down its AlarmKit
+    /// registration. Triggered by the swipe-revealed Delete button.
+    private func deleteAddedAlarm(id: UUID) {
+        withAnimation(.easeInOut(duration: 0.25)) {
+            addedAlarms.removeAll { $0.id == id }
+        }
+        saveAddedAlarms()
+        Task { await LuniferAlarm.shared.cancelAddedAlarm(id: id) }
     }
 
     // ── Resolved alarm date ───────────────────────────────────
@@ -568,109 +628,170 @@ struct LuniferMain: View {
             .allowsHitTesting(luniferEnabled)
 
             // ── Wake-up time ──────────────────────────────
-            VStack(spacing: 0) {
-                VStack(spacing: 12) {
-                    Text("TOMORROW'S ALARM")
-                        .font(.custom("DM Sans", size: 11))
-                        .foregroundColor(Color.white.opacity(0.35))
-                        .kerning(2.5)
+            // GeometryReader pins the alarm header at a fixed vertical position
+            // (screen center − 32) using a fixed-height spacer above it.
+            // The dropdown content lives in a ScrollView below the header so
+            // the alarm time never moves when the user opens or closes the menu.
+            GeometryReader { geo in
+                VStack(spacing: 0) {
+                    // Fixed spacer: positions alarm block center at geo.height/2 − 72,
+                    // matching the original centred layout with a 40pt upward shift.
+                    // 85 ≈ half the collapsed alarm-header height (label + dividers + time row + bedtime row).
+                    Spacer()
+                        .frame(height: max(0, geo.size.height / 2 - 72 - 85))
 
-                    // ── Divider above ─────────────────────────
-                    Rectangle()
-                        .fill(Color.white.opacity(0.95))
-                        .frame(height: 1)
+                    // ── Alarm header — never moves ────────────
+                    VStack(spacing: 12) {
+                        Text("TOMORROW'S ALARM")
+                            .font(.custom("DM Sans", size: 11))
+                            .foregroundColor(Color.white.opacity(0.35))
+                            .kerning(2.5)
 
-                    // ── Tappable alarm time row ───────────────
-                    ZStack {
-                        HStack(alignment: .lastTextBaseline, spacing: 6) {
-                            Text(wakeUpTime)
-                                .font(.libreFranklin(size: 63))
-                                .foregroundColor(Color.white.opacity(0.95))
-                                .monospacedDigit()
-                                .minimumScaleFactor(0.5)
-                                .lineLimit(1)
-                            Text(wakeUpPeriod)
-                                .font(.libreFranklin(size: 60))
-                                .foregroundColor(Color.white.opacity(0.95))
-                        }
-                        .frame(maxWidth: .infinity, alignment: .center)
+                        // ── Divider above ─────────────────────────
+                        Rectangle()
+                            .fill(Color.white.opacity(0.95))
+                            .frame(height: 1)
 
-                        HStack {
-                            Spacer()
-                            Image(systemName: "chevron.right")
-                                .font(.system(size: 14, weight: .light))
-                                .foregroundColor(Color.white.opacity(0.95))
-                                .rotationEffect(.degrees(alarmExpanded ? 90 : 0))
-                                .animation(.easeInOut(duration: 0.3), value: alarmExpanded)
-                                .padding(.trailing, 24)
-                        }
-                    }
-                    .frame(maxWidth: .infinity)
-                    .padding(.vertical, 8)
-                    .contentShape(Rectangle())
-                    .onTapGesture {
-                        withAnimation(.easeInOut(duration: 0.3)) {
-                            if !alarmExpanded {
-                                if !overrideActive {
-                                    overrideTime = calculatedAlarmDate
-                                }
-                                overrideActive = true
+                        // ── Tappable alarm time row ───────────────
+                        ZStack {
+                            HStack(alignment: .lastTextBaseline, spacing: 6) {
+                                Text(wakeUpTime)
+                                    .font(.libreFranklin(size: 63))
+                                    .foregroundColor(Color.white.opacity(0.95))
+                                    .monospacedDigit()
+                                    .minimumScaleFactor(0.5)
+                                    .lineLimit(1)
+                                Text(wakeUpPeriod)
+                                    .font(.libreFranklin(size: 60))
+                                    .foregroundColor(Color.white.opacity(0.95))
                             }
-                            alarmExpanded.toggle()
+                            .frame(maxWidth: .infinity, alignment: .center)
+
+                            HStack {
+                                Spacer()
+                                Image(systemName: "chevron.right")
+                                    .font(.system(size: 14, weight: .light))
+                                    .foregroundColor(Color.white.opacity(0.95))
+                                    .rotationEffect(.degrees(alarmExpanded ? 90 : 0))
+                                    .animation(.easeInOut(duration: 0.3), value: alarmExpanded)
+                                    .padding(.trailing, 24)
+                            }
+                        }
+                        .frame(maxWidth: .infinity)
+                        .padding(.vertical, 8)
+                        .contentShape(Rectangle())
+                        .onTapGesture {
+                            withAnimation(.easeInOut(duration: 0.3)) {
+                                if !alarmExpanded {
+                                    if !overrideActive {
+                                        overrideTime = calculatedAlarmDate
+                                    }
+                                    overrideActive = true
+                                }
+                                alarmExpanded.toggle()
+                            }
+                        }
+
+                        // ── Divider below ─────────────────────────
+                        Rectangle()
+                            .fill(Color.white.opacity(0.95))
+                            .frame(height: 1)
+
+                        // ── Bedtime → wake row ────────────────────
+                        if !alarmExpanded {
+                            HStack(spacing: 6) {
+                                Text(bedtimeString)
+                                    .font(.custom("DM Sans", size: 12))
+                                    .foregroundColor(Color.white.opacity(0.35))
+                                Image(systemName: "arrow.right")
+                                    .font(.system(size: 10, weight: .light))
+                                    .foregroundColor(Color.white.opacity(0.25))
+                                Text("\(wakeUpTime) \(wakeUpPeriod)")
+                                    .font(.custom("DM Sans", size: 12))
+                                    .foregroundColor(Color.white.opacity(0.35))
+                            }
+                            .frame(maxWidth: .infinity, alignment: .center)
+                            .padding(.top, 8)
+                            .transition(.opacity)
+                        }
+                    }
+                    .padding(.horizontal, 32)
+                    .onChange(of: overrideTime) { _, newTime in
+                        guard overrideActive else { return }
+                        overrideTimestamp = newTime.timeIntervalSince1970
+                        Task {
+                            await LuniferAlarm.shared.scheduleAlarm(for: newTime)
+                            await WakeNotification.shared.schedule(wakeDate: newTime, answers: answers)
                         }
                     }
 
-                    // ── Divider below ─────────────────────────
-                    Rectangle()
-                        .fill(Color.white.opacity(0.95))
-                        .frame(height: 1)
-
-                    // ── Bedtime → wake row ────────────────────
-                    if !alarmExpanded {
-                        HStack(spacing: 6) {
-                            Text(bedtimeString)
-                                .font(.custom("DM Sans", size: 12))
-                                .foregroundColor(Color.white.opacity(0.35))
-                            Image(systemName: "arrow.right")
-                                .font(.system(size: 10, weight: .light))
-                                .foregroundColor(Color.white.opacity(0.25))
-                            Text("\(wakeUpTime) \(wakeUpPeriod)")
-                                .font(.custom("DM Sans", size: 12))
-                                .foregroundColor(Color.white.opacity(0.35))
-                        }
-                        .frame(maxWidth: .infinity, alignment: .center)
-                        .padding(.top, 8)
-                        .transition(.opacity)
-                    }
-
-                    // ── Dropdown content ──────────────────────
+                    // ── Dropdown content (below alarm header, scrollable) ──
                     if alarmExpanded {
-                        VStack(spacing: 16) {
-                            Text("Set custom time")
-                                .font(.custom("DM Sans", size: 14))
-                                .foregroundColor(Color.white.opacity(0.85))
-                                .frame(maxWidth: .infinity, alignment: .center)
+                        ScrollView(showsIndicators: false) {
+                            VStack(spacing: 16) {
+                                Text("Set custom time")
+                                    .font(.custom("DM Sans", size: 14))
+                                    .foregroundColor(Color.white.opacity(0.85))
+                                    .frame(maxWidth: .infinity, alignment: .center)
 
-                            DatePicker("", selection: $overrideTime, displayedComponents: .hourAndMinute)
-                                .datePickerStyle(.wheel)
-                                .labelsHidden()
-                                .colorScheme(.dark)
-                                .frame(maxWidth: .infinity)
+                                DatePicker("", selection: $overrideTime, displayedComponents: .hourAndMinute)
+                                    .datePickerStyle(.wheel)
+                                    .labelsHidden()
+                                    .colorScheme(.dark)
+                                    .frame(maxWidth: .infinity)
 
-                            Button {
-                                showSound = true
-                            } label: {
-                                HStack {
-                                    Text("Sound")
-                                        .font(.custom("DM Sans", size: 14))
-                                        .foregroundColor(Color.white.opacity(0.85))
-                                    Spacer()
-                                    Text(SoundOption.displayName(for: selectedAlarmSound))
-                                        .font(.custom("DM Sans", size: 13))
-                                        .foregroundColor(Color.white.opacity(0.4))
-                                    Image(systemName: "chevron.right")
-                                        .font(.system(size: 13, weight: .light))
-                                        .foregroundColor(Color.white.opacity(0.35))
+                                Button {
+                                    showSound = true
+                                } label: {
+                                    HStack {
+                                        Text("Sound")
+                                            .font(.custom("DM Sans", size: 14))
+                                            .foregroundColor(Color.white.opacity(0.85))
+                                        Spacer()
+                                        Text(SoundOption.displayName(for: selectedAlarmSound))
+                                            .font(.custom("DM Sans", size: 13))
+                                            .foregroundColor(Color.white.opacity(0.4))
+                                        Image(systemName: "chevron.right")
+                                            .font(.system(size: 13, weight: .light))
+                                            .foregroundColor(Color.white.opacity(0.35))
+                                    }
+                                    .padding(.horizontal, 16)
+                                    .padding(.vertical, 14)
+                                    .background(
+                                        RoundedRectangle(cornerRadius: 12)
+                                            .fill(Color.white.opacity(0.04))
+                                            .overlay(
+                                                RoundedRectangle(cornerRadius: 12)
+                                                    .stroke(Color.white.opacity(0.08), lineWidth: 1)
+                                            )
+                                    )
+                                }
+                                .buttonStyle(.plain)
+
+                                // ── Snooze row ────────────────────────
+                                VStack(spacing: 8) {
+                                    HStack {
+                                        Text("Snooze")
+                                            .font(.custom("DM Sans", size: 14))
+                                            .foregroundColor(Color.white.opacity(0.85))
+                                        Spacer()
+                                        Text("\(snoozeMinutes) min")
+                                            .font(.custom("DM Sans", size: 13))
+                                            .foregroundColor(Color(red: 0.706, green: 0.588, blue: 0.902))
+                                            .monospacedDigit()
+                                    }
+                                    Slider(value: Binding(
+                                        get: { Double(snoozeMinutes) },
+                                        set: { snoozeMinutes = Int($0.rounded()) }
+                                    ), in: 1...30, step: 1)
+                                    .tint(Color(red: 0.627, green: 0.471, blue: 1.0))
+                                    HStack {
+                                        Text("1 min")
+                                        Spacer()
+                                        Text("30 min")
+                                    }
+                                    .font(.custom("DM Sans", size: 11))
+                                    .foregroundColor(Color.white.opacity(0.2))
                                 }
                                 .padding(.horizontal, 16)
                                 .padding(.vertical, 14)
@@ -683,128 +804,52 @@ struct LuniferMain: View {
                                         )
                                 )
                             }
-                            .buttonStyle(.plain)
-
-                            // ── Snooze row ────────────────────────
-                            VStack(spacing: 8) {
-                                HStack {
-                                    Text("Snooze")
-                                        .font(.custom("DM Sans", size: 14))
-                                        .foregroundColor(Color.white.opacity(0.85))
-                                    Spacer()
-                                    Text("\(snoozeMinutes) min")
-                                        .font(.custom("DM Sans", size: 13))
-                                        .foregroundColor(Color(red: 0.706, green: 0.588, blue: 0.902))
-                                        .monospacedDigit()
-                                }
-                                Slider(value: Binding(
-                                    get: { Double(snoozeMinutes) },
-                                    set: { snoozeMinutes = Int($0.rounded()) }
-                                ), in: 1...30, step: 1)
-                                .tint(Color(red: 0.627, green: 0.471, blue: 1.0))
-                                HStack {
-                                    Text("1 min")
-                                    Spacer()
-                                    Text("30 min")
-                                }
-                                .font(.custom("DM Sans", size: 11))
-                                .foregroundColor(Color.white.opacity(0.2))
-                            }
-                            .padding(.horizontal, 16)
-                            .padding(.vertical, 14)
-                            .background(
-                                RoundedRectangle(cornerRadius: 12)
-                                    .fill(Color.white.opacity(0.04))
-                                    .overlay(
-                                        RoundedRectangle(cornerRadius: 12)
-                                            .stroke(Color.white.opacity(0.08), lineWidth: 1)
-                                    )
-                            )
+                            .padding(.vertical, 12)
+                            .padding(.horizontal, 52)
                         }
-                        .padding(.vertical, 12)
-                        .padding(.horizontal, 45)
                         .transition(.opacity.combined(with: .offset(y: -8)))
                     }
 
-                }
-                .padding(.horizontal, 32)
-                .transition(.opacity)
-                .onChange(of: overrideTime) { _, newTime in
-                    guard overrideActive else { return }
-                    overrideTimestamp = newTime.timeIntervalSince1970
-                    Task {
-                        await LuniferAlarm.shared.scheduleAlarm(for: newTime)
-                        await WakeNotification.shared.schedule(wakeDate: newTime, answers: answers)
-                    }
-                }
-
-                // ── Added Alarm cards ─────────────────────
-                if !addedAlarms.isEmpty && !alarmExpanded {
-                    VStack(spacing: 0) {
-                        Text(addedAlarms.count == 1 ? "ADDED ALARM" : "ADDED ALARMS")
-                            .font(.custom("DM Sans", size: 10))
-                            .foregroundColor(Color.white.opacity(0.3))
-                            .kerning(2.5)
-                            .frame(maxWidth: .infinity, alignment: .leading)
-                            .padding(.horizontal, 60)
-                            .padding(.top, 20)
-                            .padding(.bottom, 4)
-
-                        ForEach(addedAlarms.sorted { $0.timestamp < $1.timestamp }) { alarm in
-                            VStack(spacing: 2) {
-                                if !alarm.label.isEmpty {
-                                    Text(alarm.label)
-                                        .font(.custom("DM Sans", size: 13))
-                                        .foregroundColor(Color.white.opacity(0.45))
-                                        .frame(maxWidth: .infinity, alignment: .leading)
-                                        .padding(.horizontal, 60)
-                                }
-
-                                HStack(spacing: 0) {
-                                    HStack(alignment: .lastTextBaseline, spacing: 5) {
-                                        Text(alarm.displayTime)
-                                            .font(.libreFranklin(size: 40))
-                                            .foregroundColor(Color.white.opacity(0.80))
-                                            .monospacedDigit()
-                                        Text(alarm.displayPeriod)
-                                            .font(.libreFranklin(size: 37))
-                                            .foregroundColor(Color.white.opacity(0.80))
-                                    }
-                                    Spacer()
-                                    Button {
-                                        let id = alarm.id
-                                        withAnimation(.easeInOut(duration: 0.25)) {
-                                            addedAlarms.removeAll { $0.id == id }
-                                        }
-                                        saveAddedAlarms()
-                                        Task { await LuniferAlarm.shared.cancelAddedAlarm(id: id) }
-                                    } label: {
-                                        Image(systemName: "xmark")
-                                            .font(.system(size: 13, weight: .light))
-                                            .foregroundColor(Color.white.opacity(0.4))
-                                            .padding(10)
-                                            .background(Circle().fill(Color.white.opacity(0.07)))
-                                    }
-                                }
+                    // ── Added Alarm cards ─────────────────────
+                    // Each row is a Button that opens EditAddedAlarmSheet on tap.
+                    // Swiping the row right-to-left reveals a Delete button at the
+                    // right edge of the screen; tapping Delete removes the alarm.
+                    if !addedAlarms.isEmpty && !alarmExpanded {
+                        VStack(spacing: 0) {
+                            Text(addedAlarms.count == 1 ? "ADDED ALARM" : "ADDED ALARMS")
+                                .font(.custom("DM Sans", size: 10))
+                                .foregroundColor(Color.white.opacity(0.3))
+                                .kerning(2.5)
+                                .frame(maxWidth: .infinity, alignment: .leading)
                                 .padding(.horizontal, 60)
+                                .padding(.top, 20)
+                                .padding(.bottom, 4)
+
+                            ForEach(addedAlarms.sorted { $0.timestamp < $1.timestamp }) { alarm in
+                                AddedAlarmRow(
+                                    alarm: alarm,
+                                    onTap: { startEditingAddedAlarm(alarm) },
+                                    onDelete: { deleteAddedAlarm(id: alarm.id) }
+                                )
+                                .padding(.bottom, 8)
                             }
-                            .padding(.bottom, 8)
                         }
+                        .offset(y: luniferEnabled ? 0 : 8)
                     }
-                    .offset(y: luniferEnabled ? 0 : 8)
-                }
 
-                // ── Commute card ──────────────────────────
-                if shouldShowCommuteCard && !alarmExpanded {
-                    CommuteStatusCard(answers: answers, alarmDate: calculatedAlarmDate)
-                        .transition(.opacity)
-                }
+                    // ── Commute card ──────────────────────────
+                    if shouldShowCommuteCard && !alarmExpanded {
+                        CommuteStatusCard(answers: answers, alarmDate: calculatedAlarmDate)
+                            .transition(.opacity)
+                    }
 
+                    Spacer()
+                }
+                .frame(maxWidth: .infinity)
             }
             .opacity(luniferEnabled ? 1 : 0)
             .allowsHitTesting(luniferEnabled)
-            .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .center)
-            .offset(y: -32)
+            .frame(maxWidth: .infinity, maxHeight: .infinity)
             .sheet(isPresented: $showAddAlarmSheet, onDismiss: {
                 withAnimation { addAlarmTapped = false }
             }) {
@@ -828,6 +873,20 @@ struct LuniferMain: View {
                     onCancel: {
                         showAddAlarmSheet = false
                     }
+                )
+                .presentationDetents([.large])
+                .presentationDragIndicator(.hidden)
+                .presentationBackground(Color(red: 0.06, green: 0.03, blue: 0.14))
+            }
+            .sheet(isPresented: $showEditAlarmSheet, onDismiss: {
+                editingAlarmID = nil
+            }) {
+                EditAddedAlarmSheet(
+                    pickerTime:    $editPickerTime,
+                    sound:         $editSound,
+                    snoozeMinutes: $editSnoozeMinutes,
+                    onSave:   { commitEditingAddedAlarm() },
+                    onCancel: { showEditAlarmSheet = false }
                 )
                 .presentationDetents([.large])
                 .presentationDragIndicator(.hidden)
@@ -1200,6 +1259,253 @@ struct AddedAlarmSoundView: View {
         ) else { return }
         audioPlayer = try? AVAudioPlayer(contentsOf: url)
         audioPlayer?.play()
+    }
+}
+
+// ── MARK: Added Alarm Row ─────────────────────────────────────
+//
+// Renders one added alarm on the dashboard. Wraps both an interactive
+// tap (opens EditAddedAlarmSheet) and a horizontal drag gesture that
+// reveals a Delete button at the right edge of the screen.
+//
+// Layout strategy: a GeometryReader gives us the row's available width,
+// so the alarm-content button can be sized to exactly that width and a
+// fixed-width Delete button can sit immediately to the right of it inside
+// the same HStack. The HStack is offset leftward when the user swipes,
+// and the row clips its bounds so the Delete button only enters the
+// visible area as the alarm content slides off-screen.
+
+private struct AddedAlarmRow: View {
+    let alarm: AddedAlarm
+    let onTap: () -> Void
+    let onDelete: () -> Void
+
+    @State private var dragOffset: CGFloat = 0
+    @State private var revealed: Bool = false
+
+    private let deleteWidth: CGFloat = 90
+    private let revealThreshold: CGFloat = 40
+
+    /// Row height adapts to whether the alarm has a label so the layout
+    /// stays compact when there isn't one.
+    private var rowHeight: CGFloat { alarm.label.isEmpty ? 56 : 78 }
+
+    var body: some View {
+        GeometryReader { geo in
+            HStack(spacing: 0) {
+                // ── Alarm content ─────────────────────────────
+                Button {
+                    if revealed {
+                        // First tap on a revealed row collapses the swipe.
+                        withAnimation(.easeOut(duration: 0.25)) {
+                            dragOffset = 0
+                            revealed = false
+                        }
+                    } else {
+                        onTap()
+                    }
+                } label: {
+                    VStack(alignment: .leading, spacing: 2) {
+                        if !alarm.label.isEmpty {
+                            Text(alarm.label)
+                                .font(.custom("DM Sans", size: 13))
+                                .foregroundColor(Color.white.opacity(0.45))
+                        }
+                        HStack(alignment: .lastTextBaseline, spacing: 5) {
+                            Text(alarm.displayTime)
+                                .font(.libreFranklin(size: 40))
+                                .foregroundColor(Color.white.opacity(0.80))
+                                .monospacedDigit()
+                            Text(alarm.displayPeriod)
+                                .font(.libreFranklin(size: 37))
+                                .foregroundColor(Color.white.opacity(0.80))
+                        }
+                    }
+                    .frame(width: geo.size.width, height: rowHeight, alignment: .leading)
+                    .padding(.leading, 60)
+                    .padding(.trailing, 24)
+                    .contentShape(Rectangle())
+                }
+                .buttonStyle(.plain)
+
+                // ── Delete button (revealed by swipe) ─────────
+                Button(action: onDelete) {
+                    Text("Delete")
+                        .font(.custom("DM Sans", size: 14).weight(.medium))
+                        .foregroundColor(.white)
+                        .frame(width: deleteWidth, height: rowHeight)
+                        .background(Color(red: 0.78, green: 0.22, blue: 0.28))
+                }
+                .buttonStyle(.plain)
+            }
+            .offset(x: dragOffset)
+            .gesture(
+                DragGesture(minimumDistance: 10)
+                    .onChanged { value in
+                        let dx = value.translation.width
+                        // Ignore predominantly vertical drags so the parent
+                        // TabView swipe and ScrollView scrolling still work.
+                        guard abs(dx) > abs(value.translation.height) else { return }
+                        if revealed {
+                            // From the revealed state, allow rightward drag to close.
+                            dragOffset = max(-deleteWidth, min(0, -deleteWidth + dx))
+                        } else {
+                            // From the closed state, allow leftward drag to reveal.
+                            // A small overshoot past -deleteWidth gives a rubber-band feel.
+                            dragOffset = max(-deleteWidth - 20, min(0, dx))
+                        }
+                    }
+                    .onEnded { value in
+                        let dx = value.translation.width
+                        withAnimation(.easeOut(duration: 0.25)) {
+                            if revealed {
+                                if dx > revealThreshold {
+                                    dragOffset = 0
+                                    revealed = false
+                                } else {
+                                    dragOffset = -deleteWidth
+                                }
+                            } else {
+                                if dx < -revealThreshold {
+                                    dragOffset = -deleteWidth
+                                    revealed = true
+                                } else {
+                                    dragOffset = 0
+                                }
+                            }
+                        }
+                    }
+            )
+        }
+        .frame(height: rowHeight)
+        .clipped()
+    }
+}
+
+// ── MARK: Edit Added Alarm Sheet ──────────────────────────────
+//
+// Sheet shown when the user taps an existing added-alarm row. Mirrors
+// the three controls available in the calculated-alarm dropdown menu:
+// time picker, sound picker, snooze slider. Bindings let the parent
+// view seed and read back the edits without this sheet owning the
+// underlying AddedAlarm value directly.
+
+struct EditAddedAlarmSheet: View {
+    @Binding var pickerTime: Date
+    @Binding var sound: String
+    @Binding var snoozeMinutes: Int
+    let onSave:   () -> Void
+    let onCancel: () -> Void
+
+    var body: some View {
+        NavigationStack {
+            ZStack {
+                Color(red: 0.06, green: 0.03, blue: 0.14).ignoresSafeArea()
+
+                VStack(spacing: 0) {
+
+                    // ── Header ────────────────────────────────
+                    HStack {
+                        Button(action: onCancel) {
+                            Text("Cancel")
+                                .font(.custom("DM Sans", size: 14))
+                                .foregroundColor(Color.white.opacity(0.45))
+                        }
+                        Spacer()
+                        Text("Edit Alarm")
+                            .font(.custom("Cormorant Garamond", size: 28).weight(.light))
+                            .foregroundColor(Color.white.opacity(0.90))
+                        Spacer()
+                        Button(action: onSave) {
+                            Text("Save")
+                                .font(.custom("DM Sans", size: 14).weight(.medium))
+                                .foregroundColor(Color(red: 0.706, green: 0.588, blue: 0.902))
+                        }
+                    }
+                    .padding(.horizontal, 24)
+                    .padding(.top, 24)
+                    .padding(.bottom, 8)
+
+                    // ── Time picker ───────────────────────────
+                    DatePicker("", selection: $pickerTime, displayedComponents: .hourAndMinute)
+                        .datePickerStyle(.wheel)
+                        .labelsHidden()
+                        .colorScheme(.dark)
+                        .frame(maxWidth: .infinity)
+                        .padding(.horizontal, 24)
+                        .padding(.vertical, 8)
+
+                    // ── Sound row ─────────────────────────────
+                    NavigationLink(destination: AddedAlarmSoundView(sound: $sound)) {
+                        HStack {
+                            Text("Sound")
+                                .font(.custom("DM Sans", size: 15))
+                                .foregroundColor(Color.white.opacity(0.85))
+                            Spacer()
+                            Text(SoundOption.displayName(for: sound))
+                                .font(.custom("DM Sans", size: 14))
+                                .foregroundColor(Color.white.opacity(0.35))
+                            Image(systemName: "chevron.right")
+                                .font(.system(size: 12, weight: .light))
+                                .foregroundColor(Color.white.opacity(0.25))
+                        }
+                        .padding(.horizontal, 20)
+                        .padding(.vertical, 16)
+                        .background(
+                            RoundedRectangle(cornerRadius: 14)
+                                .fill(Color.white.opacity(0.04))
+                                .overlay(
+                                    RoundedRectangle(cornerRadius: 14)
+                                        .stroke(Color.white.opacity(0.08), lineWidth: 1)
+                                )
+                        )
+                    }
+                    .buttonStyle(.plain)
+                    .padding(.horizontal, 24)
+                    .padding(.bottom, 10)
+
+                    // ── Snooze row ────────────────────────────
+                    VStack(spacing: 8) {
+                        HStack {
+                            Text("Snooze")
+                                .font(.custom("DM Sans", size: 15))
+                                .foregroundColor(Color.white.opacity(0.85))
+                            Spacer()
+                            Text("\(snoozeMinutes) min")
+                                .font(.custom("DM Sans", size: 14))
+                                .foregroundColor(Color(red: 0.706, green: 0.588, blue: 0.902))
+                                .monospacedDigit()
+                        }
+                        Slider(value: Binding(
+                            get: { Double(snoozeMinutes) },
+                            set: { snoozeMinutes = Int($0.rounded()) }
+                        ), in: 1...30, step: 1)
+                        .tint(Color(red: 0.627, green: 0.471, blue: 1.0))
+                        HStack {
+                            Text("1 min")
+                            Spacer()
+                            Text("30 min")
+                        }
+                        .font(.custom("DM Sans", size: 11))
+                        .foregroundColor(Color.white.opacity(0.2))
+                    }
+                    .padding(.horizontal, 20)
+                    .padding(.vertical, 16)
+                    .background(
+                        RoundedRectangle(cornerRadius: 14)
+                            .fill(Color.white.opacity(0.04))
+                            .overlay(
+                                RoundedRectangle(cornerRadius: 14)
+                                    .stroke(Color.white.opacity(0.08), lineWidth: 1)
+                            )
+                    )
+                    .padding(.horizontal, 24)
+
+                    Spacer()
+                }
+            }
+            .toolbar(.hidden, for: .navigationBar)
+        }
     }
 }
 

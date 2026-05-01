@@ -53,3 +53,19 @@ struct MicrosoftLogoView: View {
         .frame(width: 20, height: 20)
     }
 }
+
+// ── MARK: Apple logo ──────────────────────────────────────────
+// Sized to match GoogleLogoView and MicrosoftLogoView (20×20 frame).
+// Renders white so it sits cleanly on the same translucent button
+// background used for the other providers.
+
+struct AppleLogoView: View {
+    var body: some View {
+        Image(systemName: "applelogo")
+            .resizable()
+            .scaledToFit()
+            .foregroundColor(.white)
+            .frame(width: 16, height: 20)
+            .frame(width: 20, height: 20)
+    }
+}

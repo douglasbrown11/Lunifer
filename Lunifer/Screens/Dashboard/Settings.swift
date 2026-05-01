@@ -1,4 +1,10 @@
-import SwiftUI, import UIKit, import Combine, import FirebaseCore, import FirebaseAuth, import FirebaseFirestore, import GoogleSignIn
+import SwiftUI
+import UIKit
+import Combine
+import FirebaseCore
+import FirebaseAuth
+import FirebaseFirestore
+import GoogleSignIn
 
 // ── MARK: Settings (root) ─────────────────────────────────────
 
@@ -470,6 +476,62 @@ struct AboutYouSettingsView: View {
         }
     }
 
+    private var routineLabel: String {
+        if answers.routine.auto { return "Auto" }
+        let h = answers.routine.hours
+        let m = answers.routine.minutes
+        if h == 0 { return "\(m)m" }
+        if m == 0 { return "\(h)h" }
+        return "\(h)h \(m)m"
+    }
+
+    private var commuteModeLabel: String {
+        switch answers.commuteMode {
+        case "drive":   return "Drive"
+        case "transit": return "Transit"
+        case "walk":    return "Walk"
+        case "bike":    return "Bike"
+        default:        return "Not set"
+        }
+    }
+
+    /// Computes the user's current age from the stored birthday string ("yyyy-MM-dd").
+    /// Falls back gracefully for legacy plain-integer age data.
+    private var ageDisplayString: String {
+        let formatter = DateFormatter()
+        formatter.dateFormat = "yyyy-MM-dd"
+        if let birthday = formatter.date(from: answers.age) {
+            let years = Calendar.current.dateComponents([.year], from: birthday, to: Date()).year ?? 0
+            return "\(years)"
+        }
+        // Legacy: already a plain age number
+        return answers.age
+    }
+
+    /// Returns a Binding<Date> backed by answers.age for the DatePicker.
+    private var birthdayBinding: Binding<Date> {
+        Binding(
+            get: {
+                let formatter = DateFormatter()
+                formatter.dateFormat = "yyyy-MM-dd"
+                return formatter.date(from: answers.age)
+                    ?? Calendar.current.date(byAdding: .year, value: -25, to: Date())
+                    ?? Date()
+            },
+            set: { newDate in
+                let formatter = DateFormatter()
+                formatter.dateFormat = "yyyy-MM-dd"
+                answers.age = formatter.string(from: newDate)
+            }
+        )
+    }
+
+    private var aboutYouDivider: some View {
+        Divider()
+            .background(Color.white.opacity(0.08))
+            .padding(.leading, 16)
+    }
+
     var body: some View {
         ZStack(alignment: .top) {
             Color.luniferBg.ignoresSafeArea()
@@ -495,15 +557,19 @@ struct AboutYouSettingsView: View {
 
                 ScrollView(showsIndicators: false) {
                     VStack(spacing: 0) {
-                        aboutYouRow(label: "Age", value: answers.age, field: "age")
-                        Divider()
-                            .background(Color.white.opacity(0.08))
-                            .padding(.leading, 16)
+                        aboutYouRow(label: "Age", value: ageDisplayString, field: "age")
+                        aboutYouDivider
                         aboutYouRow(label: "Lifestyle", value: lifestyleLabel, field: "lifestyle")
-                        Divider()
-                            .background(Color.white.opacity(0.08))
-                            .padding(.leading, 16)
+                        aboutYouDivider
                         aboutYouRow(label: "Calendar", value: calendarLabel, field: "calendar")
+                        if answers.lifestyle != "not_working" {
+                            aboutYouDivider
+                            aboutYouRow(label: "Morning Routine", value: routineLabel, field: "routine")
+                        }
+                        if isCommuterUser {
+                            aboutYouDivider
+                            aboutYouRow(label: "Commute Type", value: commuteModeLabel, field: "commuteMode")
+                        }
                     }
                     .background(
                         RoundedRectangle(cornerRadius: 12)
@@ -528,6 +594,14 @@ struct AboutYouSettingsView: View {
             answers.saveToFirestore()
         }
         .onChange(of: answers.calendar) { _, _ in
+            answers.saveToDefaults()
+            answers.saveToFirestore()
+        }
+        .onChange(of: answers.routine) { _, _ in
+            answers.saveToDefaults()
+            answers.saveToFirestore()
+        }
+        .onChange(of: answers.commuteMode) { _, _ in
             answers.saveToDefaults()
             answers.saveToFirestore()
         }
@@ -569,15 +643,14 @@ struct AboutYouSettingsView: View {
                 Group {
                     switch field {
                     case "age":
-                        Picker("Age", selection: Binding(
-                            get: { Int(answers.age) ?? 18 },
-                            set: { answers.age = String($0) }
-                        )) {
-                            ForEach(1...125, id: \.self) { age in
-                                Text("\(age)").tag(age)
-                            }
-                        }
-                        .pickerStyle(.wheel)
+                        DatePicker(
+                            "",
+                            selection: birthdayBinding,
+                            in: ...Calendar.current.date(byAdding: .year, value: -13, to: Date())!,
+                            displayedComponents: .date
+                        )
+                        .datePickerStyle(.wheel)
+                        .labelsHidden()
                         .colorScheme(.dark)
                         .frame(height: 120)
                         .clipped()
@@ -656,6 +729,62 @@ struct AboutYouSettingsView: View {
                                                 RoundedRectangle(cornerRadius: 10)
                                                     .stroke(
                                                         answers.calendar == id
+                                                        ? Color(red: 0.627, green: 0.471, blue: 1.0).opacity(0.55)
+                                                        : Color.white.opacity(0.06),
+                                                        lineWidth: 1
+                                                    )
+                                            )
+                                    )
+                                }
+                                .buttonStyle(.plain)
+                            }
+                        }
+
+                    case "routine":
+                        TimeScalePicker(
+                            value: $answers.routine,
+                            autoLabel: "Let Lunifer figure this out"
+                        )
+
+                    case "commuteMode":
+                        VStack(spacing: 8) {
+                            ForEach([
+                                ("drive",   "car.fill",    "Drive"),
+                                ("transit", "tram.fill",   "Transit"),
+                                ("walk",    "figure.walk", "Walk"),
+                                ("bike",    "bicycle",     "Bike")
+                            ], id: \.0) { mode, icon, title in
+                                Button {
+                                    answers.commuteMode = mode
+                                } label: {
+                                    HStack {
+                                        Image(systemName: icon)
+                                            .font(.system(size: 14))
+                                            .foregroundColor(answers.commuteMode == mode
+                                                ? Color(red: 0.627, green: 0.471, blue: 1.0)
+                                                : Color.white.opacity(0.45))
+                                            .frame(width: 24)
+                                        Text(title)
+                                            .font(.custom("DM Sans", size: 14))
+                                            .foregroundColor(answers.commuteMode == mode
+                                                ? Color.white.opacity(0.95)
+                                                : Color.white.opacity(0.7))
+                                        Spacer()
+                                        if answers.commuteMode == mode {
+                                            Image(systemName: "checkmark")
+                                                .font(.system(size: 12, weight: .medium))
+                                                .foregroundColor(Color(red: 0.627, green: 0.471, blue: 1.0))
+                                        }
+                                    }
+                                    .padding(.horizontal, 14)
+                                    .padding(.vertical, 12)
+                                    .background(
+                                        RoundedRectangle(cornerRadius: 10)
+                                            .fill(Color.white.opacity(0.03))
+                                            .overlay(
+                                                RoundedRectangle(cornerRadius: 10)
+                                                    .stroke(
+                                                        answers.commuteMode == mode
                                                         ? Color(red: 0.627, green: 0.471, blue: 1.0).opacity(0.55)
                                                         : Color.white.opacity(0.06),
                                                         lineWidth: 1

@@ -24,10 +24,19 @@ struct SleepDurationModel {
     /// Returns the recommended sleep duration in hours based on age.
     /// Uses the midpoint of the National Sleep Foundation range.
     ///
-    /// - Parameter ageString: The user's age as a string (from SurveyAnswers.age)
+    /// - Parameter ageString: The user's birthday as "yyyy-MM-dd" (from SurveyAnswers.age),
+    ///   or a plain age integer string for legacy data.
     /// - Returns: Recommended hours of sleep (e.g. 8.5)
     static func baselineForAge(_ ageString: String) -> Double {
-        let age = Int(ageString) ?? 22  // default to young adult if unparseable
+        let age: Int
+        let birthdayFormatter = DateFormatter()
+        birthdayFormatter.dateFormat = "yyyy-MM-dd"
+        if let birthday = birthdayFormatter.date(from: ageString) {
+            age = Calendar.current.dateComponents([.year], from: birthday, to: Date()).year ?? 22
+        } else {
+            // Legacy fallback: plain integer age string ("18", "22", etc.)
+            age = Int(ageString) ?? 22
+        }
 
         switch age {
         case ...13:

@@ -282,12 +282,22 @@ class LuniferAlarm: ObservableObject {
     // ─────────────────────────────────────────────────────────
     // SECTION 5: CANCELLING THE ALARM
     // ─────────────────────────────────────────────────────────
-    // Cancels all active Lunifer alarms.
-    // Called before scheduling a new alarm, or if the user
-    // manually turns off the alarm from the dashboard.
+    // Cancels the main Lunifer alarm. Called before scheduling a new
+    // alarm, when the user disables Lunifer, or when the adaptive
+    // engine reschedules.
+    //
+    // IMPORTANT: This must NOT touch user-added alarms. activeAlarms
+    // mirrors every AlarmKit alarm scheduled by this app, including the
+    // ones the user added manually from the dashboard. Skipping any ID
+    // present in addedAlarmIDs.values keeps those alarms intact across
+    // every main-alarm reschedule. Without this filter, opening the
+    // dashboard, adapting the alarm, or toggling Lunifer would silently
+    // wipe every added alarm out of AlarmKit while leaving orphan cards
+    // visible on the dashboard.
 
     func cancelAlarm() async {
-        for alarm in activeAlarms {
+        let preservedIDs = Set(addedAlarmIDs.values)
+        for alarm in activeAlarms where !preservedIDs.contains(alarm.id) {
             do {
                 try manager.cancel(id: alarm.id)  // Tell AlarmKit to remove this alarm
             } catch {
@@ -430,15 +440,22 @@ class LuniferAlarm: ObservableObject {
                 ? 60
                 : a.routine.hours * 60 + a.routine.minutes
             if a.lifestyle == "student" || a.lifestyle == "commuter" {
-                commuteMins = a.commute.auto
-                    ? 30
-                    : a.commute.hours * 60 + a.commute.minutes
+                if a.commute.auto {
+                    // Prefer the live GPS-routed duration cached by CommuteManager;
+                    // fall back to 30 min only if no live fetch has run yet.
+                    let live = CommuteManager.shared.currentDurationMinutes
+                    commuteMins = live > 0 ? live : 30
+                } else {
+                    commuteMins = a.commute.hours * 60 + a.commute.minutes
+                }
             } else {
                 commuteMins = 0
             }
         } else {
             routineMins = 60
-            commuteMins = 30
+            // Same live-first logic when answers aren't available.
+            let live = CommuteManager.shared.currentDurationMinutes
+            commuteMins = live > 0 ? live : 30
         }
 
         // ── Calendar constraint ──────────────────────────────
