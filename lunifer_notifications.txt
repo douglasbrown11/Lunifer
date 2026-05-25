@@ -1,0 +1,35 @@
+LUNIFER NOTIFICATIONS
+=====================
+All notifications respect a master "allNotificationsEnabled" toggle in Settings.swift.
+
+
+1. BATTERY WARNING  (BatteryAlarmNotification.swift)
+   Title: "Charge your phone tonight"
+   Body: "Your phone is at X% and is predicted to die before your [alarm] alarm. Plug in before you sleep."
+   Fires: Within 2 hours of estimated bedtime when battery is projected to hit 0% before the nearest alarm. Once per alarm; silent while charging.
+
+
+2. WAKE REMINDER  (WakeNotification.swift)
+   Title: "[bedtime] → [wake time]"  e.g. "11:00 PM → 7:00 AM"
+   Body: "Lunifer is waking you up at [wake time] tomorrow"
+   Fires: 1 hour before estimated bedtime.
+
+
+3. COMMUTE LEAVE REMINDER  (CommuteNotification.swift)
+   Title: "Time to start getting ready"
+   Body: "Leave by [time] to arrive on time"
+   Fires: 15 minutes before calculated leave time. Commuter/student users only.
+
+
+4. COMMUTE DELTA ALERT  (CommuteNotification.swift)
+   Title: "Leave earlier — traffic is heavier" or "You have more time — traffic has cleared"
+   Body: Updated leave-by time.
+   Fires: Immediately when live routing detects a ≥5-minute shift in commute duration.
+
+
+5. REST DAY EARLY EVENT PROMPT  (RestDayEventNotification.swift)
+   Title: "Early event tomorrow"
+   Body: '"[Event]" starts at [time]. Want Lunifer to wake you at [time]?'
+   Actions: "Wake me up" / "Not needed"
+   Fires: At 7:00 PM (or immediately if already past 7 PM) when tomorrow is a rest day but
+          the user has a calendar event before 10:00 AM. Once per calendar day.

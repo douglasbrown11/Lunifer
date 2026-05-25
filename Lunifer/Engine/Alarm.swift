@@ -37,6 +37,10 @@ class LuniferAlarm: ObservableObject {
     static let shared = LuniferAlarm()
     private let manager = AlarmManager.shared
 
+    private init() {
+        loadAddedAlarmIDs()
+    }
+
     // ── @Published variables ──────────────────────────────────
     // "@Published" means: whenever these values change, any SwiftUI view
     // that's watching them will automatically refresh.
@@ -46,6 +50,17 @@ class LuniferAlarm: ObservableObject {
     @Published var activeAlarms: [Alarm] = []       // List of currently scheduled alarms
     @Published var scheduledWakeTime: Date? = nil   // The time the next alarm is set for
     @Published var alertingAlarm: Alarm? = nil      // The alarm currently firing (nil = no alarm ringing)
+
+    /// Snooze duration (minutes) for whichever alarm is currently alerting.
+    /// Updated in startMonitoring() when an alarm transitions into the alerting state.
+    /// The alarm screen reads this so it always uses the right per-alarm snooze setting.
+    @Published var alertingAlarmSnoozeMinutes: Int = 5
+
+    /// Sound filename for whichever alarm is currently alerting.
+    /// Updated in startMonitoring() alongside alertingAlarmSnoozeMinutes — added alarms
+    /// carry their own sound choice, so the alarm screen must read this rather than the
+    /// global selectedAlarmSound AppStorage key.
+    @Published var alertingAlarmSound: String = "DeafultAlarm.wav"
 
     /// True when the user has explicitly denied alarm permission.
     /// Used by the dashboard to drive the "must allow" alert loop.
@@ -219,10 +234,128 @@ class LuniferAlarm: ObservableObject {
     // Stored separately from the main Lunifer alarm so cancelling
     // one does not affect the other.
 
-    /// Maps logical AddedAlarm.id → AlarmKit UUID
+    /// Maps logical AddedAlarm.id → AlarmKit UUID.
+    /// Persisted to UserDefaults so the mapping survives app restarts — AlarmKit
+    /// assigns its own UUIDs at scheduling time, so this is the only way to
+    /// connect a firing AlarmKit alarm back to its Lunifer AddedAlarm record.
     @Published var addedAlarmIDs: [UUID: UUID] = [:]
 
-    func scheduleAddedAlarm(for date: Date, alarmID: UUID) async {
+    private static let addedAlarmIDMapKey = "addedAlarmIDMap"
+
+    /// Loads the persisted logical→AlarmKit UUID map from UserDefaults.
+    /// Called at init so the map is ready before startMonitoring() runs.
+    private func loadAddedAlarmIDs() {
+        guard let raw = UserDefaults.standard.dictionary(forKey: Self.addedAlarmIDMapKey)
+                as? [String: String] else { return }
+        var restored: [UUID: UUID] = [:]
+        for (logicalStr, alarmKitStr) in raw {
+            if let logical = UUID(uuidString: logicalStr),
+               let alarmKit = UUID(uuidString: alarmKitStr) {
+                restored[logical] = alarmKit
+            }
+        }
+        addedAlarmIDs = restored
+    }
+
+    /// Writes the current logical→AlarmKit UUID map to UserDefaults.
+    /// Called explicitly after every add or remove so the persisted copy stays in sync.
+    private func persistAddedAlarmIDs() {
+        var raw: [String: String] = [:]
+        for (logical, alarmKit) in addedAlarmIDs {
+            raw[logical.uuidString] = alarmKit.uuidString
+        }
+        UserDefaults.standard.set(raw, forKey: Self.addedAlarmIDMapKey)
+    }
+
+    /// Reads the snooze duration for a logical AddedAlarm.id directly from the
+    /// persisted addedAlarms JSON in UserDefaults. This avoids maintaining a
+    /// redundant in-memory copy — the snooze is already stored on the AddedAlarm
+    /// struct itself and written to UserDefaults whenever an alarm is saved.
+    private func persistedSnoozeMinutes(for logicalID: UUID) -> Int {
+        guard let data = UserDefaults.standard.data(forKey: "addedAlarms"),
+              let alarms = try? JSONDecoder().decode([PersistedAddedAlarm].self, from: data),
+              let match = alarms.first(where: { $0.id == logicalID })
+        else { return 5 }
+        return match.snoozeMinutes
+    }
+
+    private func persistedSound(for logicalID: UUID) -> String {
+        guard let data = UserDefaults.standard.data(forKey: "addedAlarms"),
+              let alarms = try? JSONDecoder().decode([PersistedAddedAlarm].self, from: data),
+              let match = alarms.first(where: { $0.id == logicalID })
+        else { return UserDefaults.standard.string(forKey: "selectedAlarmSound") ?? "DeafultAlarm.wav" }
+        return match.sound
+    }
+
+    /// Returns the repeat days for a logical AddedAlarm from persisted JSON.
+    private func persistedRepeatDays(for logicalID: UUID) -> [String] {
+        guard let data = UserDefaults.standard.data(forKey: "addedAlarms"),
+              let alarms = try? JSONDecoder().decode([PersistedAddedAlarm].self, from: data),
+              let match = alarms.first(where: { $0.id == logicalID })
+        else { return [] }
+        return match.repeatDays
+    }
+
+    /// Removes a single AddedAlarm record from the persisted addedAlarms JSON.
+    private func removeAddedAlarmFromStorage(id logicalID: UUID) {
+        guard let data = UserDefaults.standard.data(forKey: "addedAlarms"),
+              var raw  = try? JSONSerialization.jsonObject(with: data) as? [[String: Any]]
+        else { return }
+        raw.removeAll { ($0["id"] as? String) == logicalID.uuidString }
+        if let encoded = try? JSONSerialization.data(withJSONObject: raw) {
+            UserDefaults.standard.set(encoded, forKey: "addedAlarms")
+        }
+    }
+
+    /// Advances a repeating added alarm to its next weekday occurrence and
+    /// re-schedules it through AlarmKit. Reads the original time-of-day from
+    /// the stored timestamp; searches forward up to 8 days.
+    private func rescheduleRepeatingAddedAlarm(logicalID: UUID) {
+        guard let data  = UserDefaults.standard.data(forKey: "addedAlarms"),
+              var raw   = try? JSONSerialization.jsonObject(with: data) as? [[String: Any]],
+              let alarms = try? JSONDecoder().decode([PersistedAddedAlarm].self, from: data),
+              let match  = alarms.first(where: { $0.id == logicalID }),
+              let rawIdx = raw.firstIndex(where: { ($0["id"] as? String) == logicalID.uuidString })
+        else { return }
+
+        guard !match.repeatDays.isEmpty else { return }
+
+        let cal       = Calendar.current
+        let alarmDate = Date(timeIntervalSince1970: match.timestamp)
+        let hour      = cal.component(.hour,   from: alarmDate)
+        let minute    = cal.component(.minute, from: alarmDate)
+        let idForWD: [Int: String] = [1:"sun",2:"mon",3:"tue",4:"wed",5:"thu",6:"fri",7:"sat"]
+        let now       = Date()
+
+        var nextDate: Date? = nil
+        for offset in 1...8 {
+            guard let day = cal.date(byAdding: .day, value: offset,
+                                     to: cal.startOfDay(for: now)) else { continue }
+            let wdStr = idForWD[cal.component(.weekday, from: day)] ?? ""
+            guard match.repeatDays.contains(wdStr) else { continue }
+            var comps = cal.dateComponents([.year, .month, .day], from: day)
+            comps.hour = hour; comps.minute = minute; comps.second = 0
+            if let proposed = cal.date(from: comps), proposed > now {
+                nextDate = proposed
+                break
+            }
+        }
+        guard let nextDate else { return }
+
+        // Patch the stored timestamp in-place so the dashboard row reflects the new time.
+        raw[rawIdx]["timestamp"] = nextDate.timeIntervalSince1970
+        if let encoded = try? JSONSerialization.data(withJSONObject: raw) {
+            UserDefaults.standard.set(encoded, forKey: "addedAlarms")
+        }
+
+        // Re-schedule the AlarmKit alarm on the advanced date.
+        Task {
+            await scheduleAddedAlarm(for: nextDate, alarmID: logicalID,
+                                     snoozeMinutes: match.snoozeMinutes)
+        }
+    }
+
+    func scheduleAddedAlarm(for date: Date, alarmID: UUID, snoozeMinutes: Int) async {
         if !isAuthorized { await requestAuthorization() }
         guard isAuthorized else { return }
 
@@ -260,6 +393,7 @@ class LuniferAlarm: ObservableObject {
                 )
             )
             addedAlarmIDs[alarmID] = alarmKitID
+            persistAddedAlarmIDs()
             print("✅ Added alarm set for \(date.formatted(date: .omitted, time: .shortened))")
         } catch {
             print("❌ Failed to schedule added alarm: \(error.localizedDescription)")
@@ -270,6 +404,7 @@ class LuniferAlarm: ObservableObject {
         guard let alarmKitID = addedAlarmIDs[id] else { return }
         try? manager.cancel(id: alarmKitID)
         addedAlarmIDs.removeValue(forKey: id)
+        persistAddedAlarmIDs()
     }
 
     func cancelAllAddedAlarms() async {
@@ -277,6 +412,7 @@ class LuniferAlarm: ObservableObject {
             try? manager.cancel(id: alarmKitID)
         }
         addedAlarmIDs.removeAll()
+        persistAddedAlarmIDs()
     }
 
     // ─────────────────────────────────────────────────────────
@@ -330,9 +466,27 @@ class LuniferAlarm: ObservableObject {
             let firing = alarms.first(where: { if case .alerting = $0.state { return true }; return false })
 
             if let firing {
-                // Only log when the alarm first starts firing, not on every update
+                // Only log and resolve snooze when the alarm first starts firing, not on every update
                 if alertingAlarm == nil {
                     AlarmBehaviourLogger.shared.logAlarmFired(at: Date())
+                    let firedStr: String = {
+                        let f = DateFormatter(); f.dateFormat = "h:mm a"
+                        return f.string(from: Date())
+                    }()
+                    DebugAlarmEventStore.shared.log(type: "fired", detail: "at \(firedStr)")
+
+                    // Resolve the snooze duration and sound for this specific alarm.
+                    // If the firing AlarmKit ID maps to a logical added-alarm ID, use
+                    // that alarm's stored snooze and sound. Otherwise fall back to the
+                    // main alarm's dedicated UserDefaults keys.
+                    if let logicalID = addedAlarmIDs.first(where: { $0.value == firing.id })?.key {
+                        alertingAlarmSnoozeMinutes = persistedSnoozeMinutes(for: logicalID)
+                        alertingAlarmSound = persistedSound(for: logicalID)
+                    } else {
+                        let stored = UserDefaults.standard.integer(forKey: "mainAlarmSnoozeMinutes")
+                        alertingAlarmSnoozeMinutes = stored > 0 ? stored : 5
+                        alertingAlarmSound = UserDefaults.standard.string(forKey: "selectedAlarmSound") ?? "DeafultAlarm.wav"
+                    }
                 }
                 alertingAlarm = firing
             } else {
@@ -347,12 +501,27 @@ class LuniferAlarm: ObservableObject {
     // Dismisses the current alarm and reschedules it for now + snoozeMinutes.
 
     func snooze(minutes: Int) async {
-        if let alarm = alertingAlarm {
-            try? manager.cancel(id: alarm.id)
-        }
-        alertingAlarm = nil
+        guard let alarm = alertingAlarm else { return }
         let snoozeDate = Date().addingTimeInterval(Double(minutes) * 60)
-        await scheduleAlarm(for: snoozeDate)
+        let snoozeStr: String = {
+            let f = DateFormatter(); f.dateFormat = "h:mm a"
+            return f.string(from: snoozeDate)
+        }()
+        DebugAlarmEventStore.shared.log(type: "snoozed", detail: "+\(minutes) min → \(snoozeStr)")
+
+        // If the firing alarm is a user-added alarm, re-schedule it through the
+        // added-alarm path so it keeps its logical UUID and stays separate from
+        // the main Lunifer alarm. Otherwise use the main alarm path.
+        if let logicalID = addedAlarmIDs.first(where: { $0.value == alarm.id })?.key {
+            try? manager.cancel(id: alarm.id)
+            alertingAlarm = nil
+            await scheduleAddedAlarm(for: snoozeDate, alarmID: logicalID, snoozeMinutes: minutes)
+        } else {
+            AdaptiveAlarmStore.shared.markPendingDecisionIneligible()
+            try? manager.cancel(id: alarm.id)
+            alertingAlarm = nil
+            await scheduleAlarm(for: snoozeDate)
+        }
     }
 
     // ─────────────────────────────────────────────────────────
@@ -362,11 +531,36 @@ class LuniferAlarm: ObservableObject {
 
     func stopAlarm() async {
         if let alarm = alertingAlarm {
+            // Check whether this is a user-added alarm and handle repeat/delete logic.
+            if let logicalID = addedAlarmIDs.first(where: { $0.value == alarm.id })?.key {
+                let days = persistedRepeatDays(for: logicalID)
+                if days.isEmpty {
+                    // One-shot alarm: remove from storage, mapping, and notify dashboard.
+                    removeAddedAlarmFromStorage(id: logicalID)
+                    addedAlarmIDs.removeValue(forKey: logicalID)
+                    persistAddedAlarmIDs()
+                    NotificationCenter.default.post(name: .luniferAddedAlarmModified, object: nil)
+                } else {
+                    // Repeating alarm: advance to next qualifying weekday.
+                    rescheduleRepeatingAddedAlarm(logicalID: logicalID)
+                    NotificationCenter.default.post(name: .luniferAddedAlarmModified, object: nil)
+                }
+            }
             try? manager.cancel(id: alarm.id)
         }
         AlarmBehaviourLogger.shared.logDismiss(at: Date())
+        DebugAlarmEventStore.shared.log(type: "dismissed")
         alertingAlarm = nil
         scheduledWakeTime = nil
+    }
+
+    func recordWokeBeforeAlarmIfNeeded(at wakeDate: Date) {
+        guard let scheduledWakeTime else { return }
+        let leadSeconds = scheduledWakeTime.timeIntervalSince(wakeDate)
+        guard leadSeconds > 5 * 60, leadSeconds <= 2 * 3600 else { return }
+
+        AlarmBehaviourLogger.shared.logWokeBeforeAlarm(at: wakeDate)
+        DebugAlarmEventStore.shared.log(type: "woke_before")
     }
 
     // ─────────────────────────────────────────────────────────
@@ -404,6 +598,14 @@ class LuniferAlarm: ObservableObject {
         adaptiveTimer = nil
     }
 
+    /// Runs an immediate adaptive check against the current calendar.
+    /// Call this when the app returns to the foreground so that a calendar
+    /// event added while the app was suspended is caught promptly rather
+    /// than waiting up to 5 minutes for the next timer tick.
+    func checkAlarmAgainstCalendar() async {
+        await checkAndAdaptAlarm()
+    }
+
     private func checkAndAdaptAlarm() async {
         // Only run while Lunifer is enabled
         guard UserDefaults.standard.bool(forKey: "luniferEnabled") else { return }
@@ -418,13 +620,30 @@ class LuniferAlarm: ObservableObject {
         // Need a scheduled alarm to adjust
         guard let currentAlarm = scheduledWakeTime else { return }
 
-        // ── Derive sleep duration from saved survey answers ──
-        let answers = SurveyAnswers.loadFromDefaults()
+        // ── Guard: don't adapt (or schedule) on rest days ───
+        // If tomorrow isn't a wake day, cancel any lingering alarm and bail.
+        // This handles the case where wake-day settings changed after the
+        // alarm was already registered with AlarmKit.
+        let surveyAnswers = SurveyAnswers.loadFromDefaults()
+        let wakeDays = surveyAnswers?.wakeDays ?? ["mon", "tue", "wed", "thu", "fri"]
+        let cal2 = Calendar.current
+        let tomorrow2 = cal2.date(byAdding: .day, value: 1, to: cal2.startOfDay(for: Date())) ?? Date()
+        let tomorrowWeekdayIndex = cal2.component(.weekday, from: tomorrow2) - 1
+        let weekdayIDs = ["sun", "mon", "tue", "wed", "thu", "fri", "sat"]
+        let tomorrowID = weekdayIDs[tomorrowWeekdayIndex]
+        guard wakeDays.contains(tomorrowID) else {
+            await cancelAlarm()
+            return
+        }
+
+        // ── Derive sleep duration from wearable data or saved survey answers ──
+        let answers = surveyAnswers
         let sleepHours: Double
         if let a = answers {
-            sleepHours = a.sleep.auto
-                ? SleepDurationModel.baselineForAge(a.age)
-                : Double(a.sleep.hours) + Double(a.sleep.minutes) / 60.0
+            sleepHours = WearableRecommendationStore.recommendedHours(
+                from: WearableRecommendationStore.currentSources(),
+                fallback: a
+            )
         } else {
             sleepHours = 8.0
         }
@@ -491,6 +710,23 @@ class LuniferAlarm: ObservableObject {
                 result = min(result, latest)
             }
             return result
+        }
+
+        // ── Path C: calendar pull-forward ────────────────────────────
+        // A morning event was added (or moved earlier) after the alarm was
+        // set. If the current alarm is already later than the event deadline,
+        // reschedule immediately — no sleep state required. This handles the
+        // case where resolveAlarmDate() ran hours ago (e.g. at 10am) and a
+        // new early meeting was added to the calendar that afternoon.
+        if let latest = latestAllowedAlarm,
+           currentAlarm > latest,
+           currentAlarm.timeIntervalSince(latest) >= 2 * 60 {
+            let fmt = DateFormatter()
+            fmt.dateFormat = "h:mm a"
+            print("📅 Calendar pull: \(fmt.string(from: currentAlarm)) → \(fmt.string(from: latest))")
+            await scheduleAlarm(for: latest)
+            AdaptiveAlarmStore.shared.updatePendingFinalAlarm(to: latest)
+            return
         }
 
         var newWakeTime: Date? = nil
@@ -583,6 +819,7 @@ class LuniferAlarm: ObservableObject {
         let savedOriginal = originalScheduledWakeTime!
         let savedOnsetFlag = sleepOnsetAdjusted
         await scheduleAlarm(for: newTime)
+        AdaptiveAlarmStore.shared.updatePendingFinalAlarm(to: newTime)
         originalScheduledWakeTime = savedOriginal
         sleepOnsetAdjusted = savedOnsetFlag
     }
@@ -638,6 +875,7 @@ class AlarmBehaviourLogger {
     /// Called when the user woke before the alarm fired.
     /// (Used when HealthKit / SleepTracker integration surfaces this signal.)
     func logWokeBeforeAlarm(at date: Date) {
+        guard scheduledWakeTime != nil else { return }
         saveInference(outcome: "woke_before_alarm", at: date)
         resetSession()
     }
@@ -660,6 +898,21 @@ class AlarmBehaviourLogger {
         if let scheduled = scheduledWakeTime { inference["scheduledWakeTime"] = scheduled }
         if let fired     = alarmFiredAt      { inference["alarmFiredAt"]      = fired     }
 
+        if let adaptiveOutcome = AdaptiveAlarmStore.shared.recordOutcome(
+            outcome: outcome,
+            observedAt: date,
+            scheduledWakeTime: scheduledWakeTime,
+            alarmFiredAt: alarmFiredAt
+        ) {
+            inference["adaptiveDecisionID"] = adaptiveOutcome.decisionID.uuidString
+            inference["adaptiveOffsetMinutes"] = adaptiveOutcome.selectedOffsetMinutes
+            inference["adaptiveReward"] = adaptiveOutcome.reward
+            inference["adaptiveRecommendedSleepHours"] = adaptiveOutcome.recommendedSleepHours
+            if let actualSleepHours = adaptiveOutcome.actualSleepHours {
+                inference["adaptiveActualSleepHours"] = actualSleepHours
+            }
+        }
+
         Firestore.firestore()
             .collection("users").document(uid)
             .collection("alarmInferences")
@@ -675,5 +928,91 @@ class AlarmBehaviourLogger {
     private func resetSession() {
         scheduledWakeTime = nil
         alarmFiredAt      = nil
+    }
+}
+
+// ─────────────────────────────────────────────────────────────
+// PersistedAddedAlarm
+// ─────────────────────────────────────────────────────────────
+// Minimal Codable projection of AddedAlarm used by LuniferAlarm
+// to read snooze preferences from the already-persisted addedAlarms
+// JSON without importing the full view-layer model.
+// JSONDecoder ignores unrecognised keys, so this decodes cleanly
+// alongside any other fields stored on AddedAlarm.
+
+private struct PersistedAddedAlarm: Codable {
+    let id: UUID
+    let timestamp: Double
+    let label: String
+    let snoozeMinutes: Int
+    let sound: String
+    let repeatDays: [String]
+
+    // Backward-compatible — old JSON has no repeatDays key.
+    init(from decoder: Decoder) throws {
+        let c          = try decoder.container(keyedBy: CodingKeys.self)
+        id             = try c.decode(UUID.self,   forKey: .id)
+        timestamp      = try c.decode(Double.self, forKey: .timestamp)
+        label          = try c.decode(String.self, forKey: .label)
+        snoozeMinutes  = try c.decode(Int.self,    forKey: .snoozeMinutes)
+        sound          = try c.decode(String.self, forKey: .sound)
+        repeatDays     = (try? c.decode([String].self, forKey: .repeatDays)) ?? []
+    }
+
+    private enum CodingKeys: String, CodingKey {
+        case id, timestamp, label, snoozeMinutes, sound, repeatDays
+    }
+}
+
+// ─────────────────────────────────────────────────────────────
+// Notification posted by stopAlarm() so the dashboard reloads
+// whenever a one-shot alarm is deleted or a repeating one advances.
+
+extension Notification.Name {
+    static let luniferAddedAlarmModified = Notification.Name("luniferAddedAlarmModified")
+}
+
+// ─────────────────────────────────────────────────────────────
+// DebugAlarmEventStore
+// ─────────────────────────────────────────────────────────────
+// Lightweight log of alarm lifecycle events for the debug panel.
+// Keeps the last 30 events in UserDefaults across app launches.
+// Entirely separate from AdaptiveAlarmStore — debug logging
+// never touches the training pipeline.
+
+struct DebugAlarmEvent: Codable, Identifiable {
+    let id: UUID
+    let type: String     // "fired" | "snoozed" | "dismissed" | "woke_before"
+    let timestamp: Date
+    let detail: String?  // e.g. "+5 min → 7:23 AM"
+}
+
+final class DebugAlarmEventStore {
+    static let shared = DebugAlarmEventStore()
+    private let key = "luniferDebugAlarmEvents"
+    private let maxEvents = 30
+    private init() {}
+
+    func log(type: String, detail: String? = nil, at date: Date = Date()) {
+        var events = load()
+        events.append(DebugAlarmEvent(id: UUID(), type: type, timestamp: date, detail: detail))
+        if events.count > maxEvents { events = Array(events.suffix(maxEvents)) }
+        save(events)
+    }
+
+    func load() -> [DebugAlarmEvent] {
+        guard let data = UserDefaults.standard.data(forKey: key),
+              let events = try? JSONDecoder().decode([DebugAlarmEvent].self, from: data)
+        else { return [] }
+        return events
+    }
+
+    func clear() {
+        UserDefaults.standard.removeObject(forKey: key)
+    }
+
+    private func save(_ events: [DebugAlarmEvent]) {
+        guard let data = try? JSONEncoder().encode(events) else { return }
+        UserDefaults.standard.set(data, forKey: key)
     }
 }

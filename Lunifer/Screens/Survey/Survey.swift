@@ -127,6 +127,71 @@ private struct WeekdayButton: View {
     }
 }
 
+// ── MARK: Looping minute picker ──────────────────────────────
+// SwiftUI's wheel Picker stops at each end. This UIViewRepresentable
+// wraps UIPickerView with 60 000 virtual rows so the wheel feels
+// infinite and wraps 59 → 00 → 59 naturally.
+
+private struct LoopingMinutePicker: UIViewRepresentable {
+    @Binding var selection: Int   // always kept in 0…59
+
+    // Total virtual rows — must be divisible by 60 so modulo is clean.
+    private static let rowCount = 60_000
+    // Start position: exactly halfway, aligned to minute 00.
+    // 30 000 % 60 == 0, so row 30 000 maps to minute 00.
+    private static let midStart = rowCount / 2  // = 30 000
+
+    func makeUIView(context: Context) -> UIPickerView {
+        let picker = UIPickerView()
+        picker.dataSource = context.coordinator
+        picker.delegate   = context.coordinator
+        picker.backgroundColor = .clear
+        // Position wheel so the current minute is visible in the centre.
+        picker.selectRow(Self.midStart + selection, inComponent: 0, animated: false)
+        return picker
+    }
+
+    func updateUIView(_ uiView: UIPickerView, context: Context) {
+        // Sync if an external write changed the value (e.g. "No" reset to 00).
+        let currentRow = uiView.selectedRow(inComponent: 0)
+        if currentRow % 60 != selection {
+            uiView.selectRow(Self.midStart + selection, inComponent: 0, animated: true)
+        }
+    }
+
+    func makeCoordinator() -> Coordinator { Coordinator(self) }
+
+    final class Coordinator: NSObject, UIPickerViewDataSource, UIPickerViewDelegate {
+        var parent: LoopingMinutePicker
+        init(_ p: LoopingMinutePicker) { parent = p }
+
+        func numberOfComponents(in pickerView: UIPickerView) -> Int { 1 }
+
+        func pickerView(_ pickerView: UIPickerView,
+                        numberOfRowsInComponent component: Int) -> Int {
+            LoopingMinutePicker.rowCount
+        }
+
+        func pickerView(_ pickerView: UIPickerView,
+                        viewForRow row: Int,
+                        forComponent component: Int,
+                        reusing view: UIView?) -> UIView {
+            let label = (view as? UILabel) ?? UILabel()
+            label.text          = String(format: "%02d", row % 60)
+            label.textColor     = .white
+            label.textAlignment = .center
+            label.font          = .systemFont(ofSize: 20, weight: .regular)
+            return label
+        }
+
+        func pickerView(_ pickerView: UIPickerView,
+                        didSelectRow row: Int,
+                        inComponent component: Int) {
+            parent.selection = row % 60
+        }
+    }
+}
+
 // ── MARK: Time picker ────────────────────────────────────────
 
 struct TimeButton: View {
@@ -155,6 +220,17 @@ struct TimeButton: View {
 struct TimeScalePicker: View {
     @Binding var value: TimeValue
     let autoLabel: String
+    let hourRange: ClosedRange<Int>
+
+    init(
+        value: Binding<TimeValue>,
+        autoLabel: String,
+        hourRange: ClosedRange<Int> = 0...5
+    ) {
+        self._value = value
+        self.autoLabel = autoLabel
+        self.hourRange = hourRange
+    }
 
     var body: some View {
         VStack(spacing: 0) {
@@ -191,57 +267,49 @@ struct TimeScalePicker: View {
             )
             .animation(.easeInOut(duration: 0.2), value: value.auto)
 
-            // Hours + minutes pickers — mirrors .time-picker in React
+            // Hours + minutes scroll pickers
             if !value.auto {
-                HStack(alignment: .center, spacing: 16) {
+                HStack(spacing: 0) {
+                    Spacer()
 
-                    // Hours (buttons on LEFT of number, matching React)
-                    VStack(spacing: 10) {
+                    // Hours wheel
+                    VStack(spacing: 4) {
                         Text("HOURS")
                             .font(.custom("DM Sans", size: 11))
                             .foregroundColor(Color.white.opacity(0.3))
                             .kerning(1)
-
-                        HStack(spacing: 8) {
-                            VStack(spacing: 6) {
-                                TimeButton(label: "↑") { value.hours = min(23, value.hours + 1) }
-                                TimeButton(label: "↓") { value.hours = max(0,  value.hours - 1) }
+                        Picker("", selection: $value.hours) {
+                            ForEach(Array(hourRange), id: \.self) { h in
+                                Text(String(format: "%02d", h)).tag(h)
                             }
-                            Text(String(format: "%02d", value.hours))
-                                .font(.libreFranklin(size: 44))
-                                .foregroundColor(Color.white.opacity(0.95))
-                                .monospacedDigit()
-                                .frame(minWidth: 56, alignment: .center)
                         }
+                        .pickerStyle(.wheel)
+                        .frame(width: 80, height: 120)
+                        .clipped()
+                        .colorScheme(.dark)
                     }
 
                     // Colon separator
                     Text(":")
                         .font(.libreFranklin(size: 32))
                         .foregroundColor(Color.white.opacity(0.2))
-                        .padding(.top, 24)
+                        .padding(.top, 22)
+                        .padding(.horizontal, 6)
 
-                    // Minutes (buttons on RIGHT of number, matching React)
-                    VStack(spacing: 10) {
+                    // Minutes wheel — 1-minute increments, loops 59 → 00
+                    VStack(spacing: 4) {
                         Text("MINUTES")
                             .font(.custom("DM Sans", size: 11))
                             .foregroundColor(Color.white.opacity(0.3))
                             .kerning(1)
-
-                        HStack(spacing: 8) {
-                            Text(String(format: "%02d", value.minutes))
-                                .font(.libreFranklin(size: 44))
-                                .foregroundColor(Color.white.opacity(0.95))
-                                .monospacedDigit()
-                                .frame(minWidth: 56, alignment: .center)
-                            VStack(spacing: 6) {
-                                TimeButton(label: "↑") { value.minutes = min(55, value.minutes + 5) }
-                                TimeButton(label: "↓") { value.minutes = max(0,  value.minutes - 5) }
-                            }
-                        }
+                        LoopingMinutePicker(selection: $value.minutes)
+                            .frame(width: 80, height: 120)
+                            .clipped()
                     }
+
+                    Spacer()
                 }
-                .padding(.top, 20)
+                .padding(.top, 12)
                 .transition(.opacity.combined(with: .offset(y: 8)))
             }
         }
@@ -269,6 +337,15 @@ struct LuniferSurvey: View {
                 ?? Calendar.current.date(byAdding: .year, value: -25, to: Date())
                 ?? Date()
         }()
+        // Long-routine warning alert
+        @State private var showLongRoutineAlert = false
+        @State private var longRoutineTimeLabel = ""
+
+        // Location permission explanation alert
+        @State private var showLocationPermissionAlert = false
+        @State private var locationStatusAfterPrompt: CLAuthorizationStatus = .notDetermined
+        @State private var pendingFinishSnapshot: SurveyAnswers? = nil
+
         // WHOOP integration state
         @State private var whoopSelected: Bool = false
         @State private var whoopLoading: Bool = false
@@ -336,7 +413,7 @@ struct LuniferSurvey: View {
                             
                             // ── Primary button ───────────────────
                             Button {
-                                isLastStep ? handleFinish() : advance()
+                                checkRoutineBeforeContinue()
                             } label: {
                                 ZStack {
                                     if saving {
@@ -387,8 +464,49 @@ struct LuniferSurvey: View {
                 }
             }
             .frame(maxWidth: .infinity, maxHeight: .infinity)
+        // ── Location permission explanation alert ─────────────────
+        // Shown when the user chose something other than "Always Allow"
+        // after the system location prompt at the end of onboarding.
+        .alert("Location Access Needed", isPresented: $showLocationPermissionAlert) {
+            if locationStatusAfterPrompt == .authorizedWhenInUse {
+                // Status is When In Use — iOS can still show the native upgrade
+                // dialog ("Change to Always Allow?") via a second request.
+                Button("Allow Always") {
+                    Task { await retryAlwaysAuthorization() }
+                }
+            } else {
+                // Status is Denied — only Settings can change it.
+                Button("Open Settings") {
+                    if let url = URL(string: UIApplication.openSettingsURLString) {
+                        UIApplication.shared.open(url)
+                    }
+                    if let snapshot = pendingFinishSnapshot { onFinish?(snapshot) }
+                }
+            }
+            Button("Continue Without", role: .cancel) {
+                if let snapshot = pendingFinishSnapshot { onFinish?(snapshot) }
+            }
+        } message: {
+            if locationStatusAfterPrompt == .authorizedWhenInUse {
+                Text("Lunifer needs \"Always\" location access to calculate your commute time even when the app is in the background. Without it, your alarm may not reflect real-time traffic. Tap \"Allow Always\" to update your preference.")
+            } else {
+                Text("Lunifer needs \"Always\" location access to accurately calculate your commute, even when running in the background. You can enable this in Settings under Location → Always.")
+            }
         }
-        
+        // ── Long routine warning alert ────────────────────────────
+        .alert("Long Morning Routine", isPresented: $showLongRoutineAlert) {
+            Button("Yes") {
+                // User confirmed — proceed with the original action
+                isLastStep ? handleFinish() : advance()
+            }
+            Button("No", role: .cancel) {
+                answers.routine = TimeValue(hours: 1, minutes: 0, auto: false)
+            }
+        } message: {
+            Text("\(longRoutineTimeLabel) is a long time for a morning routine. Are you sure that's how long you want Lunifer to remember your morning routine?")
+        }
+        }
+
         // ── MARK: Step content ───────────────────────────────────
         
         @ViewBuilder
@@ -645,7 +763,8 @@ struct LuniferSurvey: View {
                 // Hidden when a wearable is selected and data is fetched
                 if (!whoopSelected && !ouraSelected) || whoopError != nil || ouraError != nil {
                     TimeScalePicker(value: $answers.sleep,
-                                    autoLabel: "I'm not sure — let Lunifer learn this")
+                                    autoLabel: "I'm not sure — let Lunifer learn this",
+                                    hourRange: 0...12)
                     .padding(.bottom, 24)
                     .padding(.horizontal, 40)
                     // Deselect any wearable if the user starts interacting with manual picker
@@ -907,7 +1026,20 @@ struct LuniferSurvey: View {
         }
         
         // ── MARK: Navigation ─────────────────────────────────────
-        
+
+        /// Called by the primary button. Intercepts the routine step so the
+        /// long-routine warning fires on "Done" rather than mid-scroll.
+        private func checkRoutineBeforeContinue() {
+            if step == 5 && showRoutine && !answers.routine.auto && answers.routine.hours > 4 {
+                let h = answers.routine.hours
+                let m = answers.routine.minutes
+                longRoutineTimeLabel = m > 0 ? "\(h) hours \(m) minutes" : "\(h) hours"
+                showLongRoutineAlert = true
+                return
+            }
+            isLastStep ? handleFinish() : advance()
+        }
+
         private func advance() {
             // Request CoreMotion permission as the user leaves the sleep step.
             // There is no explicit requestAuthorization() for CoreMotion — iOS shows
@@ -994,6 +1126,24 @@ struct LuniferSurvey: View {
             ouraLoading = false
         }
 
+        // ── MARK: Location permission retry ─────────────────────
+        // Called when the user taps "Allow Always" in the explanation alert.
+        // At this point status is .authorizedWhenInUse, so iOS will show the
+        // native "Change to Always Allow?" upgrade dialog.
+
+        @MainActor
+        private func retryAlwaysAuthorization() async {
+            let status = await LocationManager.shared.requestAlwaysAuthorizationAsync()
+            if status == .authorizedAlways {
+                // User upgraded — proceed to dashboard.
+                if let snapshot = pendingFinishSnapshot { onFinish?(snapshot) }
+            } else {
+                // Still not Always — show the alert again with updated status.
+                locationStatusAfterPrompt = status
+                showLocationPermissionAlert = true
+            }
+        }
+
         // ── MARK: Firestore save ─────────────────────────────────
         // Mirrors handleFinish() in luniferSurvey.jsx exactly
         
@@ -1041,11 +1191,20 @@ struct LuniferSurvey: View {
                     .requestAuthorization(options: [.alert, .sound, .badge])
 
                 // Request location access for commuters/students so CommuteManager
-                // can perform live MKDirections routing. Requested here rather than
-                // in the survey step so it follows the alarm permission prompt naturally
-                // at the end of onboarding rather than mid-survey.
+                // can perform live MKDirections routing. We await the user's response
+                // so we can detect if they chose something other than "Always Allow"
+                // and explain why the fuller permission is needed before proceeding.
                 if snapshot.lifestyle == "student" || snapshot.lifestyle == "commuter" {
-                    LocationManager.shared.requestAlwaysAuthorization()
+                    let status = await LocationManager.shared.requestAlwaysAuthorizationAsync()
+                    if status != .authorizedAlways {
+                        // Hold onFinish — show explanation alert first.
+                        // The alert buttons call onFinish when the user responds.
+                        locationStatusAfterPrompt = status
+                        pendingFinishSnapshot = snapshot
+                        showLocationPermissionAlert = true
+                        saving = false
+                        return
+                    }
                 }
 
                 onFinish?(snapshot)

@@ -2,9 +2,6 @@ import Foundation
 import UIKit
 import UserNotifications
 
-// ─────────────────────────────────────────────────────────────
-// BatteryAlarmNotification
-// ─────────────────────────────────────────────────────────────
 // Predicts whether the phone will survive until the next alarm
 // and notifies the user if it won't — but only within 2 hours
 // of their estimated bedtime, so the warning is actionable.
@@ -112,12 +109,38 @@ final class BatteryAlarmNotification {
             return
         }
 
-        guard let alarmTime = LuniferAlarm.shared.scheduledWakeTime else {
+        // ── Collect all upcoming alarm times ──────────────────
+        // Checks the main Lunifer alarm and every user-added alarm.
+        // The battery is evaluated against the nearest upcoming alarm
+        // so the warning fires as early as possible if any alarm is at risk.
+        let now = Date()
+        var upcomingAlarms: [(time: Date, label: String?)] = []
+
+        if let mainAlarm = LuniferAlarm.shared.scheduledWakeTime, mainAlarm > now {
+            upcomingAlarms.append((time: mainAlarm, label: nil))
+        }
+
+        if let data = UserDefaults.standard.data(forKey: AppPreferencesStore.Keys.addedAlarms),
+           let addedAlarms = try? JSONDecoder().decode([AddedAlarm].self, from: data) {
+            for alarm in addedAlarms where alarm.date > now {
+                // Use the user's label if they gave the alarm one, otherwise nil
+                // so sendWarning() falls back to showing just the time.
+                let label = alarm.label.isEmpty ? nil : alarm.label
+                upcomingAlarms.append((time: alarm.date, label: label))
+            }
+        }
+
+        guard !upcomingAlarms.isEmpty else {
             cancelWarning()
             return
         }
 
-        let now             = Date()
+        // Pick the soonest alarm — if the phone dies before this one it
+        // won't survive any later alarm either, so this is the right target.
+        let nearest = upcomingAlarms.min(by: { $0.time < $1.time })!
+        let alarmTime  = nearest.time
+        let alarmLabel = nearest.label
+
         let hoursUntilAlarm = alarmTime.timeIntervalSince(now) / 3600.0
 
         guard hoursUntilAlarm > 0 && hoursUntilAlarm <= 24 else {
@@ -128,7 +151,9 @@ final class BatteryAlarmNotification {
         // ── Notification window check ─────────────────────────
         // Only notify within 2 hours of the user's estimated bedtime.
         // Sending earlier is premature — the situation may change.
-        let estimatedBedtime      = bedtimeEstimate(before: alarmTime)
+        // For added alarms earlier in the day the window opens immediately
+        // (bedtime estimate falls in the past), which is the right behaviour.
+        let estimatedBedtime       = bedtimeEstimate(before: alarmTime)
         let notificationWindowOpen = estimatedBedtime.addingTimeInterval(-2 * 3600)
 
         guard now >= notificationWindowOpen else {
@@ -137,9 +162,9 @@ final class BatteryAlarmNotification {
         }
 
         // ── Drain prediction ──────────────────────────────────
-        let currentLevel    = device.batteryLevel
+        let currentLevel     = device.batteryLevel
         let conservativeRate = conservativeDrainRate()
-        let projectedLevel  = currentLevel - Float(conservativeRate * hoursUntilAlarm)
+        let projectedLevel   = currentLevel - Float(conservativeRate * hoursUntilAlarm)
 
         print("🔋 Battery check: \(Int(currentLevel * 100))% now, " +
               "projected \(Int(projectedLevel * 100))% at alarm " +
@@ -155,7 +180,8 @@ final class BatteryAlarmNotification {
             await sendWarning(
                 currentLevel: currentLevel,
                 projectedLevel: projectedLevel,
-                alarmTime: alarmTime
+                alarmTime: alarmTime,
+                alarmLabel: alarmLabel
             )
             UserDefaults.standard.set(alarmTime.timeIntervalSince1970, forKey: lastWarnedAlarmKey)
         } else {
@@ -279,7 +305,8 @@ final class BatteryAlarmNotification {
     private func sendWarning(
         currentLevel: Float,
         projectedLevel: Float,
-        alarmTime: Date
+        alarmTime: Date,
+        alarmLabel: String?
     ) async {
         let center   = UNUserNotificationCenter.current()
         let settings = await center.notificationSettings()
@@ -293,7 +320,16 @@ final class BatteryAlarmNotification {
         let alarmString = alarmTime.formatted(date: .omitted, time: .shortened)
         let batteryPct  = Int(currentLevel * 100)
 
-        content.body = "Your phone is at \(batteryPct)% and is predicted to die before your \(alarmString) alarm. Plug in before you sleep."
+        // Name the alarm specifically if it has a label, or just show the time.
+        // "your Morning Run alarm at 6:00 AM" vs "your 7:00 AM alarm"
+        let alarmDescription: String
+        if let label = alarmLabel {
+            alarmDescription = "\(label) alarm at \(alarmString)"
+        } else {
+            alarmDescription = "\(alarmString) alarm"
+        }
+
+        content.body = "Your phone is at \(batteryPct)% and is predicted to die before your \(alarmDescription). Plug in before you sleep."
 
         content.sound             = .default
         content.interruptionLevel = .timeSensitive
@@ -315,7 +351,7 @@ final class BatteryAlarmNotification {
         }
     }
 
-    private func cancelWarning() {
+    func cancelWarning() {
         let center = UNUserNotificationCenter.current()
         center.removePendingNotificationRequests(withIdentifiers: [notificationID])
         center.removeDeliveredNotifications(withIdentifiers: [notificationID])

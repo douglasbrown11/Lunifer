@@ -21,8 +21,6 @@ struct LuniferSettings: View {
     @State private var showDeleteErrorAlert = false
     @State private var deleteErrorMessage = ""
     @State private var signOutErrorMessage = ""
-    @State private var showPasswordPrompt = false
-    @State private var reauthPassword = ""
 
     private var userEmail: String {
         guard ProcessInfo.processInfo.environment["XCODE_RUNNING_FOR_PREVIEWS"] != "1" else {
@@ -83,6 +81,12 @@ struct LuniferSettings: View {
                                 SleepAndWearablesSettingsView(answers: $answers)
                             } label: {
                                 settingsNavRow(title: "Sleep & Wearables")
+                            }
+
+                            NavigationLink {
+                                AboutSettingsView()
+                            } label: {
+                                settingsNavRow(title: "About")
                             }
 
                             // ── Account ───────────────────────
@@ -177,27 +181,12 @@ struct LuniferSettings: View {
                                 )
                                 .alert("Delete Account", isPresented: $showDeleteAlert) {
                                     Button("Delete", role: .destructive) {
-                                        Task { await startDeletion() }
+                                        Task { await performDeletion() }
                                     }
                                     Button("Cancel", role: .cancel) { }
                                 } message: {
                                     Text("This will permanently delete your account and all your data. This cannot be undone.")
                                 }
-                                // Each secondary alert lives on its own Color.clear background view
-                                // so SwiftUI can present them independently. Chaining multiple
-                                // .alert modifiers on the same view causes all but the last to
-                                // be silently ignored.
-                                .background(Color.clear
-                                    .alert("Enter your password to confirm", isPresented: $showPasswordPrompt) {
-                                        SecureField("Password", text: $reauthPassword)
-                                        Button("Delete Account", role: .destructive) {
-                                            Task { await reauthenticateAndDelete(password: reauthPassword) }
-                                        }
-                                        Button("Cancel", role: .cancel) { reauthPassword = ""; isDeletingAccount = false }
-                                    } message: {
-                                        Text("For security, please re-enter your password to delete your account.")
-                                    }
-                                )
                                 .background(Color.clear
                                     .alert("Couldn't Delete Account", isPresented: $showDeleteErrorAlert) {
                                         Button("OK", role: .cancel) { }
@@ -221,13 +210,10 @@ struct LuniferSettings: View {
     // ── MARK: Private helpers ──────────────────────────────────────
 
     // ── Account deletion ──────────────────────────────────────────
-    // Step 1: Determine auth provider and reauthenticate before deleting.
-    // Step 2: Delete Auth account first (requires recent login), then
-    //         Firestore data, then clear local storage.
+    // Deletes Firestore data first (best-effort), then the Firebase Auth
+    // account, then clears local storage.
 
-    /// Determines how the user signed in and triggers the appropriate
-    /// reauthentication flow before deletion.
-    private func startDeletion() async {
+    private func performDeletion() async {
         guard let user = Auth.auth().currentUser else {
             deleteErrorMessage = "No signed-in user found. Please sign in and try again."
             showDeleteErrorAlert = true
@@ -235,167 +221,13 @@ struct LuniferSettings: View {
         }
         isDeletingAccount = true
 
-        let providers = user.providerData.map { $0.providerID }
-
-        if providers.contains("google.com") {
-            // Google users: reauthenticate via Google Sign-In prompt
-            await reauthenticateWithGoogle()
-        } else if providers.contains("microsoft.com") {
-            // Microsoft users: reauthenticate via OAuth prompt
-            await reauthenticateWithMicrosoft()
-        } else {
-            // Email/password users: show password prompt
-            reauthPassword = ""
-            showPasswordPrompt = true
-        }
-    }
-
-    /// Reauthenticates an email/password user, then deletes.
-    private func reauthenticateAndDelete(password: String) async {
-        guard let user = Auth.auth().currentUser,
-              let email = user.email else {
-            isDeletingAccount = false
-            deleteErrorMessage = "Unable to verify your account. Please try again."
-            showDeleteErrorAlert = true
-            return
-        }
-
-        do {
-            let credential = EmailAuthProvider.credential(withEmail: email, password: password)
-            try await user.reauthenticate(with: credential)
-            await performDeletion(user: user)
-        } catch {
-            isDeletingAccount = false
-            reauthPassword = ""
-            let nsError = error as NSError
-            if nsError.code == AuthErrorCode.wrongPassword.rawValue {
-                deleteErrorMessage = "Incorrect password. Please try again."
-            } else {
-                deleteErrorMessage = nsError.localizedDescription
-            }
-            showDeleteErrorAlert = true
-            print("❌ Reauthentication failed: \(nsError.localizedDescription)")
-        }
-    }
-
-    /// Reauthenticates a Google user via the Google Sign-In prompt, then deletes.
-    private func reauthenticateWithGoogle() async {
-        do {
-            guard let windowScene = UIApplication.shared.connectedScenes
-                .compactMap({ $0 as? UIWindowScene })
-                .first(where: { $0.activationState == .foregroundActive }),
-                  let window = windowScene.windows.first(where: { $0.isKeyWindow }),
-                  let rootVC = window.rootViewController else {
-                isDeletingAccount = false
-                deleteErrorMessage = "Unable to present sign in. Please try again."
-                showDeleteErrorAlert = true
-                return
-            }
-            var presentingVC = rootVC
-            while let presented = presentingVC.presentedViewController {
-                presentingVC = presented
-            }
-
-            let result = try await GIDSignIn.sharedInstance.signIn(withPresenting: presentingVC)
-            guard let idToken = result.user.idToken?.tokenString else {
-                isDeletingAccount = false
-                deleteErrorMessage = "Something went wrong. Please try again."
-                showDeleteErrorAlert = true
-                return
-            }
-
-            let credential = GoogleAuthProvider.credential(
-                withIDToken: idToken,
-                accessToken: result.user.accessToken.tokenString
-            )
-            guard let user = Auth.auth().currentUser else {
-                isDeletingAccount = false
-                return
-            }
-            try await user.reauthenticate(with: credential)
-            await performDeletion(user: user)
-        } catch {
-            isDeletingAccount = false
-            let nsError = error as NSError
-            // Google Sign-In cancellation
-            if nsError.domain.contains("GIDSignIn") && nsError.code == -5 {
-                return  // user cancelled, just reset silently
-            }
-            deleteErrorMessage = nsError.localizedDescription
-            showDeleteErrorAlert = true
-            print("❌ Google reauthentication failed: \(nsError.localizedDescription)")
-        }
-    }
-
-    /// Reauthenticates a Microsoft (Outlook) user via OAuth, then deletes.
-    private func reauthenticateWithMicrosoft() async {
-        do {
-            guard let windowScene = UIApplication.shared.connectedScenes
-                .compactMap({ $0 as? UIWindowScene })
-                .first(where: { $0.activationState == .foregroundActive }),
-                  let window = windowScene.windows.first(where: { $0.isKeyWindow }),
-                  let rootVC = window.rootViewController else {
-                isDeletingAccount = false
-                deleteErrorMessage = "Unable to present sign in. Please try again."
-                showDeleteErrorAlert = true
-                return
-            }
-            var presentingVC = rootVC
-            while let presented = presentingVC.presentedViewController {
-                presentingVC = presented
-            }
-
-            let provider = OAuthProvider(providerID: "microsoft.com")
-            provider.scopes = ["email", "profile", "openid"]
-            provider.customParameters = ["prompt": "select_account"]
-
-            let credential = try await withCheckedThrowingContinuation { (continuation: CheckedContinuation<AuthCredential, Error>) in
-                provider.getCredentialWith(presentingVC as? AuthUIDelegate) { credential, error in
-                    if let error {
-                        continuation.resume(throwing: error)
-                    } else if let credential {
-                        continuation.resume(returning: credential)
-                    } else {
-                        continuation.resume(throwing: NSError(
-                            domain: "LuniferSettings",
-                            code: -1,
-                            userInfo: [NSLocalizedDescriptionKey: "No credential returned."]
-                        ))
-                    }
-                }
-            }
-
-            guard let user = Auth.auth().currentUser else {
-                isDeletingAccount = false
-                return
-            }
-            try await user.reauthenticate(with: credential)
-            await performDeletion(user: user)
-        } catch {
-            isDeletingAccount = false
-            let nsError = error as NSError
-            // ASWebAuthenticationSession cancellation — user tapped Cancel
-            if nsError.domain == "com.apple.AuthenticationServices.WebAuthenticationSession" && nsError.code == 1 {
-                return
-            }
-            deleteErrorMessage = nsError.localizedDescription
-            showDeleteErrorAlert = true
-            print("❌ Microsoft reauthentication failed: \(nsError.localizedDescription)")
-        }
-    }
-
-    /// After successful reauthentication, deletes Firestore data first,
-    /// then deletes the Auth account, then clears local storage.
-    private func performDeletion(user: User) async {
-        let db  = Firestore.firestore()
-        let uid = user.uid
-        let userDoc = db.collection("users").document(uid)
+        let db      = Firestore.firestore()
+        let userDoc = db.collection("users").document(user.uid)
 
         // Best-effort Firestore cleanup. If security rules block client-side
-        // deletes (a common rules configuration), we log and continue — the
-        // Auth account deletion is what matters to the user. Any remaining
-        // Firestore data can be purged server-side via a Firebase Auth
-        // onDelete Cloud Function once one is wired up.
+        // deletes we log and continue — the Auth account deletion is the
+        // critical step. Remaining Firestore data can be purged server-side
+        // via a Firebase Auth onDelete Cloud Function once one is wired up.
         do {
             for sub in ["sleepHistory", "alarmInferences", "private"] {
                 let snap = try await userDoc.collection(sub).getDocuments()
@@ -408,8 +240,6 @@ struct LuniferSettings: View {
             print("⚠️ Firestore cleanup skipped (rules may restrict client-side delete): \(error.localizedDescription)")
         }
 
-        // Delete the Firebase Auth account. This is the critical step and
-        // requires a recent login, which reauthentication above provides.
         do {
             try await user.delete()
             clearLocalAccountData()
@@ -451,6 +281,15 @@ struct AboutYouSettingsView: View {
     @Binding var answers: SurveyAnswers
     @Environment(\.dismiss) private var dismiss
     @State private var editingField: String? = nil
+    // Commute-type gate: shown when user switches to student/commuter from a non-commuter lifestyle
+    @State private var showCommuteTypeSheet = false
+    @State private var pendingLifestyle: String = ""
+    @State private var pendingCommuteMode: String = ""
+    // Long-routine warning
+    @State private var showLongRoutineAlert = false
+    @State private var longRoutineTimeLabel = ""
+    // Calendar authorization
+    @State private var showCalendarDeniedAlert = false
 
     private var isCommuterUser: Bool {
         answers.lifestyle == "student" || answers.lifestyle == "commuter"
@@ -605,6 +444,49 @@ struct AboutYouSettingsView: View {
             answers.saveToDefaults()
             answers.saveToFirestore()
         }
+        // ── Commute-type gate sheet ───────────────────────────────
+        .sheet(isPresented: $showCommuteTypeSheet) {
+            CommuteTypeRequiredSheet(selectedMode: $pendingCommuteMode) {
+                let wasNotWorking = answers.lifestyle == "not_working"
+                answers.lifestyle = pendingLifestyle
+                answers.commuteMode = pendingCommuteMode
+                // Restore routine default when upgrading from not_working
+                if wasNotWorking {
+                    answers.routine = TimeValue(hours: 1, minutes: 0, auto: false)
+                }
+                // onChange handlers on lifestyle/commuteMode/routine will persist the changes
+                showCommuteTypeSheet = false
+                // Collapse the lifestyle dropdown now that the selection is complete
+                editingField = nil
+            }
+            .interactiveDismissDisabled(true)
+            .presentationDetents([.fraction(0.58)])
+            .presentationDragIndicator(.hidden)
+            .presentationBackground(Color(red: 0.07, green: 0.04, blue: 0.15))
+        }
+        // ── Long routine warning ──────────────────────────────────
+        .alert("Long Morning Routine", isPresented: $showLongRoutineAlert) {
+            Button("Yes") {
+                // Keep the selected value and close the expanded row
+                editingField = nil
+            }
+            Button("No", role: .cancel) {
+                answers.routine = TimeValue(hours: 1, minutes: 0, auto: false)
+            }
+        } message: {
+            Text("\(longRoutineTimeLabel) is a long time for a morning routine. Are you sure that's how long you want Lunifer to remember it for?")
+        }
+        // ── Calendar access denied ────────────────────────────────
+        .alert("Calendar Access Required", isPresented: $showCalendarDeniedAlert) {
+            Button("Open Settings") {
+                if let url = URL(string: UIApplication.openSettingsURLString) {
+                    UIApplication.shared.open(url)
+                }
+            }
+            Button("Cancel", role: .cancel) { }
+        } message: {
+            Text("Lunifer needs access to your calendar to set your alarm based on tomorrow's first event. Please tap Open Settings and allow Calendar access.")
+        }
     }
 
     @ViewBuilder
@@ -624,7 +506,20 @@ struct AboutYouSettingsView: View {
 
                 Button {
                     withAnimation(.easeInOut(duration: 0.25)) {
-                        editingField = editingField == field ? nil : field
+                        if editingField == field {
+                            // Closing the row — check for long routine before collapsing
+                            if field == "routine" && !answers.routine.auto && answers.routine.hours > 4 {
+                                let h = answers.routine.hours
+                                let m = answers.routine.minutes
+                                longRoutineTimeLabel = m > 0 ? "\(h) hours \(m) minutes" : "\(h) hours"
+                                showLongRoutineAlert = true
+                                // Don't collapse yet — alert "Yes" closes it
+                            } else {
+                                editingField = nil
+                            }
+                        } else {
+                            editingField = field
+                        }
                     }
                 } label: {
                     Text(editingField == field ? "Done" : "Change")
@@ -665,7 +560,22 @@ struct AboutYouSettingsView: View {
                             ]
                             ForEach(lifestyleOptions, id: \.0) { id, title in
                                 Button {
-                                    answers.lifestyle = id
+                                    let willBeCommuter = id == "student" || id == "commuter"
+                                    let isAlreadyCommuter = answers.lifestyle == "student" || answers.lifestyle == "commuter"
+                                    if willBeCommuter && !isAlreadyCommuter {
+                                        // Gate: require commute type before applying lifestyle change
+                                        pendingLifestyle = id
+                                        pendingCommuteMode = ""
+                                        showCommuteTypeSheet = true
+                                    } else {
+                                        let wasNotWorking = answers.lifestyle == "not_working"
+                                        answers.lifestyle = id
+                                        if id == "not_working" {
+                                            answers.routine = TimeValue(hours: 0, minutes: 0, auto: false)
+                                        } else if wasNotWorking {
+                                            answers.routine = TimeValue(hours: 1, minutes: 0, auto: false)
+                                        }
+                                    }
                                 } label: {
                                     HStack {
                                         Text(title)
@@ -707,7 +617,17 @@ struct AboutYouSettingsView: View {
                                 ("none", "None")
                             ], id: \.0) { id, title in
                                 Button {
+                                    let previousCalendar = answers.calendar
                                     answers.calendar = id
+                                    // When switching away from "none", request calendar access
+                                    if id != "none" && previousCalendar == "none" {
+                                        let status = CalendarManager.shared.authorizationStatus
+                                        if status == .denied {
+                                            showCalendarDeniedAlert = true
+                                        } else if status != .authorized {
+                                            Task { await CalendarManager.shared.requestAccess() }
+                                        }
+                                    }
                                 } label: {
                                     HStack {
                                         Text(title)
@@ -819,38 +739,57 @@ struct SleepAndWearablesSettingsView: View {
     @ObservedObject private var whoopManager = WhoopManager.shared
     @ObservedObject private var ouraManager  = OuraManager.shared
 
-    @AppStorage("whoopConnected")             private var whoopConnected: Bool   = false
-    @AppStorage("whoopRecommendedSleepHours") private var whoopSleepHours: Double = 0
-    @AppStorage("ouraConnected")              private var ouraConnected: Bool    = false
-    @AppStorage("ouraRecommendedSleepHours")  private var ouraSleepHours: Double  = 0
+    @AppStorage(AppPreferencesStore.Keys.hasWearable)               private var hasWearable: Bool      = false
+    @AppStorage(AppPreferencesStore.Keys.whoopConnected)            private var whoopConnected: Bool   = false
+    @AppStorage(AppPreferencesStore.Keys.whoopRecommendedSleepHours) private var whoopSleepHours: Double = 0
+    @AppStorage(AppPreferencesStore.Keys.ouraConnected)             private var ouraConnected: Bool    = false
+    @AppStorage(AppPreferencesStore.Keys.ouraRecommendedSleepHours)  private var ouraSleepHours: Double  = 0
 
     @State private var showSleepSheet = false
     @State private var draftSleep = TimeValue(hours: 8, minutes: 0, auto: false)
     @State private var showWearableWarning = false
     @State private var showDisconnectWhoopAlert = false
     @State private var showDisconnectOuraAlert  = false
+    @State private var showOneWearableAlert = false
+    @State private var conflictingWearableName = ""
 
-    // Priority: WHOOP > Oura > manual preference > age baseline
-    private var recommendedHours: Double {
-        if whoopConnected && whoopSleepHours > 0 {
-            return whoopSleepHours
-        } else if ouraConnected && ouraSleepHours > 0 {
-            return ouraSleepHours
-        } else if answers.sleep.auto {
-            return SleepDurationModel.baselineForAge(answers.age)
-        } else {
-            return Double(answers.sleep.hours) + Double(answers.sleep.minutes) / 60.0
-        }
+    private var wearableSources: [WearableRecommendationSource] {
+        WearableRecommendationStore.sources(
+            whoopConnected: whoopConnected,
+            whoopRecommendedSleepHours: whoopSleepHours,
+            ouraConnected: ouraConnected,
+            ouraRecommendedSleepHours: ouraSleepHours
+        )
     }
 
-    private var isWhoopDriven: Bool { whoopConnected && whoopSleepHours > 0 }
-    private var isOuraDriven:  Bool { !isWhoopDriven && ouraConnected && ouraSleepHours > 0 }
+    private var userHasWearable: Bool {
+        hasWearable || WearableRecommendationStore.hasWearable(from: wearableSources)
+    }
+
+    private var wearableRecommendation: WearableRecommendation? {
+        guard userHasWearable else { return nil }
+        return WearableRecommendationStore.activeRecommendation(from: wearableSources)
+    }
+
+    // Flow: wearable recommendation -> manual preference -> age baseline
+    private var recommendedHours: Double {
+        guard userHasWearable else {
+            return WearableRecommendationStore.fallbackSleepHours(from: answers)
+        }
+
+        return WearableRecommendationStore.recommendedHours(from: wearableSources, fallback: answers)
+    }
 
     private var sleepSourceLabel: String? {
-        if isWhoopDriven { return "Set by WHOOP" }
-        if isOuraDriven  { return "Set by Oura Ring" }
+        if let recommendation = wearableRecommendation {
+            return "Set by \(recommendation.provider.displayName)"
+        }
         if answers.sleep.auto { return "Learning from your data" }
         return nil
+    }
+
+    private var wearableWarningProviderName: String {
+        wearableRecommendation?.provider.displayName ?? "wearable"
     }
 
     var body: some View {
@@ -897,7 +836,7 @@ struct SleepAndWearablesSettingsView: View {
                                     Spacer()
                                     Button {
                                         draftSleep = answers.sleep
-                                        if isWhoopDriven || isOuraDriven {
+                                        if wearableRecommendation != nil {
                                             showWearableWarning = true
                                         } else {
                                             showSleepSheet = true
@@ -931,8 +870,13 @@ struct SleepAndWearablesSettingsView: View {
                                     isLoading: whoopManager.isLoading,
                                     imageHeight: 26,
                                     onConnect: {
-                                        Task {
-                                            try? await WhoopManager.shared.connect()
+                                        if ouraConnected {
+                                            conflictingWearableName = "Oura Ring"
+                                            showOneWearableAlert = true
+                                        } else {
+                                            Task {
+                                                try? await WhoopManager.shared.connect()
+                                            }
                                         }
                                     },
                                     onDisconnect: {
@@ -947,8 +891,13 @@ struct SleepAndWearablesSettingsView: View {
                                     isLoading: ouraManager.isLoading,
                                     imageHeight: 22,
                                     onConnect: {
-                                        Task {
-                                            try? await OuraManager.shared.connect()
+                                        if whoopConnected {
+                                            conflictingWearableName = "WHOOP"
+                                            showOneWearableAlert = true
+                                        } else {
+                                            Task {
+                                                try? await OuraManager.shared.connect()
+                                            }
                                         }
                                     },
                                     onDisconnect: {
@@ -971,7 +920,7 @@ struct SleepAndWearablesSettingsView: View {
             }
             Button("Keep Recommendation", role: .cancel) { }
         } message: {
-            Text("Your sleep goal is set by your \(isWhoopDriven ? "WHOOP" : "Oura Ring"). Setting it manually will replace that recommendation.")
+            Text("Your sleep goal is set by your \(wearableWarningProviderName). Setting it manually will replace that recommendation.")
         }
         .alert("Disconnect WHOOP?", isPresented: $showDisconnectWhoopAlert) {
             Button("Disconnect", role: .destructive) {
@@ -988,6 +937,11 @@ struct SleepAndWearablesSettingsView: View {
             Button("Cancel", role: .cancel) { }
         } message: {
             Text("Your sleep recommendation will revert to your manual setting or Lunifer's age-based estimate.")
+        }
+        .alert("Only One Wearable at a Time", isPresented: $showOneWearableAlert) {
+            Button("OK", role: .cancel) { }
+        } message: {
+            Text("You're already connected to \(conflictingWearableName). Disconnect it first before connecting a different wearable.")
         }
         // ── Sleep edit sheet (same as old SleepInsights sheet) ──
         .sheet(isPresented: $showSleepSheet) {
@@ -1172,9 +1126,11 @@ struct WakeDaysSettingsView: View {
 
 struct NotificationsSettingsView: View {
     @Environment(\.dismiss) private var dismiss
-    @AppStorage("batteryAlertEnabled")    private var batteryAlertEnabled: Bool    = true
-    @AppStorage("wakeReminderEnabled")    private var wakeReminderEnabled: Bool    = true
-    @AppStorage("commuteReminderEnabled") private var commuteReminderEnabled: Bool = true
+    @AppStorage("allNotificationsEnabled")  private var allNotificationsEnabled: Bool  = true
+    @AppStorage("batteryAlertEnabled")      private var batteryAlertEnabled: Bool      = true
+    @AppStorage("wakeReminderEnabled")      private var wakeReminderEnabled: Bool      = true
+    @AppStorage("commuteReminderEnabled")   private var commuteReminderEnabled: Bool   = true
+    @AppStorage("restDayReminderEnabled")   private var restDayReminderEnabled: Bool   = true
 
     var body: some View {
         ZStack(alignment: .top) {
@@ -1201,86 +1157,167 @@ struct NotificationsSettingsView: View {
                 .padding(.bottom, 20)
 
                 ScrollView(showsIndicators: false) {
-                    VStack(spacing: 0) {
-                        // ── Battery alert row ─────────────
+                    VStack(spacing: 12) {
+
+                        // ── Master toggle ─────────────────
                         HStack(spacing: 12) {
                             VStack(alignment: .leading, spacing: 4) {
-                                Text("Battery Alert")
+                                Text("All Notifications")
                                     .font(.custom("DM Sans", size: 14))
                                     .foregroundColor(Color.white.opacity(0.85))
-                                Text("Warn me if my phone won't survive until my alarm")
+                                Text("Turn all Lunifer notifications on or off at once")
                                     .font(.custom("DM Sans", size: 12))
                                     .foregroundColor(Color.white.opacity(0.35))
                                     .fixedSize(horizontal: false, vertical: true)
                             }
                             Spacer()
-                            Toggle("", isOn: $batteryAlertEnabled)
+                            Toggle("", isOn: $allNotificationsEnabled)
                                 .labelsHidden()
                                 .tint(Color(red: 0.627, green: 0.471, blue: 1.0))
                         }
                         .padding(.horizontal, 16)
                         .padding(.vertical, 16)
-
-                        Divider()
-                            .background(Color.white.opacity(0.08))
-                            .padding(.leading, 16)
-
-                        // ── Alarm set alert row ───────────
-                        HStack(spacing: 12) {
-                            VStack(alignment: .leading, spacing: 4) {
-                                Text("Alarm Set Alert")
-                                    .font(.custom("DM Sans", size: 14))
-                                    .foregroundColor(Color.white.opacity(0.85))
-                                Text("Alert me when my alarm is set for the next day 3 hours before bedtime")
-                                    .font(.custom("DM Sans", size: 12))
-                                    .foregroundColor(Color.white.opacity(0.35))
-                                    .fixedSize(horizontal: false, vertical: true)
+                        .background(
+                            RoundedRectangle(cornerRadius: 12)
+                                .fill(Color.white.opacity(0.04))
+                                .overlay(
+                                    RoundedRectangle(cornerRadius: 12)
+                                        .stroke(Color.white.opacity(0.08), lineWidth: 1)
+                                )
+                        )
+                        .onChange(of: allNotificationsEnabled) { _, enabled in
+                            if !enabled {
+                                // Cancel every active notification in the backend
+                                batteryAlertEnabled    = false
+                                wakeReminderEnabled    = false
+                                commuteReminderEnabled = false
+                                restDayReminderEnabled = false
+                                WakeNotification.shared.cancel()
+                                CommuteNotification.shared.cancelAll()
+                                BatteryAlarmNotification.shared.cancelWarning()
+                                RestDayEventNotification.shared.cancel()
+                            } else {
+                                // Re-enable all individual toggles
+                                batteryAlertEnabled    = true
+                                wakeReminderEnabled    = true
+                                commuteReminderEnabled = true
+                                restDayReminderEnabled = true
                             }
-                            Spacer()
-                            Toggle("", isOn: $wakeReminderEnabled)
-                                .labelsHidden()
-                                .tint(Color(red: 0.627, green: 0.471, blue: 1.0))
-                        }
-                        .padding(.horizontal, 16)
-                        .padding(.vertical, 16)
-                        .onChange(of: wakeReminderEnabled) { _, enabled in
-                            if !enabled { WakeNotification.shared.cancel() }
                         }
 
-                        Divider()
-                            .background(Color.white.opacity(0.08))
-                            .padding(.leading, 16)
-
-                        // ── Commute reminder row ──────────
-                        HStack(spacing: 12) {
-                            VStack(alignment: .leading, spacing: 4) {
-                                Text("Commute Reminder")
-                                    .font(.custom("DM Sans", size: 14))
-                                    .foregroundColor(Color.white.opacity(0.85))
-                                Text("Notify me 15 minutes before I need to leave for work")
-                                    .font(.custom("DM Sans", size: 12))
-                                    .foregroundColor(Color.white.opacity(0.35))
-                                    .fixedSize(horizontal: false, vertical: true)
+                        // ── Individual toggles ────────────
+                        VStack(spacing: 0) {
+                            // ── Battery alert row ─────────────
+                            HStack(spacing: 12) {
+                                VStack(alignment: .leading, spacing: 4) {
+                                    Text("Battery Alert")
+                                        .font(.custom("DM Sans", size: 14))
+                                        .foregroundColor(Color.white.opacity(allNotificationsEnabled ? 0.85 : 0.35))
+                                    Text("Warn me if my phone won't survive until my alarm")
+                                        .font(.custom("DM Sans", size: 12))
+                                        .foregroundColor(Color.white.opacity(allNotificationsEnabled ? 0.35 : 0.18))
+                                        .fixedSize(horizontal: false, vertical: true)
+                                }
+                                Spacer()
+                                Toggle("", isOn: $batteryAlertEnabled)
+                                    .labelsHidden()
+                                    .tint(Color(red: 0.627, green: 0.471, blue: 1.0))
+                                    .disabled(!allNotificationsEnabled)
                             }
-                            Spacer()
-                            Toggle("", isOn: $commuteReminderEnabled)
-                                .labelsHidden()
-                                .tint(Color(red: 0.627, green: 0.471, blue: 1.0))
+                            .padding(.horizontal, 16)
+                            .padding(.vertical, 16)
+
+                            Divider()
+                                .background(Color.white.opacity(0.08))
+                                .padding(.leading, 16)
+
+                            // ── Alarm set alert row ───────────
+                            HStack(spacing: 12) {
+                                VStack(alignment: .leading, spacing: 4) {
+                                    Text("Alarm Set Alert")
+                                        .font(.custom("DM Sans", size: 14))
+                                        .foregroundColor(Color.white.opacity(allNotificationsEnabled ? 0.85 : 0.35))
+                                    Text("Alert me when my alarm is set for the next day 3 hours before bedtime")
+                                        .font(.custom("DM Sans", size: 12))
+                                        .foregroundColor(Color.white.opacity(allNotificationsEnabled ? 0.35 : 0.18))
+                                        .fixedSize(horizontal: false, vertical: true)
+                                }
+                                Spacer()
+                                Toggle("", isOn: $wakeReminderEnabled)
+                                    .labelsHidden()
+                                    .tint(Color(red: 0.627, green: 0.471, blue: 1.0))
+                                    .disabled(!allNotificationsEnabled)
+                            }
+                            .padding(.horizontal, 16)
+                            .padding(.vertical, 16)
+                            .onChange(of: wakeReminderEnabled) { _, enabled in
+                                if !enabled { WakeNotification.shared.cancel() }
+                            }
+
+                            Divider()
+                                .background(Color.white.opacity(0.08))
+                                .padding(.leading, 16)
+
+                            // ── Commute reminder row ──────────
+                            HStack(spacing: 12) {
+                                VStack(alignment: .leading, spacing: 4) {
+                                    Text("Commute Reminder")
+                                        .font(.custom("DM Sans", size: 14))
+                                        .foregroundColor(Color.white.opacity(allNotificationsEnabled ? 0.85 : 0.35))
+                                    Text("Notify me 15 minutes before I need to leave for work")
+                                        .font(.custom("DM Sans", size: 12))
+                                        .foregroundColor(Color.white.opacity(allNotificationsEnabled ? 0.35 : 0.18))
+                                        .fixedSize(horizontal: false, vertical: true)
+                                }
+                                Spacer()
+                                Toggle("", isOn: $commuteReminderEnabled)
+                                    .labelsHidden()
+                                    .tint(Color(red: 0.627, green: 0.471, blue: 1.0))
+                                    .disabled(!allNotificationsEnabled)
+                            }
+                            .padding(.horizontal, 16)
+                            .padding(.vertical, 16)
+                            .onChange(of: commuteReminderEnabled) { _, enabled in
+                                if !enabled { CommuteNotification.shared.cancelAll() }
+                            }
+
+                            Divider()
+                                .background(Color.white.opacity(0.08))
+                                .padding(.leading, 16)
+
+                            // ── Rest day reminder row ──────────
+                            HStack(spacing: 12) {
+                                VStack(alignment: .leading, spacing: 4) {
+                                    Text("Rest Day Reminder")
+                                        .font(.custom("DM Sans", size: 14))
+                                        .foregroundColor(Color.white.opacity(allNotificationsEnabled ? 0.85 : 0.35))
+                                    Text("Notify me on rest days if I have an early event the next morning")
+                                        .font(.custom("DM Sans", size: 12))
+                                        .foregroundColor(Color.white.opacity(allNotificationsEnabled ? 0.35 : 0.18))
+                                        .fixedSize(horizontal: false, vertical: true)
+                                }
+                                Spacer()
+                                Toggle("", isOn: $restDayReminderEnabled)
+                                    .labelsHidden()
+                                    .tint(Color(red: 0.627, green: 0.471, blue: 1.0))
+                                    .disabled(!allNotificationsEnabled)
+                            }
+                            .padding(.horizontal, 16)
+                            .padding(.vertical, 16)
+                            .onChange(of: restDayReminderEnabled) { _, enabled in
+                                if !enabled { RestDayEventNotification.shared.cancel() }
+                            }
                         }
-                        .padding(.horizontal, 16)
-                        .padding(.vertical, 16)
-                        .onChange(of: commuteReminderEnabled) { _, enabled in
-                            if !enabled { CommuteNotification.shared.cancelAll() }
-                        }
+                        .background(
+                            RoundedRectangle(cornerRadius: 12)
+                                .fill(Color.white.opacity(0.04))
+                                .overlay(
+                                    RoundedRectangle(cornerRadius: 12)
+                                        .stroke(Color.white.opacity(0.08), lineWidth: 1)
+                                )
+                        )
+                        .opacity(allNotificationsEnabled ? 1 : 0.6)
                     }
-                    .background(
-                        RoundedRectangle(cornerRadius: 12)
-                            .fill(Color.white.opacity(0.04))
-                            .overlay(
-                                RoundedRectangle(cornerRadius: 12)
-                                    .stroke(Color.white.opacity(0.08), lineWidth: 1)
-                            )
-                    )
                     .padding(.horizontal, 24)
                     .padding(.top, 8)
                 }
@@ -1326,6 +1363,210 @@ struct SettingsSection<Content: View>: View {
                 .kerning(2)
             content()
         }
+    }
+}
+
+// ── MARK: Commute Type Required Sheet ─────────────────────────
+// Presented (non-dismissable) when the user switches to a commuter
+// lifestyle in Settings without a commute mode already selected.
+
+struct CommuteTypeRequiredSheet: View {
+    @Binding var selectedMode: String
+    let onConfirm: () -> Void
+
+    private let modes: [(id: String, icon: String, label: String)] = [
+        ("drive",   "car.fill",    "Drive"),
+        ("transit", "tram.fill",   "Transit"),
+        ("walk",    "figure.walk", "Walk"),
+        ("bike",    "bicycle",     "Bike")
+    ]
+
+    var body: some View {
+        ZStack {
+            Color(red: 0.07, green: 0.04, blue: 0.15).ignoresSafeArea()
+
+            VStack(spacing: 0) {
+
+                // ── Header ────────────────────────────────────────
+                Text("How do you commute?")
+                    .font(.custom("Cormorant Garamond", size: 26).weight(.light))
+                    .foregroundColor(Color.white.opacity(0.95))
+                    .multilineTextAlignment(.center)
+                    .padding(.top, 36)
+                    .padding(.horizontal, 24)
+                    .padding(.bottom, 8)
+
+                Text("Lunifer will calculate your commute time automatically.")
+                    .font(.custom("DM Sans", size: 13))
+                    .foregroundColor(Color.white.opacity(0.4))
+                    .multilineTextAlignment(.center)
+                    .padding(.horizontal, 40)
+                    .padding(.bottom, 32)
+
+                // ── Transport mode grid ───────────────────────────
+                HStack(spacing: 10) {
+                    ForEach(modes, id: \.id) { mode in
+                        let selected = selectedMode == mode.id
+                        Button {
+                            withAnimation(.easeInOut(duration: 0.18)) {
+                                selectedMode = mode.id
+                            }
+                        } label: {
+                            VStack(spacing: 8) {
+                                Image(systemName: mode.icon)
+                                    .font(.system(size: 20, weight: .regular))
+                                    .foregroundColor(selected
+                                        ? Color.white.opacity(0.95)
+                                        : Color.white.opacity(0.3))
+                                Text(mode.label)
+                                    .font(.custom("DM Sans", size: 12))
+                                    .foregroundColor(selected
+                                        ? Color.white.opacity(0.85)
+                                        : Color.white.opacity(0.3))
+                            }
+                            .frame(maxWidth: .infinity)
+                            .frame(height: 68)
+                            .background(
+                                RoundedRectangle(cornerRadius: 12)
+                                    .fill(selected
+                                        ? Color(red: 0.627, green: 0.471, blue: 1.0).opacity(0.18)
+                                        : Color.white.opacity(0.03))
+                                    .overlay(
+                                        RoundedRectangle(cornerRadius: 12)
+                                            .stroke(selected
+                                                ? Color(red: 0.627, green: 0.471, blue: 1.0).opacity(0.65)
+                                                : Color.white.opacity(0.06),
+                                                lineWidth: 1.5)
+                                    )
+                            )
+                        }
+                        .buttonStyle(.plain)
+                        .animation(.easeInOut(duration: 0.15), value: selected)
+                    }
+                }
+                .padding(.horizontal, 24)
+
+                // ── Hint text ─────────────────────────────────────
+                if selectedMode.isEmpty {
+                    Text("Select a commute type above to continue.")
+                        .font(.custom("DM Sans", size: 13))
+                        .foregroundColor(Color.white.opacity(0.35))
+                        .padding(.top, 14)
+                        .transition(.opacity)
+                }
+
+                Spacer()
+
+                // ── Confirm button ────────────────────────────────
+                Button(action: onConfirm) {
+                    Text("Confirm →")
+                        .font(.custom("DM Sans", size: 15).weight(.medium))
+                        .foregroundColor(.white)
+                        .frame(maxWidth: .infinity)
+                        .frame(height: 52)
+                        .background(
+                            RoundedRectangle(cornerRadius: 14)
+                                .fill(LinearGradient(
+                                    colors: [
+                                        Color(red: 0.471, green: 0.314, blue: 0.863).opacity(0.9),
+                                        Color(red: 0.314, green: 0.196, blue: 0.706).opacity(0.9)
+                                    ],
+                                    startPoint: .topLeading,
+                                    endPoint: .bottomTrailing
+                                ))
+                                .opacity(selectedMode.isEmpty ? 0.35 : 1.0)
+                        )
+                }
+                .disabled(selectedMode.isEmpty)
+                .padding(.horizontal, 24)
+                .padding(.bottom, 36)
+            }
+        }
+    }
+}
+
+// ── MARK: About ────────────────────────────────────────────────
+
+struct AboutSettingsView: View {
+    @Environment(\.dismiss) private var dismiss
+    @Environment(\.openURL)  private var openURL
+
+    var body: some View {
+        ZStack(alignment: .top) {
+            Color.luniferBg.ignoresSafeArea()
+
+            VStack(spacing: 0) {
+                // ── Header ────────────────────────────────
+                HStack {
+                    Button { dismiss() } label: {
+                        Image(systemName: "chevron.left")
+                            .font(.system(size: 16, weight: .light))
+                            .foregroundColor(Color.white.opacity(0.75))
+                            .frame(width: 36, height: 36)
+                    }
+                    Spacer()
+                    Text("About")
+                        .font(.custom("Cormorant Garamond", size: 28).weight(.light))
+                        .foregroundColor(Color.white.opacity(0.9))
+                    Spacer()
+                    Color.clear.frame(width: 36, height: 36)
+                }
+                .padding(.horizontal, 24)
+                .padding(.top, 24)
+                .padding(.bottom, 20)
+
+                // ── Links ─────────────────────────────────
+                VStack(spacing: 0) {
+                    Button {
+                        openURL(URL(string: "https://lunifer-ce086.web.app/privacy-policy.html")!)
+                    } label: {
+                        HStack {
+                            Text("Privacy Policy")
+                                .font(.custom("DM Sans", size: 15))
+                                .foregroundColor(Color.white.opacity(0.85))
+                            Spacer()
+                            Image(systemName: "arrow.up.right")
+                                .font(.system(size: 13, weight: .light))
+                                .foregroundColor(Color.white.opacity(0.25))
+                        }
+                        .padding(.horizontal, 16)
+                        .padding(.vertical, 16)
+                    }
+                    .buttonStyle(.plain)
+
+                    Divider()
+                        .background(Color.white.opacity(0.08))
+                        .padding(.leading, 16)
+
+                    Button {
+                        openURL(URL(string: "https://lunifer-ce086.web.app/terms.html")!)
+                    } label: {
+                        HStack {
+                            Text("Terms & Conditions")
+                                .font(.custom("DM Sans", size: 15))
+                                .foregroundColor(Color.white.opacity(0.85))
+                            Spacer()
+                            Image(systemName: "arrow.up.right")
+                                .font(.system(size: 13, weight: .light))
+                                .foregroundColor(Color.white.opacity(0.25))
+                        }
+                        .padding(.horizontal, 16)
+                        .padding(.vertical, 16)
+                    }
+                    .buttonStyle(.plain)
+                }
+                .background(
+                    RoundedRectangle(cornerRadius: 12)
+                        .fill(Color.white.opacity(0.04))
+                        .overlay(
+                            RoundedRectangle(cornerRadius: 12)
+                                .stroke(Color.white.opacity(0.08), lineWidth: 1)
+                        )
+                )
+                .padding(.horizontal, 24)
+            }
+        }
+        .toolbar(.hidden, for: .navigationBar)
     }
 }
 

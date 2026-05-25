@@ -110,8 +110,8 @@ struct SleepHistoryEntry: Identifiable {
 // ─────────────────────────────────────────────────────────────
 // SleepHistoryManager
 // ─────────────────────────────────────────────────────────────
-// Persists and retrieves sleep history from UserDefaults.
-// Keeps the last 30 nights of data.
+// Compatibility wrapper over SleepHistoryStore.
+// SleepHistoryStore keeps every locally recorded night and syncs each night to Firestore.
 
 final class SleepHistoryManager {
 
@@ -128,6 +128,11 @@ final class SleepHistoryManager {
     /// don't corrupt the average once real data starts accumulating.
     func recentHistory(days: Int = 7) -> [SleepHistoryEntry] {
         store.recentHistory(days: days)
+    }
+
+    /// Returns every locally cached sleep history entry, most recent first.
+    func allHistory() -> [SleepHistoryEntry] {
+        store.allHistory()
     }
 
     /// Average sleep duration over the last N nights. Nil if no data.

@@ -4,14 +4,11 @@ import Foundation
 // SleepHistoryMock
 // ─────────────────────────────────────────────────────────────
 // Static mock data for SwiftUI previews and local testing.
-// Use SleepHistoryMock.entries to populate SleepHistoryChart
+// Use SleepHistoryMock.entries to populate SleepInsights
 // without requiring real UserDefaults / Firestore data.
 //
 // Usage in a preview:
-//   SleepHistoryChart(
-//       entries: SleepHistoryMock.entries,
-//       recommendedHours: 8.0
-//   )
+//   SleepInsights(answers: $answers, previewEntries: SleepHistoryMock.entries)
 //
 // To seed the local store during a debug build:
 //   SleepHistoryMock.seedStore()

@@ -61,6 +61,14 @@ final class CommuteManager: ObservableObject {
     @Published var currentDurationMinutes: Int = 0
     @Published var lastFetched: Date?          = nil
 
+    // ── Routing state ─────────────────────────────────────────
+
+    /// True once the first real MKDirections route (GPS + calendar event
+    /// location) has been obtained. Suppresses leave-reminder and delta-alert
+    /// notifications until a routable destination is confirmed, so the user
+    /// is never notified based solely on the 30-minute survey fallback.
+    private var hasLiveRoute: Bool = false
+
     // ── Persisted state keys (UserDefaults) ───────────────────
 
     private let arrivalKey       = AppPreferencesStore.Keys.commuteArrivalTimestamp
@@ -116,9 +124,12 @@ final class CommuteManager: ObservableObject {
 
         // Persist state so the background task handler can read it
         // even if the app has been suspended and relaunched by iOS
-        self.arrivalDate            = arrivalDate
+        self.arrivalDate             = arrivalDate
         self.previousDurationMinutes = duration
-        self.pollingActive          = true
+        self.pollingActive           = true
+
+        // Reset live-route flag so a new session starts without a stale route
+        hasLiveRoute = false
 
         currentDurationMinutes = duration
         lastFetched            = Date()
@@ -127,9 +138,10 @@ final class CommuteManager: ObservableObject {
         // actual position rather than their saved home address.
         LocationManager.shared.requestCurrentLocation()
 
-        // Schedule the initial leave reminder
-        let leaveTime = arrivalDate.addingTimeInterval(-Double(duration) * 60)
-        CommuteNotification.shared.scheduleLeaveReminder(leaveTime: leaveTime)
+        // Do NOT schedule a leave reminder here — the duration at this point
+        // is the 30-minute survey fallback. The reminder is scheduled in
+        // refreshDuration() only after a real GPS + calendar-event route
+        // has been obtained.
 
         // Foreground: 5-min Timer (suspends automatically when app backgrounds)
         stopTimer()
@@ -172,8 +184,9 @@ final class CommuteManager: ObservableObject {
     /// Checks for a duration change and fires a delta alert if the shift is ≥5 min.
     /// Also stops polling automatically once the leave time has passed.
     ///
-    /// Uses a live MKDirections fetch when both home and work coordinates are stored.
-    /// Falls back to the survey-entered duration if either location is missing.
+    /// Notifications are only sent when a real GPS + calendar-event route exists.
+    /// If no routable destination is available (no GPS fix or no event location),
+    /// currentDurationMinutes is left unchanged and no notifications fire.
     private func refreshDuration(answers: SurveyAnswers) async {
         // Auto-stop once the user should have left
         let leave = arrivalDate.addingTimeInterval(-Double(currentDurationMinutes) * 60)
@@ -182,22 +195,42 @@ final class CommuteManager: ObservableObject {
             return
         }
 
-        let newDuration = await Self.fetchLiveDuration(answers: answers)
+        // Attempt a real route. Returns nil when there is no GPS fix or no
+        // calendar event location to route to — the survey fallback is not
+        // returned here so notifications are never triggered by placeholder data.
+        if let routedMinutes = await Self.fetchLiveDurationIfRoutable(answers: answers) {
+            let delta = routedMinutes - previousDurationMinutes
 
-        let delta = newDuration - previousDurationMinutes
+            if hasLiveRoute && abs(delta) >= 5 {
+                // Only fire delta alerts after the first real route is established
+                // so the initial survey-baseline → real-route transition doesn't
+                // look like a meaningful traffic change to the user.
+                let newLeave = arrivalDate.addingTimeInterval(-Double(routedMinutes) * 60)
+                CommuteNotification.shared.scheduleDeltaAlert(
+                    newLeaveTime: newLeave,
+                    didIncrease:  delta > 0
+                )
+                print("🚗 Commute delta: \(delta > 0 ? "+" : "")\(delta) min — new leave by \(newLeave)")
+            }
 
-        if abs(delta) >= 5 {
-            let newLeave = arrivalDate.addingTimeInterval(-Double(newDuration) * 60)
-            CommuteNotification.shared.scheduleDeltaAlert(
-                newLeaveTime: newLeave,
-                didIncrease:  delta > 0
-            )
-            previousDurationMinutes = newDuration  // persists to UserDefaults
-            print("🚗 Commute delta: \(delta > 0 ? "+" : "")\(delta) min — new leave by \(newLeave)")
+            previousDurationMinutes = routedMinutes  // persists to UserDefaults
+            currentDurationMinutes  = routedMinutes
+
+            if !hasLiveRoute {
+                // First confirmed real route — schedule the leave reminder now.
+                hasLiveRoute = true
+                let leaveTime = arrivalDate.addingTimeInterval(-Double(routedMinutes) * 60)
+                CommuteNotification.shared.scheduleLeaveReminder(leaveTime: leaveTime)
+                print("🚗 First live route confirmed — leave reminder scheduled")
+            }
+        } else {
+            // No routable destination yet. Keep currentDurationMinutes at the
+            // survey fallback so the alarm buffer stays accurate, but do not
+            // send any notifications.
+            print("🚗 No routable destination — commute notification suppressed")
         }
 
-        currentDurationMinutes = newDuration
-        lastFetched            = Date()
+        lastFetched = Date()
     }
 
     /// Fetches a live commute duration using a two-step priority chain.
@@ -231,6 +264,30 @@ final class CommuteManager: ObservableObject {
 
         // Step 2: Survey fallback
         return surveyDuration(from: answers)
+    }
+
+    /// Like fetchLiveDuration, but returns nil instead of the survey fallback
+    /// when no real GPS + calendar-event route can be computed. Used by
+    /// refreshDuration() to decide whether to send commute notifications —
+    /// the user should never be notified based on the 30-minute placeholder.
+    private static func fetchLiveDurationIfRoutable(answers: SurveyAnswers) async -> Int? {
+        guard let originCoord = LocationManager.shared.currentCoordinate else {
+            return nil   // No GPS fix — cannot route
+        }
+        guard let eventLocation = CalendarManager.shared.firstEventTomorrow?.location,
+              !eventLocation.trimmingCharacters(in: .whitespaces).isEmpty else {
+            return nil   // No calendar event location to route to
+        }
+        guard let coord = await geocode(eventLocation) else {
+            return nil   // Geocoding failed
+        }
+        let origin      = MKMapItem(placemark: MKPlacemark(coordinate: originCoord))
+        let destination = MKMapItem(placemark: MKPlacemark(coordinate: coord))
+        guard let minutes = await routeMinutes(from: origin, to: destination, mode: answers.commuteMode) else {
+            return nil   // MKDirections request failed
+        }
+        print("🚗 Live commute (routable check): \(minutes) min to \(eventLocation)")
+        return minutes
     }
 
     /// Geocodes a free-form address string to a coordinate using CLGeocoder.

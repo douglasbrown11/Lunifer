@@ -7,7 +7,9 @@ final class SleepTrackingStore {
 
     private let lastInteractionKey = "lunifer_last_interaction"
     private let interactionLogKey = "lunifer_interaction_log"
-    private let historicalKey = "lunifer_avg_sleep_onset"
+    private let historicalKey = "lunifer_avg_sleep_onset"          // legacy — kept for migration
+    private let historicalWeekdayKey = "lunifer_avg_sleep_onset_weekday"
+    private let historicalWeekendKey  = "lunifer_avg_sleep_onset_weekend"
     private let sleepLogKey = "lunifer_sleep_log"
     private let lastRetroactiveAnalysisKey = "lunifer_last_retroactive_analysis"
 
@@ -37,6 +39,7 @@ final class SleepTrackingStore {
         defaults.set(log.map(\.timeIntervalSince1970), forKey: interactionLogKey)
     }
 
+    // Legacy single-average accessor — used only for one-time migration in SleepFeatureCollector.
     func historicalAverageSleepOnset() -> Double? {
         let stored = defaults.double(forKey: historicalKey)
         return stored > 0 ? stored : nil
@@ -44,6 +47,26 @@ final class SleepTrackingStore {
 
     func setHistoricalAverageSleepOnset(_ value: Double?) {
         defaults.set(value ?? 0, forKey: historicalKey)
+    }
+
+    // Weekday average (Mon–Fri)
+    func historicalAverageSleepOnsetWeekday() -> Double? {
+        let stored = defaults.double(forKey: historicalWeekdayKey)
+        return stored > 0 ? stored : nil
+    }
+
+    func setHistoricalAverageSleepOnsetWeekday(_ value: Double?) {
+        defaults.set(value ?? 0, forKey: historicalWeekdayKey)
+    }
+
+    // Weekend average (Sat–Sun)
+    func historicalAverageSleepOnsetWeekend() -> Double? {
+        let stored = defaults.double(forKey: historicalWeekendKey)
+        return stored > 0 ? stored : nil
+    }
+
+    func setHistoricalAverageSleepOnsetWeekend(_ value: Double?) {
+        defaults.set(value ?? 0, forKey: historicalWeekendKey)
     }
 
     func lastRetroactiveAnalysisDate() -> Date? {
@@ -74,6 +97,8 @@ final class SleepTrackingStore {
             lastInteractionKey,
             interactionLogKey,
             historicalKey,
+            historicalWeekdayKey,
+            historicalWeekendKey,
             sleepLogKey,
             lastRetroactiveAnalysisKey
         ] {

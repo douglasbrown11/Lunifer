@@ -12,14 +12,6 @@ struct LuniferAlarmScreen: View {
 
     @StateObject private var alarm = LuniferAlarm.shared
 
-    // Snooze duration is stored in UserDefaults so it persists across launches.
-    // Adjusted in LuniferSettings.
-    // Note: swap "System" for "Roboto" here once Roboto is added to the Xcode project.
-    @AppStorage("snoozeMinutes") private var snoozeMinutes: Int = 5
-
-    // The selected alarm sound filename, set from the sound picker in the dashboard.
-    @AppStorage("selectedAlarmSound") private var selectedAlarmSound: String = "DeafultAlarm.wav"
-
     @State private var currentTime = Date()
     @State private var audioPlayer: AVAudioPlayer? = nil
     private let ticker = Timer.publish(every: 1, on: .main, in: .common).autoconnect()
@@ -52,9 +44,9 @@ struct LuniferAlarmScreen: View {
 
                     // Snooze
                     Button {
-                        Task { await alarm.snooze(minutes: snoozeMinutes) }
+                        Task { await alarm.snooze(minutes: alarm.alertingAlarmSnoozeMinutes) }
                     } label: {
-                        Text("Snooze · \(snoozeMinutes) min")
+                        Text("Snooze · \(alarm.alertingAlarmSnoozeMinutes) min")
                             .font(.system(size: 16, weight: .regular))
                             .foregroundColor(.white)
                             .frame(maxWidth: .infinity)
@@ -102,7 +94,7 @@ struct LuniferAlarmScreen: View {
     /// audio (e.g. any system alarm tone AlarmKit may produce) so
     /// Lunifer's custom sound is clearly heard.
     private func startPlayingSound() {
-        let filename = selectedAlarmSound
+        let filename = alarm.alertingAlarmSound
         let name = (filename as NSString).deletingPathExtension
         let ext  = (filename as NSString).pathExtension.isEmpty ? "wav" : (filename as NSString).pathExtension
 

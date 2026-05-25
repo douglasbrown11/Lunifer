@@ -7,7 +7,7 @@ final class AppPreferencesStore {
         static let surveyCompleted = "surveyCompleted"
 
         // Alarm
-        static let snoozeMinutes = "snoozeMinutes"
+        static let mainAlarmSnoozeMinutes = "mainAlarmSnoozeMinutes"
         static let selectedAlarmSound = "selectedAlarmSound"
         static let luniferEnabled = "luniferEnabled"
         static let overrideActive = "overrideActive"
@@ -31,6 +31,9 @@ final class AppPreferencesStore {
         static let ouraLatestSleepOnset = "ouraLatestSleepOnset"
         static let ouraLatestWakeTime = "ouraLatestWakeTime"
 
+        // Wearable resolver
+        static let hasWearable = "hasWearable"
+
         // Notifications
         static let batteryAlertEnabled    = "batteryAlertEnabled"
         static let wakeReminderEnabled    = "wakeReminderEnabled"
@@ -52,6 +55,10 @@ final class AppPreferencesStore {
     }
 
     private let defaults = UserDefaults.standard
+
+    private init() {
+        refreshHasWearable()
+    }
 
     var surveyCompleted: Bool {
         get { defaults.bool(forKey: Keys.surveyCompleted) }
@@ -109,6 +116,7 @@ final class AppPreferencesStore {
         defaults.removeObject(forKey: Keys.whoopTokenExpiry)
         defaults.removeObject(forKey: Keys.whoopLatestSleepOnset)
         defaults.removeObject(forKey: Keys.whoopLatestWakeTime)
+        refreshHasWearable()
     }
 
     // MARK: - Oura
@@ -144,5 +152,22 @@ final class AppPreferencesStore {
         defaults.removeObject(forKey: Keys.ouraLastSyncDate)
         defaults.removeObject(forKey: Keys.ouraLatestSleepOnset)
         defaults.removeObject(forKey: Keys.ouraLatestWakeTime)
+        refreshHasWearable()
+    }
+
+    // MARK: - Wearables
+
+    var hasWearable: Bool {
+        get { defaults.bool(forKey: Keys.hasWearable) }
+        set { defaults.set(newValue, forKey: Keys.hasWearable) }
+    }
+
+    func refreshHasWearable() {
+        let whoopAvailable = defaults.bool(forKey: Keys.whoopConnected)
+            && defaults.double(forKey: Keys.whoopRecommendedSleepHours) > 0
+        let ouraAvailable = defaults.bool(forKey: Keys.ouraConnected)
+            && defaults.double(forKey: Keys.ouraRecommendedSleepHours) > 0
+
+        hasWearable = whoopAvailable || ouraAvailable
     }
 }

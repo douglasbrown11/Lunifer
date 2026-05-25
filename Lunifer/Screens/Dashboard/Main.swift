@@ -13,6 +13,34 @@ struct AddedAlarm: Codable, Identifiable {
     var label: String
     var sound: String
     var snoozeMinutes: Int
+    /// Empty array = one-shot; non-empty = repeating on those weekday IDs ("mon"…"sun").
+    var repeatDays: [String]
+
+    // Explicit memberwise init — repeatDays defaults to [] (one-shot).
+    init(id: UUID, timestamp: Double, label: String, sound: String,
+         snoozeMinutes: Int, repeatDays: [String] = []) {
+        self.id            = id
+        self.timestamp     = timestamp
+        self.label         = label
+        self.sound         = sound
+        self.snoozeMinutes = snoozeMinutes
+        self.repeatDays    = repeatDays
+    }
+
+    // Backward-compatible decoder — existing stored JSON has no repeatDays key.
+    init(from decoder: Decoder) throws {
+        let c          = try decoder.container(keyedBy: CodingKeys.self)
+        id             = try c.decode(UUID.self,   forKey: .id)
+        timestamp      = try c.decode(Double.self, forKey: .timestamp)
+        label          = try c.decode(String.self, forKey: .label)
+        sound          = try c.decode(String.self, forKey: .sound)
+        snoozeMinutes  = try c.decode(Int.self,    forKey: .snoozeMinutes)
+        repeatDays     = (try? c.decode([String].self, forKey: .repeatDays)) ?? []
+    }
+
+    private enum CodingKeys: String, CodingKey {
+        case id, timestamp, label, sound, snoozeMinutes, repeatDays
+    }
 
     var date: Date { Date(timeIntervalSince1970: timestamp) }
 
@@ -27,6 +55,25 @@ struct AddedAlarm: Codable, Identifiable {
         f.dateFormat = "a"
         return f.string(from: date)
     }
+
+    /// Human-readable repeat summary, or nil when this is a one-shot alarm.
+    var displayRepeatDays: String? {
+        guard !repeatDays.isEmpty else { return nil }
+        if repeatDays.count == 7 { return "Every day" }
+        let order  = ["mon","tue","wed","thu","fri","sat","sun"]
+        let labels = ["Mon","Tue","Wed","Thu","Fri","Sat","Sun"]
+        return order.enumerated()
+            .filter { repeatDays.contains($0.element) }
+            .map    { labels[$0.offset] }
+            .joined(separator: ", ")
+    }
+}
+
+private struct BaselineAlarmResolution {
+    let alarmDate: Date
+    let routineMinutes: Int
+    let commuteMinutes: Int
+    let firstEvent: CalendarEvent?
 }
 
 // ── MARK: Dashboard ──────────────────────────────────────────
@@ -43,7 +90,7 @@ struct LuniferMain: View {
     @AppStorage("overrideTimestamp") private var overrideTimestamp: Double = 0
     @AppStorage("luniferEnabled") private var luniferEnabled: Bool = true
     @AppStorage("selectedAlarmSound") private var selectedAlarmSound: String = "DeafultAlarm.wav"
-    @AppStorage("snoozeMinutes") private var snoozeMinutes: Int = 5
+    @AppStorage("mainAlarmSnoozeMinutes") private var mainAlarmSnoozeMinutes: Int = 5
     /// Ticks every minute so rest-period checks re-evaluate automatically,
     /// including the midnight transition back to the alarm view.
     @State private var ticker = Date()
@@ -55,6 +102,7 @@ struct LuniferMain: View {
     @State private var addedAlarms: [AddedAlarm] = []
     @State private var showMotionDeniedAlert = false
     @State private var showAlarmDeniedAlert = false
+    @State private var showDebug = false
 
     // ── Edit-added-alarm state ────────────────────────────────
     // Tapping an added alarm card opens EditAddedAlarmSheet. The sheet
@@ -66,6 +114,7 @@ struct LuniferMain: View {
     @State private var editPickerTime: Date = Date()
     @State private var editSound: String = "DeafultAlarm.wav"
     @State private var editSnoozeMinutes: Int = 5
+    @State private var editRepeatDays: [String] = []
 
     private var isRunningPreview: Bool {
         ProcessInfo.processInfo.environment["XCODE_RUNNING_FOR_PREVIEWS"] == "1"
@@ -94,6 +143,7 @@ struct LuniferMain: View {
         editPickerTime    = alarm.date
         editSound         = alarm.sound
         editSnoozeMinutes = alarm.snoozeMinutes
+        editRepeatDays    = alarm.repeatDays
         showEditAlarmSheet = true
     }
 
@@ -114,11 +164,12 @@ struct LuniferMain: View {
             timestamp: editPickerTime.timeIntervalSince1970,
             label: existing.label,
             sound: editSound,
-            snoozeMinutes: editSnoozeMinutes
+            snoozeMinutes: editSnoozeMinutes,
+            repeatDays: editRepeatDays
         )
         addedAlarms[index] = updated
         saveAddedAlarms()
-        Task { await LuniferAlarm.shared.scheduleAddedAlarm(for: updated.date, alarmID: id) }
+        Task { await LuniferAlarm.shared.scheduleAddedAlarm(for: updated.date, alarmID: id, snoozeMinutes: updated.snoozeMinutes) }
         showEditAlarmSheet = false
         editingAlarmID = nil
     }
@@ -131,6 +182,26 @@ struct LuniferMain: View {
         }
         saveAddedAlarms()
         Task { await LuniferAlarm.shared.cancelAddedAlarm(id: id) }
+    }
+
+    /// Finds the next calendar date (after `now`) on which one of the
+    /// supplied weekday IDs ("mon"…"sun") falls, using the hour and minute
+    /// from `timeOf`. Returns nil if no match is found within 8 days.
+    private func nextOccurrence(after now: Date, repeatDays: [String], timeOf: Date) -> Date? {
+        let cal = Calendar.current
+        let hour   = cal.component(.hour,   from: timeOf)
+        let minute = cal.component(.minute, from: timeOf)
+        let idForWeekday: [Int: String] = [1:"sun",2:"mon",3:"tue",4:"wed",5:"thu",6:"fri",7:"sat"]
+        for offset in 1...8 {
+            guard let day = cal.date(byAdding: .day, value: offset,
+                                     to: cal.startOfDay(for: now)) else { continue }
+            let wdStr = idForWeekday[cal.component(.weekday, from: day)] ?? ""
+            guard repeatDays.contains(wdStr) else { continue }
+            var comps = cal.dateComponents([.year, .month, .day], from: day)
+            comps.hour = hour; comps.minute = minute; comps.second = 0
+            if let proposed = cal.date(from: comps), proposed > now { return proposed }
+        }
+        return nil
     }
 
     // ── Resolved alarm date ───────────────────────────────────
@@ -200,10 +271,50 @@ struct LuniferMain: View {
         return cal.date(from: comps) ?? Date()
     }
 
-    /// Resolves the best alarm date for tomorrow using a 4-step fallback chain.
-    /// Asynchronous because steps 1–2 may require a calendar fetch and, when
-    /// commute auto-mode is on, a live MKDirections fetch for accurate buffer math.
+    /// Resolves the best alarm date for tomorrow. The deterministic fallback
+    /// chain creates the baseline; the adaptive bandit then chooses a bounded
+    /// one-minute offset and clamps it inside the safety window.
+    @MainActor
     private func resolveAlarmDate() async -> Date {
+        let baseline = await resolveBaselineAlarmDate()
+        let context = AlarmContextBuilder.build(
+            answers: answers,
+            baselineAlarm: baseline.alarmDate,
+            routineMinutes: baseline.routineMinutes,
+            commuteMinutes: baseline.commuteMinutes,
+            firstEvent: baseline.firstEvent
+        )
+
+        let oneHour: TimeInterval = 60 * 60
+        let latestAllowedAlarm = baseline.firstEvent.map {
+            $0.startDate.addingTimeInterval(-Double(baseline.routineMinutes + baseline.commuteMinutes) * 60)
+        } ?? baseline.alarmDate.addingTimeInterval(oneHour)
+
+        let safetyWindow = AdaptiveAlarmSafetyWindow(
+            earliestAllowedAlarm: baseline.alarmDate.addingTimeInterval(-oneHour),
+            latestAllowedAlarm: max(
+                baseline.alarmDate.addingTimeInterval(-oneHour),
+                latestAllowedAlarm
+            )
+        )
+
+        let decision = AlarmOffsetBandit.chooseDecision(
+            baselineAlarm: baseline.alarmDate,
+            context: context,
+            safetyWindow: safetyWindow,
+            outcomes: AdaptiveAlarmStore.shared.recentOutcomes()
+        )
+        AdaptiveAlarmStore.shared.savePendingDecision(decision)
+
+        return decision.finalAlarm
+    }
+
+    /// Resolves the deterministic baseline alarm for tomorrow using a 4-step
+    /// fallback chain.
+    /// Asynchronous because steps 1-2 may require a calendar fetch and, when
+    /// commute auto-mode is on, a live MKDirections fetch for accurate buffer math.
+    @MainActor
+    private func resolveBaselineAlarmDate() async -> BaselineAlarmResolution {
         let cal = Calendar.current
         let tomorrow = cal.date(byAdding: .day, value: 1, to: cal.startOfDay(for: Date()))!
         let tomorrowWeekday = cal.component(.weekday, from: tomorrow)
@@ -233,24 +344,45 @@ struct LuniferMain: View {
         // Step 1: Live calendar event tomorrow
         await CalendarManager.shared.fetchEvents()
         if let event = CalendarManager.shared.firstEventTomorrow {
-            return event.startDate.addingTimeInterval(-buffer)
+            return BaselineAlarmResolution(
+                alarmDate: event.startDate.addingTimeInterval(-buffer),
+                routineMinutes: routineMinutes,
+                commuteMinutes: commuteMinutes,
+                firstEvent: event
+            )
         }
 
         // Step 2: Historical average first-event time for this weekday
         if let typical = CalendarManager.shared.typicalFirstEventTime(forWeekday: tomorrowWeekday) {
-            return tomorrowAt(hour: typical.hour, minute: typical.minute)
+            let alarm = tomorrowAt(hour: typical.hour, minute: typical.minute)
                 .addingTimeInterval(-buffer)
+            return BaselineAlarmResolution(
+                alarmDate: alarm,
+                routineMinutes: routineMinutes,
+                commuteMinutes: commuteMinutes,
+                firstEvent: nil
+            )
         }
 
         // Step 3: Historical average wake time for this weekday
         // Wake times already reflect how early the user needed to be up,
         // so routine + commute are not subtracted again.
         if let avgWake = SleepHistoryStore.shared.averageWakeTime(forWeekday: tomorrowWeekday) {
-            return tomorrowAt(hour: avgWake.hour, minute: avgWake.minute)
+            return BaselineAlarmResolution(
+                alarmDate: tomorrowAt(hour: avgWake.hour, minute: avgWake.minute),
+                routineMinutes: routineMinutes,
+                commuteMinutes: commuteMinutes,
+                firstEvent: nil
+            )
         }
 
         // Step 4: 8 AM hard fallback (cold-start, no data yet)
-        return tomorrowAt(hour: 8, minute: 0).addingTimeInterval(-buffer)
+        return BaselineAlarmResolution(
+            alarmDate: tomorrowAt(hour: 8, minute: 0).addingTimeInterval(-buffer),
+            routineMinutes: routineMinutes,
+            commuteMinutes: commuteMinutes,
+            firstEvent: nil
+        )
     }
 
     // ── Rest period helpers ───────────────────────────────────
@@ -282,6 +414,12 @@ struct LuniferMain: View {
         guard consecutiveRestDaysFromTomorrow > 0 else { return false }
         let noon = Calendar.current.date(bySettingHour: 12, minute: 0, second: 0, of: Date())!
         return Date() >= max(calculatedAlarmDate, noon)
+    }
+
+    /// True when tomorrow is not in the user's scheduled wake days.
+    /// Used to prevent AlarmKit from registering an alarm on rest days.
+    private var isTomorrowRestDay: Bool {
+        consecutiveRestDaysFromTomorrow > 0
     }
 
     // ── Commute helpers ───────────────────────────────────────
@@ -334,14 +472,10 @@ struct LuniferMain: View {
     private var bedtimeString: String {
         let alarmDate = overrideActive ? overrideTime : calculatedAlarmDate
 
-        // answers.sleep.auto == true  →  "let Lunifer learn" → use age baseline
-        // answers.sleep.auto == false →  user entered a specific duration → use it
-        let sleepHours: Double
-        if answers.sleep.auto {
-            sleepHours = SleepDurationModel.baselineForAge(answers.age)
-        } else {
-            sleepHours = Double(answers.sleep.hours) + Double(answers.sleep.minutes) / 60.0
-        }
+        let sleepHours = WearableRecommendationStore.recommendedHours(
+            from: WearableRecommendationStore.currentSources(),
+            fallback: answers
+        )
 
         let bedtime = alarmDate.addingTimeInterval(-sleepHours * 3600)
 
@@ -400,6 +534,13 @@ struct LuniferMain: View {
                 }
                 .padding(.bottom, 28)
             }
+
+            // ── Dim overlay when Lunifer is off ──────────────
+            Color.black
+                .opacity(luniferEnabled ? 0 : 0.45)
+                .ignoresSafeArea()
+                .allowsHitTesting(false)
+                .animation(.easeInOut(duration: 0.5), value: luniferEnabled)
         }
         .frame(maxWidth: .infinity, maxHeight: .infinity)
         .sheet(isPresented: $showSettings) {
@@ -419,11 +560,41 @@ struct LuniferMain: View {
                     overrideTime = savedTime
                 }
             }
-            // Load persisted added alarms and prune any whose fire time has passed.
+            if overrideActive {
+                AdaptiveAlarmStore.shared.clearPendingDecision()
+            }
+            // Load persisted added alarms. One-shots whose time has passed are
+            // removed; repeating alarms are advanced to their next occurrence.
             loadAddedAlarms()
             let now = Date()
-            addedAlarms.removeAll { $0.date < now }
+            var alarmsToReschedule: [(alarm: AddedAlarm, newDate: Date)] = []
+            addedAlarms = addedAlarms.compactMap { alarm in
+                guard alarm.date < now else { return alarm }
+                if alarm.repeatDays.isEmpty {
+                    // One-shot and in the past — delete from AlarmKit and storage.
+                    Task { await LuniferAlarm.shared.cancelAddedAlarm(id: alarm.id) }
+                    return nil
+                } else {
+                    // Repeating — advance timestamp to next qualifying weekday.
+                    if let nextDate = nextOccurrence(after: now, repeatDays: alarm.repeatDays, timeOf: alarm.date) {
+                        var advanced = alarm
+                        advanced.timestamp = nextDate.timeIntervalSince1970
+                        alarmsToReschedule.append((alarm: advanced, newDate: nextDate))
+                        return advanced
+                    } else {
+                        Task { await LuniferAlarm.shared.cancelAddedAlarm(id: alarm.id) }
+                        return nil
+                    }
+                }
+            }
             saveAddedAlarms()
+            for pair in alarmsToReschedule {
+                Task { await LuniferAlarm.shared.scheduleAddedAlarm(
+                    for: pair.newDate,
+                    alarmID: pair.alarm.id,
+                    snoozeMinutes: pair.alarm.snoozeMinutes
+                )}
+            }
             // Skip system-service calls (AlarmKit, CoreMotion, notifications)
             // when running inside the Xcode preview canvas.
             guard !isRunningPreview else { return }
@@ -441,26 +612,34 @@ struct LuniferMain: View {
 
             checkAlarmAuthorization()
 
-            // Schedule the Lunifer alarm from the resolved date if Lunifer is enabled
-            // and the user has not set a manual override. This is the step that actually
-            // hands the computed wake time to AlarmKit so the alarm will fire.
+            // Schedule the Lunifer alarm from the resolved date if Lunifer is enabled,
+            // the user has not set a manual override, and tomorrow is a wake day.
+            // If tomorrow is a rest day, cancel any existing alarm so AlarmKit doesn't
+            // fire on a day the user has marked as off.
             if luniferEnabled && !overrideActive {
-                let routineMins = answers.routine.auto
-                    ? 60
-                    : answers.routine.hours * 60 + answers.routine.minutes
-                let commuteMins: Int = (answers.lifestyle == "student" || answers.lifestyle == "commuter")
-                    ? (answers.commute.auto
-                        ? (CommuteManager.shared.currentDurationMinutes > 0
-                            ? CommuteManager.shared.currentDurationMinutes
-                            : 30)
-                        : answers.commute.hours * 60 + answers.commute.minutes)
-                    : 0
-                await LuniferAlarm.shared.scheduleAlarm(
-                    for: resolvedAlarmDate,
-                    eventTitle: CalendarManager.shared.firstEventTomorrow?.title ?? "your first event",
-                    routineMinutes: routineMins,
-                    commuteMinutes: commuteMins
-                )
+                if isTomorrowRestDay {
+                    AdaptiveAlarmStore.shared.clearPendingDecision()
+                    await LuniferAlarm.shared.cancelAlarm()
+                } else {
+                    let routineMins = answers.routine.auto
+                        ? 60
+                        : answers.routine.hours * 60 + answers.routine.minutes
+                    let commuteMins: Int = (answers.lifestyle == "student" || answers.lifestyle == "commuter")
+                        ? (answers.commute.auto
+                            ? (CommuteManager.shared.currentDurationMinutes > 0
+                                ? CommuteManager.shared.currentDurationMinutes
+                                : 30)
+                            : answers.commute.hours * 60 + answers.commute.minutes)
+                        : 0
+                    await LuniferAlarm.shared.scheduleAlarm(
+                        for: resolvedAlarmDate,
+                        eventTitle: CalendarManager.shared.firstEventTomorrow?.title ?? "your first event",
+                        routineMinutes: routineMins,
+                        commuteMinutes: commuteMins
+                    )
+                }
+            } else {
+                AdaptiveAlarmStore.shared.clearPendingDecision()
             }
 
             // Small delay so the motion permission prompt has time to resolve
@@ -506,10 +685,19 @@ struct LuniferMain: View {
         }
         // Re-check both authorizations each time the user returns to the app
         // (e.g. coming back from iOS Settings after granting access).
+        // Also run an immediate adaptive check so a calendar event added while
+        // the app was suspended is reflected right away rather than waiting for
+        // the next 5-minute timer tick.
         .onReceive(NotificationCenter.default.publisher(for: UIApplication.didBecomeActiveNotification)) { _ in
             guard !isRunningPreview else { return }
             checkAlarmAuthorization()
             checkMotionAuthorization()
+            guard luniferEnabled && !overrideActive else { return }
+            Task { await LuniferAlarm.shared.checkAlarmAgainstCalendar() }
+        }
+        // Reload added alarms whenever stopAlarm() removes a one-shot or advances a repeating alarm.
+        .onReceive(NotificationCenter.default.publisher(for: .luniferAddedAlarmModified)) { _ in
+            loadAddedAlarms()
         }
         .alert("Alarm Access Required", isPresented: $showAlarmDeniedAlert) {
             Button("Open Settings") {
@@ -683,10 +871,13 @@ struct LuniferMain: View {
                         .onTapGesture {
                             withAnimation(.easeInOut(duration: 0.3)) {
                                 if !alarmExpanded {
+                                    // Seed the picker to the calculated time so it starts
+                                    // in the right place, but do NOT activate override here.
+                                    // Override only activates when the user actually moves
+                                    // the picker to a different time (see onChange below).
                                     if !overrideActive {
                                         overrideTime = calculatedAlarmDate
                                     }
-                                    overrideActive = true
                                 }
                                 alarmExpanded.toggle()
                             }
@@ -717,11 +908,30 @@ struct LuniferMain: View {
                     }
                     .padding(.horizontal, 32)
                     .onChange(of: overrideTime) { _, newTime in
-                        guard overrideActive else { return }
-                        overrideTimestamp = newTime.timeIntervalSince1970
-                        Task {
-                            await LuniferAlarm.shared.scheduleAlarm(for: newTime)
-                            await WakeNotification.shared.schedule(wakeDate: newTime, answers: answers)
+                        if overrideActive {
+                            // Already in override — reschedule whenever the picker moves.
+                            overrideTimestamp = newTime.timeIntervalSince1970
+                            Task {
+                                AdaptiveAlarmStore.shared.clearPendingDecision()
+                                await LuniferAlarm.shared.scheduleAlarm(for: newTime)
+                                await WakeNotification.shared.schedule(wakeDate: newTime, answers: answers)
+                            }
+                        } else {
+                            // Not yet in override. The picker fires onChange when it is
+                            // first seeded to calculatedAlarmDate (on dropdown open) —
+                            // that should not activate override. Only activate when the
+                            // user has meaningfully scrolled away from the calculated time
+                            // (more than 60 seconds difference accounts for sub-minute
+                            // precision in calculatedAlarmDate vs. the picker's minute snap).
+                            let diffSeconds = abs(newTime.timeIntervalSince(calculatedAlarmDate))
+                            guard diffSeconds > 60 else { return }
+                            overrideActive = true
+                            overrideTimestamp = newTime.timeIntervalSince1970
+                            Task {
+                                AdaptiveAlarmStore.shared.clearPendingDecision()
+                                await LuniferAlarm.shared.scheduleAlarm(for: newTime)
+                                await WakeNotification.shared.schedule(wakeDate: newTime, answers: answers)
+                            }
                         }
                     }
 
@@ -775,14 +985,14 @@ struct LuniferMain: View {
                                             .font(.custom("DM Sans", size: 14))
                                             .foregroundColor(Color.white.opacity(0.85))
                                         Spacer()
-                                        Text("\(snoozeMinutes) min")
+                                        Text("\(mainAlarmSnoozeMinutes) min")
                                             .font(.custom("DM Sans", size: 13))
                                             .foregroundColor(Color(red: 0.706, green: 0.588, blue: 0.902))
                                             .monospacedDigit()
                                     }
                                     Slider(value: Binding(
-                                        get: { Double(snoozeMinutes) },
-                                        set: { snoozeMinutes = Int($0.rounded()) }
+                                        get: { Double(mainAlarmSnoozeMinutes) },
+                                        set: { mainAlarmSnoozeMinutes = Int($0.rounded()) }
                                     ), in: 1...30, step: 1)
                                     .tint(Color(red: 0.627, green: 0.471, blue: 1.0))
                                     HStack {
@@ -816,7 +1026,7 @@ struct LuniferMain: View {
                     // right edge of the screen; tapping Delete removes the alarm.
                     if !addedAlarms.isEmpty && !alarmExpanded {
                         VStack(spacing: 0) {
-                            Text(addedAlarms.count == 1 ? "ADDED ALARM" : "ADDED ALARMS")
+                            Text("ADDED ALARMS")
                                 .font(.custom("DM Sans", size: 10))
                                 .foregroundColor(Color.white.opacity(0.3))
                                 .kerning(2.5)
@@ -855,20 +1065,21 @@ struct LuniferMain: View {
             }) {
                 AddAlarmSheet(
                     pickerTime: $addedAlarmPickerTime,
-                    onSet: { time, label, sound, snooze in
+                    onSet: { time, label, sound, snooze, repeatDays in
                         let alarm = AddedAlarm(
                             id: UUID(),
                             timestamp: time.timeIntervalSince1970,
                             label: label,
                             sound: sound,
-                            snoozeMinutes: snooze
+                            snoozeMinutes: snooze,
+                            repeatDays: repeatDays
                         )
                         withAnimation(.easeInOut(duration: 0.25)) {
                             addedAlarms.append(alarm)
                         }
                         saveAddedAlarms()
                         showAddAlarmSheet = false
-                        Task { await LuniferAlarm.shared.scheduleAddedAlarm(for: time, alarmID: alarm.id) }
+                        Task { await LuniferAlarm.shared.scheduleAddedAlarm(for: time, alarmID: alarm.id, snoozeMinutes: snooze) }
                     },
                     onCancel: {
                         showAddAlarmSheet = false
@@ -885,6 +1096,7 @@ struct LuniferMain: View {
                     pickerTime:    $editPickerTime,
                     sound:         $editSound,
                     snoozeMinutes: $editSnoozeMinutes,
+                    repeatDays:    $editRepeatDays,
                     onSave:   { commitEditingAddedAlarm() },
                     onCancel: { showEditAlarmSheet = false }
                 )
@@ -897,7 +1109,14 @@ struct LuniferMain: View {
             if !alarmExpanded {
                 Button {
                     withAnimation(.easeInOut(duration: 0.5)) { luniferEnabled.toggle() }
-                    if luniferEnabled { Task { await LuniferAlarm.shared.cancelAlarm() } }
+                    if !luniferEnabled {
+                        Task {
+                            AdaptiveAlarmStore.shared.clearPendingDecision()
+                            await LuniferAlarm.shared.cancelAlarm()
+                            WakeNotification.shared.cancel()
+                            BatteryAlarmNotification.shared.cancelWarning()
+                        }
+                    }
                 } label: {
                     HStack(spacing: 10) {
                         Image(systemName: luniferEnabled ? "moon.fill" : "moon.stars.fill")
@@ -928,9 +1147,32 @@ struct LuniferMain: View {
                        alignment: luniferEnabled ? .bottom : .center)
                 .animation(.easeInOut(duration: 0.5), value: luniferEnabled)
             }
+
+            // ── Debug button — bottom left ────────────────────────
+            if !alarmExpanded && luniferEnabled {
+                Button { showDebug = true } label: {
+                    Text("Debug")
+                        .font(.custom("DM Sans", size: 13))
+                        .foregroundColor(Color.white.opacity(0.4))
+                        .padding(.horizontal, 19)
+                        .padding(.vertical, 10)
+                        .background(
+                            Capsule()
+                                .fill(Color.white.opacity(0.05))
+                                .overlay(Capsule().stroke(Color.white.opacity(0.1), lineWidth: 1))
+                        )
+                }
+                .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .bottomLeading)
+                .padding(.leading, 32)
+                .padding(.bottom, 52)
+            }
         }
         // Dismiss the expanded "Add Alarm" label when the user taps
         // anywhere on the page that isn't the button itself.
+        .sheet(isPresented: $showDebug) {
+            LuniferDebugView()
+                .presentationBackground(Color(red: 0.06, green: 0.03, blue: 0.14))
+        }
         .contentShape(Rectangle())
         .onTapGesture {
             guard addAlarmTapped else { return }
@@ -1000,16 +1242,45 @@ struct LuniferMain: View {
     }
 }
 
+// ── MARK: Weekday repeat helpers ──────────────────────────────
+
+private struct WeekdayOption: Identifiable {
+    let id: String      // "mon" … "sun"
+    let letter: String  // "M" "T" "W" "T" "F" "S" "S"
+}
+
+private let weekdayOptions: [WeekdayOption] = [
+    WeekdayOption(id: "mon", letter: "M"),
+    WeekdayOption(id: "tue", letter: "T"),
+    WeekdayOption(id: "wed", letter: "W"),
+    WeekdayOption(id: "thu", letter: "T"),
+    WeekdayOption(id: "fri", letter: "F"),
+    WeekdayOption(id: "sat", letter: "S"),
+    WeekdayOption(id: "sun", letter: "S"),
+]
+
+private func repeatSummary(_ days: [String]) -> String {
+    if days.count == 7 { return "Every day" }
+    let order  = ["mon","tue","wed","thu","fri","sat","sun"]
+    let labels = ["Mon","Tue","Wed","Thu","Fri","Sat","Sun"]
+    return order.enumerated()
+        .filter { days.contains($0.element) }
+        .map    { labels[$0.offset] }
+        .joined(separator: ", ")
+}
+
 // ── MARK: Add Alarm Sheet ─────────────────────────────────────
 
 struct AddAlarmSheet: View {
     @Binding var pickerTime: Date
-    let onSet:    (Date, String, String, Int) -> Void   // time, label, sound, snoozeMinutes
+    let onSet:    (Date, String, String, Int, [String]) -> Void  // time, label, sound, snoozeMinutes, repeatDays
     let onCancel: () -> Void
 
     @State private var addedAlarmSound: String = "DeafultAlarm.wav"
     @State private var addedAlarmLabel: String = ""
     @State private var addedAlarmSnoozeMinutes: Int = 5
+    @State private var addedAlarmRepeatDays: [String] = []
+    @State private var repeatExpanded: Bool = false
 
     var body: some View {
         NavigationStack {
@@ -1140,11 +1411,79 @@ struct AddAlarmSheet: View {
                     )
                     .padding(.horizontal, 24)
 
+                    // ── Repeat row ────────────────────────────
+                    VStack(spacing: 0) {
+                        Button {
+                            withAnimation(.easeInOut(duration: 0.2)) { repeatExpanded.toggle() }
+                        } label: {
+                            HStack {
+                                Text("Repeat")
+                                    .font(.custom("DM Sans", size: 15))
+                                    .foregroundColor(Color.white.opacity(0.85))
+                                Spacer()
+                                Text(addedAlarmRepeatDays.isEmpty ? "Never" : repeatSummary(addedAlarmRepeatDays))
+                                    .font(.custom("DM Sans", size: 14))
+                                    .foregroundColor(Color.white.opacity(0.35))
+                                    .lineLimit(1)
+                                Image(systemName: "chevron.right")
+                                    .font(.system(size: 12, weight: .light))
+                                    .foregroundColor(Color.white.opacity(0.25))
+                                    .rotationEffect(.degrees(repeatExpanded ? 90 : 0))
+                                    .animation(.easeInOut(duration: 0.2), value: repeatExpanded)
+                            }
+                            .padding(.horizontal, 20)
+                            .padding(.vertical, 16)
+                        }
+                        .buttonStyle(.plain)
+
+                        if repeatExpanded {
+                            HStack(spacing: 0) {
+                                ForEach(weekdayOptions) { option in
+                                    let selected = addedAlarmRepeatDays.contains(option.id)
+                                    Button {
+                                        if selected {
+                                            addedAlarmRepeatDays.removeAll { $0 == option.id }
+                                        } else {
+                                            addedAlarmRepeatDays.append(option.id)
+                                        }
+                                    } label: {
+                                        Text(option.letter)
+                                            .font(.custom("DM Sans", size: 13).weight(.medium))
+                                            .foregroundColor(selected ? .white : Color.white.opacity(0.35))
+                                            .frame(maxWidth: .infinity)
+                                            .frame(height: 36)
+                                            .background(
+                                                Circle()
+                                                    .fill(selected
+                                                        ? Color(red: 0.627, green: 0.471, blue: 1.0).opacity(0.85)
+                                                        : Color.white.opacity(0.07))
+                                                    .frame(width: 36, height: 36)
+                                            )
+                                    }
+                                    .buttonStyle(.plain)
+                                }
+                            }
+                            .padding(.horizontal, 20)
+                            .padding(.bottom, 16)
+                            .transition(.opacity.combined(with: .offset(y: -4)))
+                        }
+                    }
+                    .background(
+                        RoundedRectangle(cornerRadius: 14)
+                            .fill(Color.white.opacity(0.04))
+                            .overlay(
+                                RoundedRectangle(cornerRadius: 14)
+                                    .stroke(Color.white.opacity(0.08), lineWidth: 1)
+                            )
+                    )
+                    .padding(.horizontal, 24)
+                    .padding(.top, 10)
+
                     Spacer()
 
                     // ── Set Alarm button ──────────────────────
                     Button {
-                        onSet(pickerTime, addedAlarmLabel, addedAlarmSound, addedAlarmSnoozeMinutes)
+                        onSet(pickerTime, addedAlarmLabel, addedAlarmSound, addedAlarmSnoozeMinutes, addedAlarmRepeatDays)
                     } label: {
                         Text("Set Alarm")
                             .font(.custom("DM Sans", size: 15).weight(.medium))
@@ -1264,16 +1603,29 @@ struct AddedAlarmSoundView: View {
 
 // ── MARK: Added Alarm Row ─────────────────────────────────────
 //
-// Renders one added alarm on the dashboard. Wraps both an interactive
-// tap (opens EditAddedAlarmSheet) and a horizontal drag gesture that
-// reveals a Delete button at the right edge of the screen.
+// Renders one added alarm on the dashboard with two interactions:
+//   • Tap → opens EditAddedAlarmSheet via onTap.
+//   • Right-to-left swipe → reveals a Delete button at the trailing
+//     edge; tapping it calls onDelete.
 //
-// Layout strategy: a GeometryReader gives us the row's available width,
-// so the alarm-content button can be sized to exactly that width and a
-// fixed-width Delete button can sit immediately to the right of it inside
-// the same HStack. The HStack is offset leftward when the user swipes,
-// and the row clips its bounds so the Delete button only enters the
-// visible area as the alarm content slides off-screen.
+// Layout strategy:
+//   A GeometryReader hands us the row's actual width as `geo.size.width`,
+//   which lets us position both children of a ZStack with explicit
+//   offsets driven directly by `dragOffset`:
+//
+//     • Alarm content is full-width (geo.size.width × rowHeight) and
+//       offset by `dragOffset` — at rest it occupies the row, at
+//       dragOffset = -deleteWidth its right edge sits at
+//       geo.size.width - deleteWidth.
+//     • Delete button is fixed-width (deleteWidth × rowHeight) and
+//       offset by `geo.size.width + dragOffset` — at rest its left
+//       edge sits exactly at the row's right edge (off-screen), at
+//       dragOffset = -deleteWidth its left edge sits at
+//       geo.size.width - deleteWidth, fully on-screen.
+//
+//   This avoids the earlier overlay + nested-offset arithmetic that
+//   left the button only partially visible, and the HStack-overflow
+//   compression that hid it entirely.
 
 private struct AddedAlarmRow: View {
     let alarm: AddedAlarm
@@ -1283,18 +1635,76 @@ private struct AddedAlarmRow: View {
     @State private var dragOffset: CGFloat = 0
     @State private var revealed: Bool = false
 
-    private let deleteWidth: CGFloat = 90
-    private let revealThreshold: CGFloat = 40
+    /// Width of the revealed Delete button. Sized so the red action area
+    /// occupies a substantial portion of the row when the swipe locks
+    /// open — comparable to standard iOS swipe actions but slightly
+    /// wider so the action is unmistakable on this dashboard.
+    private let deleteWidth: CGFloat = 140
+    private let revealThreshold: CGFloat = 50
 
-    /// Row height adapts to whether the alarm has a label so the layout
-    /// stays compact when there isn't one.
-    private var rowHeight: CGFloat { alarm.label.isEmpty ? 56 : 78 }
+    /// Row height adapts to label and repeat-day presence so the layout
+    /// stays compact when neither is set.
+    private var rowHeight: CGFloat {
+        let hasLabel  = !alarm.label.isEmpty
+        let hasRepeat = alarm.displayRepeatDays != nil
+        switch (hasLabel, hasRepeat) {
+        case (false, false): return 56
+        case (true,  false),
+             (false, true):  return 78
+        case (true,  true):  return 96
+        }
+    }
 
     var body: some View {
         GeometryReader { geo in
-            HStack(spacing: 0) {
-                // ── Alarm content ─────────────────────────────
-                Button {
+            ZStack(alignment: .topLeading) {
+
+                // ── Delete button (red, parked just past the right edge) ──
+                Button(action: onDelete) {
+                    Text("Delete")
+                        .font(.custom("DM Sans", size: 14).weight(.medium))
+                        .foregroundColor(.white)
+                        .frame(width: deleteWidth, height: rowHeight)
+                        .background(Color(red: 0.78, green: 0.22, blue: 0.28))
+                }
+                .buttonStyle(.plain)
+                // At rest (dragOffset = 0): button sits at x = geo.size.width
+                // (off-screen, just past the right edge).
+                // Fully revealed (dragOffset = -deleteWidth): button sits at
+                // x = geo.size.width - deleteWidth, anchored to the right edge.
+                .offset(x: geo.size.width + dragOffset)
+
+                // ── Alarm content (full row width) ─────────────────
+                // Plain VStack + .onTapGesture (not a Button) so the parent
+                // DragGesture is never preempted by a SwiftUI button's
+                // internal tap recogniser.
+                VStack(alignment: .leading, spacing: 2) {
+                    if !alarm.label.isEmpty {
+                        Text(alarm.label)
+                            .font(.custom("DM Sans", size: 13))
+                            .foregroundColor(Color.white.opacity(0.45))
+                    }
+                    HStack(alignment: .lastTextBaseline, spacing: 5) {
+                        Text(alarm.displayTime)
+                            .font(.libreFranklin(size: 40))
+                            .foregroundColor(Color.white.opacity(0.80))
+                            .monospacedDigit()
+                        Text(alarm.displayPeriod)
+                            .font(.libreFranklin(size: 37))
+                            .foregroundColor(Color.white.opacity(0.80))
+                    }
+                    if let repeatStr = alarm.displayRepeatDays {
+                        Text("Repeats \(repeatStr)")
+                            .font(.custom("DM Sans", size: 11))
+                            .foregroundColor(Color(red: 0.627, green: 0.471, blue: 1.0).opacity(0.65))
+                    }
+                }
+                .frame(maxWidth: .infinity, alignment: .leading)
+                .padding(.leading, 60)
+                .padding(.trailing, 24)
+                .frame(width: geo.size.width, height: rowHeight)
+                .contentShape(Rectangle())
+                .onTapGesture {
                     if revealed {
                         // First tap on a revealed row collapses the swipe.
                         withAnimation(.easeOut(duration: 0.25)) {
@@ -1304,54 +1714,27 @@ private struct AddedAlarmRow: View {
                     } else {
                         onTap()
                     }
-                } label: {
-                    VStack(alignment: .leading, spacing: 2) {
-                        if !alarm.label.isEmpty {
-                            Text(alarm.label)
-                                .font(.custom("DM Sans", size: 13))
-                                .foregroundColor(Color.white.opacity(0.45))
-                        }
-                        HStack(alignment: .lastTextBaseline, spacing: 5) {
-                            Text(alarm.displayTime)
-                                .font(.libreFranklin(size: 40))
-                                .foregroundColor(Color.white.opacity(0.80))
-                                .monospacedDigit()
-                            Text(alarm.displayPeriod)
-                                .font(.libreFranklin(size: 37))
-                                .foregroundColor(Color.white.opacity(0.80))
-                        }
-                    }
-                    .frame(width: geo.size.width, height: rowHeight, alignment: .leading)
-                    .padding(.leading, 60)
-                    .padding(.trailing, 24)
-                    .contentShape(Rectangle())
                 }
-                .buttonStyle(.plain)
-
-                // ── Delete button (revealed by swipe) ─────────
-                Button(action: onDelete) {
-                    Text("Delete")
-                        .font(.custom("DM Sans", size: 14).weight(.medium))
-                        .foregroundColor(.white)
-                        .frame(width: deleteWidth, height: rowHeight)
-                        .background(Color(red: 0.78, green: 0.22, blue: 0.28))
-                }
-                .buttonStyle(.plain)
+                .offset(x: dragOffset)
             }
-            .offset(x: dragOffset)
-            .gesture(
+            .frame(width: geo.size.width, height: rowHeight, alignment: .topLeading)
+            // ── Drag gesture ──────────────────────────────────────
+            // .highPriorityGesture so this swipe beats the surrounding
+            // TabView(.page) pager that owns the Sleep-Insights ↔ Alarm
+            // paging gesture.
+            .highPriorityGesture(
                 DragGesture(minimumDistance: 10)
                     .onChanged { value in
                         let dx = value.translation.width
-                        // Ignore predominantly vertical drags so the parent
-                        // TabView swipe and ScrollView scrolling still work.
+                        // Ignore predominantly vertical drags so vertical
+                        // ScrollView scrolling still works.
                         guard abs(dx) > abs(value.translation.height) else { return }
                         if revealed {
-                            // From the revealed state, allow rightward drag to close.
+                            // From revealed state, allow rightward drag to close.
                             dragOffset = max(-deleteWidth, min(0, -deleteWidth + dx))
                         } else {
-                            // From the closed state, allow leftward drag to reveal.
-                            // A small overshoot past -deleteWidth gives a rubber-band feel.
+                            // From closed state, allow leftward drag to reveal.
+                            // Small overshoot past -deleteWidth for a rubber-band feel.
                             dragOffset = max(-deleteWidth - 20, min(0, dx))
                         }
                     }
@@ -1378,7 +1761,6 @@ private struct AddedAlarmRow: View {
             )
         }
         .frame(height: rowHeight)
-        .clipped()
     }
 }
 
@@ -1394,8 +1776,11 @@ struct EditAddedAlarmSheet: View {
     @Binding var pickerTime: Date
     @Binding var sound: String
     @Binding var snoozeMinutes: Int
+    @Binding var repeatDays: [String]
     let onSave:   () -> Void
     let onCancel: () -> Void
+
+    @State private var repeatExpanded: Bool = false
 
     var body: some View {
         NavigationStack {
@@ -1500,6 +1885,74 @@ struct EditAddedAlarmSheet: View {
                             )
                     )
                     .padding(.horizontal, 24)
+
+                    // ── Repeat row ────────────────────────────
+                    VStack(spacing: 0) {
+                        Button {
+                            withAnimation(.easeInOut(duration: 0.2)) { repeatExpanded.toggle() }
+                        } label: {
+                            HStack {
+                                Text("Repeat")
+                                    .font(.custom("DM Sans", size: 15))
+                                    .foregroundColor(Color.white.opacity(0.85))
+                                Spacer()
+                                Text(repeatDays.isEmpty ? "Never" : repeatSummary(repeatDays))
+                                    .font(.custom("DM Sans", size: 14))
+                                    .foregroundColor(Color.white.opacity(0.35))
+                                    .lineLimit(1)
+                                Image(systemName: "chevron.right")
+                                    .font(.system(size: 12, weight: .light))
+                                    .foregroundColor(Color.white.opacity(0.25))
+                                    .rotationEffect(.degrees(repeatExpanded ? 90 : 0))
+                                    .animation(.easeInOut(duration: 0.2), value: repeatExpanded)
+                            }
+                            .padding(.horizontal, 20)
+                            .padding(.vertical, 16)
+                        }
+                        .buttonStyle(.plain)
+
+                        if repeatExpanded {
+                            HStack(spacing: 0) {
+                                ForEach(weekdayOptions) { option in
+                                    let selected = repeatDays.contains(option.id)
+                                    Button {
+                                        if selected {
+                                            repeatDays.removeAll { $0 == option.id }
+                                        } else {
+                                            repeatDays.append(option.id)
+                                        }
+                                    } label: {
+                                        Text(option.letter)
+                                            .font(.custom("DM Sans", size: 13).weight(.medium))
+                                            .foregroundColor(selected ? .white : Color.white.opacity(0.35))
+                                            .frame(maxWidth: .infinity)
+                                            .frame(height: 36)
+                                            .background(
+                                                Circle()
+                                                    .fill(selected
+                                                        ? Color(red: 0.627, green: 0.471, blue: 1.0).opacity(0.85)
+                                                        : Color.white.opacity(0.07))
+                                                    .frame(width: 36, height: 36)
+                                            )
+                                    }
+                                    .buttonStyle(.plain)
+                                }
+                            }
+                            .padding(.horizontal, 20)
+                            .padding(.bottom, 16)
+                            .transition(.opacity.combined(with: .offset(y: -4)))
+                        }
+                    }
+                    .background(
+                        RoundedRectangle(cornerRadius: 14)
+                            .fill(Color.white.opacity(0.04))
+                            .overlay(
+                                RoundedRectangle(cornerRadius: 14)
+                                    .stroke(Color.white.opacity(0.08), lineWidth: 1)
+                            )
+                    )
+                    .padding(.horizontal, 24)
+                    .padding(.top, 10)
 
                     Spacer()
                 }
@@ -1619,6 +2072,307 @@ struct SoundSettingsView: View {
     }
 }
 // CommuteStatusCard lives in LuniferCommuteDashboard.swift
+
+// ── MARK: Debug View ──────────────────────────────────────────
+
+struct LuniferDebugView: View {
+    @Environment(\.dismiss) private var dismiss
+
+    @State private var pendingDecision: AdaptiveAlarmDecision? = nil
+    @State private var recentOutcomes: [AdaptiveAlarmOutcome] = []
+    @State private var alarmEvents: [DebugAlarmEvent] = []
+    @State private var baselineStep: String = "—"
+
+    private static let timeFmt: DateFormatter = {
+        let f = DateFormatter(); f.dateFormat = "h:mm a"; return f
+    }()
+    private static let fullFmt: DateFormatter = {
+        let f = DateFormatter(); f.dateFormat = "MMM d, h:mm:ss a"; return f
+    }()
+    private static let dayFmt: DateFormatter = {
+        let f = DateFormatter(); f.dateFormat = "EEE MMM d"; return f
+    }()
+
+    var body: some View {
+        ZStack {
+            Color(red: 0.06, green: 0.03, blue: 0.14).ignoresSafeArea()
+            LuniferBackground()
+
+            VStack(spacing: 0) {
+                // ── Header ────────────────────────────────────
+                HStack {
+                    Button { dismiss() } label: {
+                        Image(systemName: "xmark")
+                            .font(.system(size: 16, weight: .light))
+                            .foregroundColor(Color.white.opacity(0.6))
+                            .padding(12)
+                    }
+                    Spacer()
+                    Text("Debug")
+                        .font(.custom("Cormorant Garamond", size: 28).weight(.light))
+                        .foregroundColor(Color.white.opacity(0.9))
+                    Spacer()
+                    Color.clear.frame(width: 40, height: 40)
+                }
+                .padding(.horizontal, 25)
+                .padding(.top, 12)
+                .padding(.bottom, 4)
+
+                ScrollView(showsIndicators: false) {
+                    VStack(alignment: .leading, spacing: 20) {
+                        alarmCalcSection
+                        banditSection
+                        commuteSection
+                        sleepSection
+                        outcomesSection
+                        eventsSection
+                    }
+                    .padding(.horizontal, 25)
+                    .padding(.vertical, 16)
+                    .padding(.bottom, 48)
+                }
+            }
+        }
+        .ignoresSafeArea()
+        .task { await loadData() }
+    }
+
+    // ── Data loading ──────────────────────────────────────────
+
+    @MainActor
+    private func loadData() async {
+        await CalendarManager.shared.fetchEvents()
+        pendingDecision = AdaptiveAlarmStore.shared.pendingDecision()
+        recentOutcomes  = AdaptiveAlarmStore.shared.recentOutcomes(limit: 3)
+        alarmEvents     = Array(DebugAlarmEventStore.shared.load().reversed())
+
+        let cal      = Calendar.current
+        let tomorrow = cal.date(byAdding: .day, value: 1, to: cal.startOfDay(for: Date()))!
+        let wd       = cal.component(.weekday, from: tomorrow)
+
+        if CalendarManager.shared.firstEventTomorrow != nil {
+            baselineStep = "Step 1 — Calendar event"
+        } else if CalendarManager.shared.typicalFirstEventTime(forWeekday: wd) != nil {
+            baselineStep = "Step 2 — Historical event pattern"
+        } else if SleepHistoryStore.shared.averageWakeTime(forWeekday: wd) != nil {
+            baselineStep = "Step 3 — Historical wake average"
+        } else {
+            baselineStep = "Step 4 — 8 AM fallback"
+        }
+    }
+
+    // ── Sections ──────────────────────────────────────────────
+
+    private var alarmCalcSection: some View {
+        card("Alarm Calculation") {
+            row("Baseline source", baselineStep)
+            if let event = CalendarManager.shared.firstEventTomorrow {
+                sep
+                row("Driving event", event.title)
+                sep
+                row("Event starts", Self.timeFmt.string(from: event.startDate))
+            }
+            if let d = pendingDecision {
+                sep
+                row("Baseline alarm", Self.timeFmt.string(from: d.baselineAlarm))
+                sep
+                let off = d.selectedOffsetMinutes
+                row("Adaptive offset",
+                    off == 0 ? "0 min" : (off > 0 ? "+\(off) min" : "\(off) min"),
+                    tint: off != 0)
+                sep
+                row("Final alarm", Self.timeFmt.string(from: d.finalAlarm), tint: true)
+                sep
+                row("Safety clamped", d.wasClamped ? "Yes" : "No")
+            } else {
+                sep
+                row("Decision", "None — override or rest day")
+            }
+        }
+    }
+
+    private var banditSection: some View {
+        card("Adaptive Bandit") {
+            row("Outcomes stored", "\(AdaptiveAlarmStore.shared.recentOutcomes().count) / 120")
+            if let d = pendingDecision {
+                sep
+                row("Offset chosen", "\(d.selectedOffsetMinutes) min")
+                sep
+                row("Expected reward", String(format: "%.3f", d.expectedReward))
+                sep
+                row("Uncertainty",     String(format: "%.3f", d.uncertainty))
+                sep
+                row("Training eligible", d.trainingEligible ? "Yes" : "No",
+                    tint: !d.trainingEligible)
+                sep
+                row("Sleep debt", String(format: "%.2f hrs", d.context.sleepDebtHours))
+                sep
+                row("Wearable active", d.context.hasWearable ? "Yes" : "No")
+            } else {
+                sep
+                row("Decision", "None")
+            }
+        }
+    }
+
+    private var commuteSection: some View {
+        card("Commute") {
+            let dur = CommuteManager.shared.currentDurationMinutes
+            row("Duration", dur > 0 ? "\(dur) min" : "0 min (fallback)")
+            sep
+            row("Last fetched",
+                CommuteManager.shared.lastFetched.map { Self.fullFmt.string(from: $0) } ?? "Never",
+                tint: CommuteManager.shared.lastFetched == nil)
+            sep
+            let loc = CalendarManager.shared.firstEventTomorrow?.location ?? ""
+            row("Event location",
+                loc.isEmpty ? "(none — routing disabled)" : loc,
+                tint: loc.isEmpty)
+            sep
+            row("GPS fix",
+                LocationManager.shared.currentCoordinate != nil ? "Available" : "Unavailable",
+                tint: LocationManager.shared.currentCoordinate == nil)
+        }
+    }
+
+    private var sleepSection: some View {
+        card("Sleep Tracker") {
+            let t = SleepTracker.shared
+            row("Status", t.isAsleep ? "Asleep" : "Awake", tint: t.isAsleep)
+            sep
+            row("Sleep probability", String(format: "%.0f%%", t.sleepProbability * 100))
+            sep
+            row("Est. sleep onset",
+                t.estimatedSleepOnset.map { Self.timeFmt.string(from: $0) } ?? "—")
+            sep
+            row("Est. wake time",
+                t.estimatedWakeTime.map { Self.timeFmt.string(from: $0) } ?? "—")
+            sep
+            let last = SleepHistoryStore.shared.recentHistory(days: 1).first
+            row("Last night",
+                last.map { String(format: "%.1f hrs", $0.durationHours) } ?? "No data",
+                tint: last == nil)
+        }
+    }
+
+    private var outcomesSection: some View {
+        let sorted = Array(recentOutcomes.reversed())
+        return card("Recent Outcomes") {
+            if sorted.isEmpty {
+                row("Outcomes", "None recorded yet")
+            } else {
+                ForEach(sorted.indices, id: \.self) { i in
+                    let o = sorted[i]
+                    if i > 0 { sep }
+                    VStack(spacing: 0) {
+                        row(Self.dayFmt.string(from: o.observedAt),
+                            o.outcome,
+                            tint: o.outcome == "woke_before_alarm")
+                        subRow("Offset", "\(o.selectedOffsetMinutes) min")
+                        subRow("Reward", String(format: "%.3f", o.reward))
+                        if let hrs = o.actualSleepHours {
+                            subRow("Sleep hrs", String(format: "%.1f", hrs))
+                        }
+                    }
+                }
+            }
+        }
+    }
+
+    private var eventsSection: some View {
+        let events = Array(alarmEvents.prefix(20))
+        return card("Alarm Events") {
+            if events.isEmpty {
+                row("Events", "None recorded yet")
+            } else {
+                ForEach(events.indices, id: \.self) { i in
+                    let e = events[i]
+                    if i > 0 { sep }
+                    VStack(alignment: .leading, spacing: 0) {
+                        row(eventLabel(e), Self.fullFmt.string(from: e.timestamp))
+                        if let detail = e.detail {
+                            subRow("", detail)
+                        }
+                    }
+                }
+            }
+        }
+    }
+
+    // ── Helpers ───────────────────────────────────────────────
+
+    private func eventLabel(_ e: DebugAlarmEvent) -> String {
+        switch e.type {
+        case "fired":      return "🔔 Fired"
+        case "snoozed":    return "💤 Snoozed"
+        case "dismissed":  return "✓  Dismissed"
+        case "woke_before": return "☀️ Woke early"
+        default:           return e.type.capitalized
+        }
+    }
+
+    private func card<Content: View>(
+        _ title: String,
+        @ViewBuilder content: () -> Content
+    ) -> some View {
+        VStack(alignment: .leading, spacing: 8) {
+            Text(title.uppercased())
+                .font(.custom("DM Sans", size: 11))
+                .foregroundColor(Color.white.opacity(0.35))
+                .kerning(2)
+            VStack(alignment: .leading, spacing: 0) {
+                content()
+            }
+            .background(
+                RoundedRectangle(cornerRadius: 12)
+                    .fill(Color.white.opacity(0.04))
+                    .overlay(RoundedRectangle(cornerRadius: 12)
+                        .stroke(Color.white.opacity(0.08), lineWidth: 1))
+            )
+        }
+    }
+
+    @ViewBuilder
+    private func row(_ label: String, _ value: String, tint: Bool = false) -> some View {
+        HStack(alignment: .top) {
+            Text(label)
+                .font(.custom("DM Sans", size: 13))
+                .foregroundColor(Color.white.opacity(0.5))
+            Spacer(minLength: 12)
+            Text(value)
+                .font(.custom("DM Sans", size: 13))
+                .foregroundColor(tint
+                    ? Color(red: 0.706, green: 0.588, blue: 0.902)
+                    : Color.white.opacity(0.85))
+                .multilineTextAlignment(.trailing)
+        }
+        .padding(.horizontal, 19)
+        .padding(.vertical, 10)
+    }
+
+    @ViewBuilder
+    private func subRow(_ label: String, _ value: String) -> some View {
+        HStack {
+            Text(label)
+                .font(.custom("DM Sans", size: 12))
+                .foregroundColor(Color.white.opacity(0.3))
+            Spacer(minLength: 8)
+            Text(value)
+                .font(.custom("DM Sans", size: 12))
+                .foregroundColor(Color.white.opacity(0.45))
+                .multilineTextAlignment(.trailing)
+        }
+        .padding(.horizontal, 19)
+        .padding(.bottom, 8)
+    }
+
+    private var sep: some View {
+        Rectangle()
+            .fill(Color.white.opacity(0.06))
+            .frame(height: 1)
+            .padding(.horizontal, 19)
+    }
+}
 
 private struct LuniferMainPreview: View {
     @State private var answers: SurveyAnswers = {

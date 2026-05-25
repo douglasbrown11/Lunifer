@@ -47,7 +47,8 @@ final class SleepFeatureCollector: ObservableObject {
     @Published private(set) var unlockCountLast30Min: Int = 0
     @Published private(set) var isSleepFocusActive: Bool = false
     @Published private(set) var dayOfWeek: Int = 1
-    @Published var historicalAvgSleepOnset: Double? = nil
+    @Published var historicalAvgSleepOnsetWeekday: Double? = nil
+    @Published var historicalAvgSleepOnsetWeekend: Double? = nil
 
     // MARK: - Private state
 
@@ -89,7 +90,10 @@ final class SleepFeatureCollector: ObservableObject {
 
     /// Returns a snapshot of all current feature values.
     func currentFeatures() -> SleepFeatures {
-        SleepFeatures(
+        let onset = isWeekend(Date())
+            ? historicalAvgSleepOnsetWeekend
+            : historicalAvgSleepOnsetWeekday
+        return SleepFeatures(
             isStationary: isStationary,
             stationaryDurationMinutes: stationaryDurationMinutes,
             timeSinceLastInteractionMinutes: timeSinceLastInteractionMinutes,
@@ -97,7 +101,7 @@ final class SleepFeatureCollector: ObservableObject {
             unlockCountLast30Min: unlockCountLast30Min,
             isSleepFocusActive: isSleepFocusActive,
             dayOfWeek: dayOfWeek,
-            historicalAvgSleepOnset: historicalAvgSleepOnset
+            historicalAvgSleepOnset: onset
         )
     }
 
@@ -181,6 +185,9 @@ final class SleepFeatureCollector: ObservableObject {
         let window = date.addingTimeInterval(-30 * 60)
         let recentInteractions = interactionLog.filter { $0 >= window && $0 <= date }
 
+        let onset = isWeekend(date)
+            ? historicalAvgSleepOnsetWeekend
+            : historicalAvgSleepOnsetWeekday
         return SleepFeatures(
             isStationary: stationary,
             stationaryDurationMinutes: stationaryMinutes,
@@ -189,7 +196,7 @@ final class SleepFeatureCollector: ObservableObject {
             unlockCountLast30Min: recentInteractions.count,
             isSleepFocusActive: false, // can't determine retroactively
             dayOfWeek: cal.component(.weekday, from: date),
-            historicalAvgSleepOnset: historicalAvgSleepOnset
+            historicalAvgSleepOnset: onset
         )
     }
 
@@ -327,16 +334,24 @@ final class SleepFeatureCollector: ObservableObject {
     // ─────────────────────────────────────────────────────────
 
     private func loadPersistedState() {
-        // Historical average
-        if let stored = trackingStore.historicalAverageSleepOnset() {
-            historicalAvgSleepOnset = stored
+        // Load weekday / weekend averages
+        historicalAvgSleepOnsetWeekday = trackingStore.historicalAverageSleepOnsetWeekday()
+        historicalAvgSleepOnsetWeekend = trackingStore.historicalAverageSleepOnsetWeekend()
+
+        // One-time migration: if no split averages exist yet but a legacy single
+        // average does, seed both buckets from it so existing users keep their data.
+        if historicalAvgSleepOnsetWeekday == nil,
+           historicalAvgSleepOnsetWeekend == nil,
+           let legacy = trackingStore.historicalAverageSleepOnset() {
+            historicalAvgSleepOnsetWeekday = legacy
+            historicalAvgSleepOnsetWeekend = legacy
+            trackingStore.setHistoricalAverageSleepOnsetWeekday(legacy)
+            trackingStore.setHistoricalAverageSleepOnsetWeekend(legacy)
         }
 
         // Last interaction date
         if let lastInteraction = trackingStore.lastInteractionDate() {
-            timeSinceLastInteractionMinutes = Date().timeIntervalSince(
-                lastInteraction
-            ) / 60.0
+            timeSinceLastInteractionMinutes = Date().timeIntervalSince(lastInteraction) / 60.0
         }
     }
 
@@ -344,13 +359,30 @@ final class SleepFeatureCollector: ObservableObject {
     // MARK: - Historical average
     // ─────────────────────────────────────────────────────────
 
-    func updateHistoricalAverage(newOnsetHour: Double) {
-        if let current = historicalAvgSleepOnset {
-            historicalAvgSleepOnset = current * 0.7 + newOnsetHour * 0.3
+    /// Updates the weekday or weekend rolling average depending on which day `date` falls on.
+    func updateHistoricalAverage(newOnsetHour: Double, for date: Date) {
+        if isWeekend(date) {
+            if let current = historicalAvgSleepOnsetWeekend {
+                historicalAvgSleepOnsetWeekend = current * 0.7 + newOnsetHour * 0.3
+            } else {
+                historicalAvgSleepOnsetWeekend = newOnsetHour
+            }
+            trackingStore.setHistoricalAverageSleepOnsetWeekend(historicalAvgSleepOnsetWeekend)
         } else {
-            historicalAvgSleepOnset = newOnsetHour
+            if let current = historicalAvgSleepOnsetWeekday {
+                historicalAvgSleepOnsetWeekday = current * 0.7 + newOnsetHour * 0.3
+            } else {
+                historicalAvgSleepOnsetWeekday = newOnsetHour
+            }
+            trackingStore.setHistoricalAverageSleepOnsetWeekday(historicalAvgSleepOnsetWeekday)
         }
-        trackingStore.setHistoricalAverageSleepOnset(historicalAvgSleepOnset)
+    }
+
+    // MARK: - Weekend helper
+
+    private func isWeekend(_ date: Date) -> Bool {
+        let weekday = Calendar.current.component(.weekday, from: date)
+        return weekday == 1 || weekday == 7  // 1 = Sunday, 7 = Saturday
     }
 }
 
