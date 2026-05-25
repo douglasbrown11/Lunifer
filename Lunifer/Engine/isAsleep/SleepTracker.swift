@@ -270,7 +270,7 @@ final class SleepTracker: ObservableObject {
                 let hour = cal.component(.hour, from: onset)
                 let minute = cal.component(.minute, from: onset)
                 let onsetHour = Double(hour) + Double(minute) / 60.0
-                featureCollector.updateHistoricalAverage(newOnsetHour: onsetHour)
+                featureCollector.updateHistoricalAverage(newOnsetHour: onsetHour, for: onset)
 
                 // Record to sleep history
                 SleepHistoryManager.shared.recordNight(
@@ -279,6 +279,7 @@ final class SleepTracker: ObservableObject {
                     onset: onset,
                     wake: wake
                 )
+                LuniferAlarm.shared.recordWokeBeforeAlarmIfNeeded(at: wake)
 
                 logSleepEvent(type: "retro_sleep_onset", at: onset)
                 logSleepEvent(type: "retro_wake", at: wake)
@@ -328,7 +329,8 @@ final class SleepTracker: ObservableObject {
                 let hour = cal.component(.hour, from: estimatedSleepOnset!)
                 let minute = cal.component(.minute, from: estimatedSleepOnset!)
                 featureCollector.updateHistoricalAverage(
-                    newOnsetHour: Double(hour) + Double(minute) / 60.0
+                    newOnsetHour: Double(hour) + Double(minute) / 60.0,
+                    for: estimatedSleepOnset!
                 )
 
                 logSleepEvent(type: "sleep_onset", at: estimatedSleepOnset!)
@@ -355,6 +357,9 @@ final class SleepTracker: ObservableObject {
                         onset: onset,
                         wake: estimatedWakeTime
                     )
+                    if let wake = estimatedWakeTime {
+                        LuniferAlarm.shared.recordWokeBeforeAlarmIfNeeded(at: wake)
+                    }
                 }
                 consecutiveAsleepCount = 0
             }
@@ -409,7 +414,8 @@ final class SleepTracker: ObservableObject {
         let hour = cal.component(.hour, from: now)
         let minute = cal.component(.minute, from: now)
         featureCollector.updateHistoricalAverage(
-            newOnsetHour: Double(hour) + Double(minute) / 60.0
+            newOnsetHour: Double(hour) + Double(minute) / 60.0,
+            for: now
         )
 
         logSleepEvent(type: "manual_sleep_onset", at: now)
@@ -435,6 +441,7 @@ final class SleepTracker: ObservableObject {
                 onset: onset,
                 wake: now
             )
+            LuniferAlarm.shared.recordWokeBeforeAlarmIfNeeded(at: now)
         }
     }
 

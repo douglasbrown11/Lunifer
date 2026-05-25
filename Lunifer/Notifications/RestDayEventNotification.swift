@@ -46,6 +46,10 @@ final class RestDayEventNotification {
     ///   - answers: Survey answers used to derive the wake time
     ///              (routine + commute offset from event start).
     func scheduleIfNeeded(event: CalendarEvent, answers: SurveyAnswers) {
+        // Respect the user's notification preference
+        guard UserDefaults.standard.object(forKey: "restDayReminderEnabled") as? Bool != false else { return }
+        guard UserDefaults.standard.object(forKey: "allNotificationsEnabled") as? Bool != false else { return }
+
         // Only prompt once per calendar day regardless of how many
         // times the app is opened.
         if let lastSent = UserDefaults.standard.object(

@@ -227,6 +227,7 @@ final class WhoopManager: NSObject, ObservableObject, ASWebAuthenticationPresent
         AppPreferencesStore.shared.whoopLastSyncDate = syncDate
         AppPreferencesStore.shared.whoopLatestSleepOnset = latestOnset
         AppPreferencesStore.shared.whoopLatestWakeTime = latestWake
+        AppPreferencesStore.shared.refreshHasWearable()
 
         isConnected = status.connected
         recommendedSleepHours = hours

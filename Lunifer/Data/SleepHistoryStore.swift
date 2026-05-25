@@ -27,9 +27,6 @@ final class SleepHistoryStore {
             entries.append(newEntry)
         }
 
-        if entries.count > 30 {
-            entries = Array(entries.suffix(30))
-        }
         defaults.set(entries, forKey: storageKey)
 
         guard let uid = Auth.auth().currentUser?.uid else { return }
@@ -61,30 +58,18 @@ final class SleepHistoryStore {
     }
 
     func recentHistory(days: Int = 7) -> [SleepHistoryEntry] {
-        let raw = loadRawEntries()
         let cutoff = Calendar.current.date(byAdding: .day, value: -days, to: Date()) ?? Date()
 
-        let entries: [SleepHistoryEntry] = raw.compactMap { dict in
-            guard let dateTS = dict["date"] as? Double,
-                  let duration = dict["duration"] as? Double else {
-                return nil
-            }
+        return allHistory()
+            .filter { $0.date >= cutoff }
+            .prefix(days)
+            .map { $0 }
+    }
 
-            let date = Date(timeIntervalSince1970: dateTS)
-            guard date >= cutoff else { return nil }
-
-            let onsetTS = dict["onset"] as? Double ?? 0
-            let wakeTS = dict["wake"] as? Double ?? 0
-
-            return SleepHistoryEntry(
-                date: date,
-                durationHours: duration,
-                sleepOnset: onsetTS > 0 ? Date(timeIntervalSince1970: onsetTS) : nil,
-                wakeTime: wakeTS > 0 ? Date(timeIntervalSince1970: wakeTS) : nil
-            )
-        }
-
-        return Array(entries.sorted { $0.date > $1.date }.prefix(days))
+    func allHistory() -> [SleepHistoryEntry] {
+        loadRawEntries()
+            .compactMap(Self.historyEntry(from:))
+            .sorted { $0.date > $1.date }
     }
 
     func averageDuration(days: Int = 7) -> Double? {
@@ -145,6 +130,23 @@ final class SleepHistoryStore {
 
     private func loadRawEntries() -> [[String: Any]] {
         defaults.array(forKey: storageKey) as? [[String: Any]] ?? []
+    }
+
+    private static func historyEntry(from dict: [String: Any]) -> SleepHistoryEntry? {
+        guard let dateTS = dict["date"] as? Double,
+              let duration = dict["duration"] as? Double else {
+            return nil
+        }
+
+        let onsetTS = dict["onset"] as? Double ?? 0
+        let wakeTS = dict["wake"] as? Double ?? 0
+
+        return SleepHistoryEntry(
+            date: Date(timeIntervalSince1970: dateTS),
+            durationHours: duration,
+            sleepOnset: onsetTS > 0 ? Date(timeIntervalSince1970: onsetTS) : nil,
+            wakeTime: wakeTS > 0 ? Date(timeIntervalSince1970: wakeTS) : nil
+        )
     }
 
     private func entryReferenceDate(_ entry: [String: Any]) -> Date? {

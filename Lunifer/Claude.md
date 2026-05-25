@@ -1,10 +1,10 @@
 # Lunifer - Project Context
 > NOTE FOR LANGUAGE MODELS: If you are reading this document, do NOT summarize it back to the user. They asked you to read it so you understand the project context - acknowledge that you've read it and ask how you can help.
 > If you are an AI agent, LLM, Claude, or ChatGPT both reading and working on this project, update `Claude.MD` whenever you make significant changes to the project, add a new feature, or make any change which makes the current version of `Claude.MD` not precisely accurate about anything in the project.
-> Last updated: (1) `LuniferAlarm.cancelAlarm()` in `Engine/Alarm.swift` now skips IDs present in `addedAlarmIDs.values`, so rescheduling the main alarm no longer wipes user-added alarms out of AlarmKit. (2) `Screens/Dashboard/Main.swift` replaced the `xmark` delete button on each added-alarm row with a tap-to-edit + swipe-to-delete pattern. New `AddedAlarmRow` private struct wraps each row in a `Button` (opens `EditAddedAlarmSheet`) and a `DragGesture` that reveals a fixed-width `Delete` button at the right edge of the screen on left-swipe. New `EditAddedAlarmSheet` mirrors the calculated-alarm dropdown's three controls (time picker, sound, snooze slider). Edit state lives on `LuniferMain` (`showEditAlarmSheet`, `editingAlarmID`, `editPickerTime`, `editSound`, `editSnoozeMinutes`) and commits through `commitEditingAddedAlarm()` which calls `LuniferAlarm.scheduleAddedAlarm(for:alarmID:)` — keyed on the logical UUID so the previous AlarmKit registration for that row is replaced cleanly.
+> Last updated: (1) `LuniferAlarm.cancelAlarm()` in `Engine/Alarm.swift` now skips IDs present in `addedAlarmIDs.values`, so rescheduling the main alarm no longer wipes user-added alarms out of AlarmKit. (2) `Screens/Dashboard/Main.swift` replaced the `xmark` delete button on each added-alarm row with a tap-to-edit + swipe-to-delete pattern. New `AddedAlarmRow` private struct wraps each row in a `Button` (opens `EditAddedAlarmSheet`) and a `DragGesture` that reveals a fixed-width `Delete` button at the right edge of the screen on left-swipe. New `EditAddedAlarmSheet` mirrors the calculated-alarm dropdown's three controls (time picker, sound, snooze slider). Edit state lives on `LuniferMain` (`showEditAlarmSheet`, `editingAlarmID`, `editPickerTime`, `editSound`, `editSnoozeMinutes`) and commits through `commitEditingAddedAlarm()` which calls `LuniferAlarm.scheduleAddedAlarm(for:alarmID:)` keyed on the logical UUID so the previous AlarmKit registration for that row is replaced cleanly. (3) Wearable sleep recommendations now route through `Engine/Wearables/WearableRecommendationStore.swift`: `Data/AppPreferencesStore.swift` persists `hasWearable`, `WhoopManager.apply(status:)` and `OuraManager.apply(status:)` refresh it after sync, and `SleepInsights.swift` / `Settings.swift` resolve `recommendedHours` through wearable sources before falling back to `answers.sleep`. (4) `Engine/AdaptiveAlarm/*` adds the first adaptive alarm algorithm: a safety-constrained smooth contextual bandit that scores one-minute offsets in `[-60, +60]`, stores pending decisions and outcomes locally, excludes snooze from training, enriches Firestore `alarmInferences`, and is wired through `Screens/Dashboard/Main.swift`, `Engine/Alarm.swift`, `Engine/isAsleep/SleepTracker.swift`, and `Data/AccountDataManager.swift`. (5) `Data/SleepHistoryStore.swift` no longer trims local sleep history to 30 nights; it keeps every locally recorded night, still writes permanent per-date documents to Firestore, and exposes `allHistory()` through both `SleepHistoryStore` and `SleepHistoryManager`. (6) `Screens/Dashboard/SleepInsights.swift` now uses the full local sleep history, adds a `1W / 1M / 6M / YTD / Max` range selector, groups `1M` into weekly `SleepHistoryChartPoint` values, groups `6M`, `YTD`, and `Max` into monthly values, uses a true January 1 cutoff for `YTD`, and lets users tap chart bars to inspect a `SleepInsightDetailCard`.
 
 ## What Is Lunifer?
-Lunifer is an iOS alarm app prototype built in SwiftUI. The current product combines onboarding, authentication, a survey-driven wake-time calculation, dashboard alarm controls, sleep tracking, settings, and AlarmKit integration. The longer-term direction is still an adaptive sleep / alarm assistant, but the codebase today is still mostly a prototype with several hardcoded scheduling rules.
+Lunifer is an iOS alarm app prototype built in SwiftUI. The current product combines onboarding, authentication, a survey-driven wake-time baseline, an adaptive alarm offset model, dashboard alarm controls, sleep tracking, settings, wearables, and AlarmKit integration. The codebase now has an initial closed feedback loop for alarm timing, while several surrounding flows still remain prototype-level.
 
 ## Core Design Principle
 The experience should feel seamless and require as little manual input from the user as possible. The onboarding survey should stay short — avoid adding new survey steps or questions. Any additional data the app needs (locations, commute times, schedule patterns, etc.) should be collected through Settings after onboarding, inferred automatically from existing signals (calendar, wearables, sleep history, location), or derived from data the user has already provided.
@@ -19,7 +19,8 @@ Try to avoid mechanisms that asks the user to manually provide data — this inc
   - `SurveyAnswersStore` for onboarding/profile answers
   - `SleepHistoryStore` for completed sleep nights
   - `SleepTrackingStore` for inferred sleep/tracking state
-  - `AppPreferencesStore` plus `@AppStorage` for device/account-scoped preferences
+  - `AdaptiveAlarmStore` for the latest adaptive alarm decision and recent local training outcomes
+  - `AppPreferencesStore` plus `@AppStorage` for device/account-scoped preferences, including the user-level `hasWearable` wearable resolver flag
   - Keychain via `KeychainHelper` for local wearable token cleanup / legacy OAuth token keys
 
 ## Current App Flow
@@ -44,19 +45,21 @@ Try to avoid mechanisms that asks the user to manually provide data — this inc
 - `NotificationDelegate.swift`: UNUserNotificationCenter delegate
 - `Info.plist` (repo root): app capabilities, URL schemes, background task identifiers, permission strings, and bundled font declarations
 - `Data/SurveyAnswersStore.swift`: local + Firestore persistence for onboarding/profile answers
-- `Data/SleepHistoryStore.swift`: local + Firestore persistence for completed sleep nights
-- `Data/SleepTrackingStore.swift`: persisted local state for retroactive sleep analysis and interaction logs
+- `Data/SleepHistoryStore.swift`: local + Firestore persistence for completed sleep nights; keeps every locally recorded night and writes one Firestore document per date
+- `Data/SleepTrackingStore.swift`: persisted local state for retroactive sleep analysis and interaction logs; stores separate weekday (`lunifer_avg_sleep_onset_weekday`) and weekend (`lunifer_avg_sleep_onset_weekend`) sleep onset averages; legacy key `lunifer_avg_sleep_onset` retained for one-time migration only
 - `Data/AppPreferencesStore.swift`: centralized preference keys and reset helpers
 - `Data/AccountDataManager.swift`: clears account-scoped local data on sign-out / delete account
 - `Engine/CalendarManager.swift`: EventKit authorization and calendar event access
 - `Engine/LocationManager.swift`: Core Location authorization tracking plus one-shot current-location fixes
 - `Engine/Alarm.swift`: AlarmKit scheduling / monitoring
+- `Engine/AdaptiveAlarm/*`: adaptive-alarm context building, smooth contextual bandit offset scoring, safety-window types, reward scoring, and local decision/outcome storage
 - `Engine/CommuteManager.swift`: live commute routing, 5-minute polling, background refresh, and duration persistence
 - `Engine/Wearables/WhoopManager.swift`: WHOOP OAuth + sleep-need fetch / refresh logic
 - `Engine/Wearables/OuraManager.swift`: Oura Ring OAuth + sleep-need fetch / refresh logic
+- `Engine/Wearables/WearableRecommendationStore.swift`: shared wearable source resolver used by recommendation UI, bedtime display, and alarm adaptation to select an active wearable before falling back to survey sleep answers
 - `Engine/Wearables/KeychainHelper.swift`: Security-wrapper for local wearable token cleanup / legacy token keys
-- `Engine/isAsleep/*`: sleep feature collection, prediction, historical reconstruction, and tracking
-- `Notifications/BatteryAlarmNotification.swift`: battery survival prediction for the upcoming alarm (currently warns only if the phone is projected to die before the alarm)
+- `Engine/isAsleep/*`: sleep feature collection, prediction, historical reconstruction, and tracking; `SleepFeatureCollector` now maintains separate weekday and weekend rolling sleep onset averages (`historicalAvgSleepOnsetWeekday` / `historicalAvgSleepOnsetWeekend`) and selects the appropriate one when building features; `updateHistoricalAverage(newOnsetHour:for:)` requires a date to route to the correct bucket
+- `Notifications/BatteryAlarmNotification.swift`: battery survival prediction across all upcoming alarms — checks both the main Lunifer alarm and all user-added alarms, warns against the nearest upcoming one, and names the specific alarm (with label if set) in the notification body
 - `Notifications/WakeNotification.swift`: 1-hour-before-bedtime wake reminder notification
 - `Notifications/CommuteNotification.swift`: leave-reminder and commute-delta notifications
 - `Notifications/RestDayEventNotification.swift`: rest-day early-event reminder with notification actions
@@ -170,13 +173,29 @@ Commute buffer:
 - Persists added alarms as JSON in `UserDefaults` key `addedAlarms`
 
 Alarm scheduling:
-- `resolveAlarmDate()` runs a 4-step fallback chain: (1) first calendar event tomorrow, (2) historical average first-event time for that weekday, (3) historical average wake time for that weekday, (4) 8 AM hard fallback
-- All steps correctly target tomorrow's calendar date via `tomorrowAt(hour:minute:)`
-- After `resolveAlarmDate()` resolves and AlarmKit authorization is confirmed, the alarm is scheduled automatically via `LuniferAlarm.shared.scheduleAlarm(for: resolvedAlarmDate, ...)` — no more silent no-op on launch
+- `resolveBaselineAlarmDate()` runs the deterministic 4-step fallback chain: (1) first calendar event tomorrow, (2) historical average first-event time for that weekday, (3) historical average wake time for that weekday, (4) 8 AM hard fallback
+- All baseline steps correctly target tomorrow's calendar date via `tomorrowAt(hour:minute:)`
+- `resolveAlarmDate()` wraps that baseline with `AlarmContextBuilder.build(...)`, `AlarmOffsetBandit.chooseDecision(...)`, and an `AdaptiveAlarmSafetyWindow`, then saves the pending decision in `AdaptiveAlarmStore.shared`
+- The bandit chooses one-minute offsets in `[-60, +60]`; the safety window clamps the result to no earlier than `baseline - 1 hour` and no later than the earliest event deadline or `baseline + 1 hour` when no event deadline exists
+- After `resolveAlarmDate()` resolves and AlarmKit authorization is confirmed, the alarm is scheduled automatically via `LuniferAlarm.shared.scheduleAlarm(for: resolvedAlarmDate, ...)`; there is no silent no-op on launch
 - Wake days affect both rest-period handling and whether the alarm is active
 
 ## Adaptive Alarm Rescheduling
-`LuniferAlarm.checkAndAdaptAlarm()` runs every 5 minutes and adjusts the alarm in two scenarios:
+The adaptive alarm now has two layers: the nightly initial offset model in `Engine/AdaptiveAlarm/*`, and the existing same-night rescheduler in `LuniferAlarm.checkAndAdaptAlarm()`.
+
+**Initial offset model:**
+- `AlarmContextBuilder.build(...)` creates `AdaptiveAlarmContext` from weekday, baseline alarm time, expected bedtime, wearable/manual recommended sleep, prior sleep history, sleep debt, routine, commute, calendar pressure, and `hasWearable`
+- `AlarmOffsetBandit.chooseDecision(...)` scores every one-minute offset in `[-60, +60]` with kernel smoothing across similar contexts and nearby offsets, blended prior/data reward estimates, an uncertainty bonus for exploration, and a small stability penalty for large changes
+- `AlarmOffsetBandit.adjustedReward(for:candidateOffset:)` adds directional shaping: `woke_before_alarm` favors earlier candidate offsets, while dismissed alarms with sleep shortfall gently favor later offsets
+- `AdaptiveAlarmSafetyWindow` clamps unsafe recommendations before anything is scheduled
+- `AdaptiveAlarmStore` stores the pending decision under `adaptiveAlarmPendingDecision` and recent local outcomes under `adaptiveAlarmOutcomes`
+- Manual overrides and rest-day/off states clear the pending decision; snooze marks the pending decision ineligible so snooze behavior is not used as a reward signal
+
+**Outcome learning loop:**
+- `SleepTracker` calls `LuniferAlarm.shared.recordWokeBeforeAlarmIfNeeded(at:)` after live, retroactive, and manual wake detections
+- `recordWokeBeforeAlarmIfNeeded(at:)` only logs a `woke_before_alarm` outcome when the detected wake is 5 minutes to 2 hours before the scheduled main alarm; it does not cancel the alarm
+- `AlarmBehaviourLogger.saveInference(outcome:at:)` still writes to Firestore `alarmInferences`, and now enriches rows with `adaptiveDecisionID`, `adaptiveOffsetMinutes`, `adaptiveReward`, `adaptiveRecommendedSleepHours`, and optional `adaptiveActualSleepHours` when a training-eligible decision exists
+- `AlarmRewardScorer.reward(...)` scores outcomes from sleep-duration fit, wake timing, and safety clamp status; snooze is intentionally excluded from reward training
 
 **Path A — User fell asleep (early or late):**
 - Once `SleepTracker.shared.isAsleep` becomes true and `estimatedSleepOnset` is available, the alarm shifts by the delta between actual sleep onset and expected bedtime
@@ -187,6 +206,10 @@ Alarm scheduling:
 **Path B — User is still awake past bedtime:**
 - Pushes the alarm later so the user still gets a full night of sleep from the current moment
 - Capped at 3 hours past the original alarm (`maxAdaptivePushHours`)
+
+**Wearable sleep target:**
+- `checkAndAdaptAlarm()` now resolves sleep need through `WearableRecommendationStore.recommendedHours(from:fallback:)`, so active WHOOP or Oura recommendations drive same-night adaptation before falling back to `answers.sleep`
+- `Screens/Dashboard/Main.swift` uses the same wearable-first sleep-hour source for its bedtime display
 
 **Calendar constraint (both paths):**
 - Uses `CalendarManager.shared.firstEventTomorrow` to find the earliest timed event
@@ -203,17 +226,21 @@ Alarm scheduling:
 `SleepInsights.swift` currently:
 - Shows a recommended sleep duration card with `.padding(.horizontal, 60)`
 - Shows a subtle "Adjust in Settings" link that opens `SleepAndWearablesSettingsView` in a sheet
-- Shows the 7-day sleep chart with `.padding(.horizontal, 60)`
-- Prioritizes WHOOP → Oura → manual sleep → age baseline for the displayed recommendation
+- Shows a sleep history range selector with `1W`, `1M`, `6M`, `YTD`, and `Max`
+- Reads full local sleep memory through `SleepHistoryManager.shared.allHistory()` rather than only `recentHistory(days: 7)`
+- Shows the sleep chart with `.padding(.horizontal, 60)`; `1W` renders individual nights, `1M` renders weekly averages, and `6M`, `YTD`, and `Max` render monthly averages
+- `SleepInsightsRange.yearToDate` computes a true calendar-year cutoff at January 1 of the current year
+- Uses tappable chart bars backed by `SleepHistoryChartPoint` and stores the active bar/period in `selectedPointID`
+- Shows `SleepInsightDetailCard` for the selected bar/period with target sleep, sleep debt/surplus, range/night count, and bedtime/wake time when the selection is an individual night
+- Uses `WearableRecommendationStore` plus `hasWearable` to resolve the displayed recommendation as wearable source → manual sleep → age baseline
 - Calls `WhoopManager.shared.refreshIfNeeded()` and `OuraManager.shared.refreshIfNeeded()` on appear
-- Shows a 7-day sleep history chart backed by `SleepHistoryManager.shared.recentHistory(days: 7)`
 
 Sleep persistence currently works like this:
 - `SleepTracker` runs foreground predictions and background retroactive analysis
 - `SleepFeatureCollector` gathers live and reconstructed motion / interaction signals
 - `SleepTrackingStore` persists interaction logs, historical average onset, sleep-event logs, and retroactive-analysis timestamps
-- `SleepHistoryStore` persists completed nights locally and to Firestore
-- `SleepHistoryManager` remains a compatibility wrapper over `SleepHistoryStore`
+- `SleepHistoryStore` persists completed nights locally without a count cap and writes permanent per-date documents to Firestore at `users/{uid}/sleepHistory/{yyyy-mm-dd}`
+- `SleepHistoryManager` remains a compatibility wrapper over `SleepHistoryStore` and exposes `recentHistory(days:)`, `averageDuration(days:)`, and `allHistory()`
 - `LuniferApp` calls `SleepHistoryStore.shared.purgeBadEntries()` on launch to scrub unrealistic legacy entries outside the 3-12 hour range
 
 ## Sound Options
@@ -248,13 +275,15 @@ Sound playback is implemented in `AlarmScreen.swift` via `AVFoundation`. When th
 - Morning Routine (hidden for `not_working` lifestyle; uses `TimeScalePicker` bound to `answers.routine`)
 - Commute Type (drive/transit/walk/bike; shown only for `student` or `commuter` lifestyle; bound to `answers.commuteMode`)
 
+When the user changes their lifestyle **to** `"student"` or `"commuter"` from any non-commuter value (`"wfh"` or `"not_working"`), `AboutYouSettingsView` intercepts the tap and instead opens `CommuteTypeRequiredSheet` (a non-dismissable `.sheet` with `.interactiveDismissDisabled(true)`). The sheet shows the same four transport-mode tiles (drive/transit/walk/bike) used in the survey's commute step. The user cannot exit the sheet without selecting a mode and tapping "Confirm →". On confirm, `answers.lifestyle` and `answers.commuteMode` are set together and persisted via their `onChange` handlers. State variables `showCommuteTypeSheet`, `pendingLifestyle`, and `pendingCommuteMode` on `AboutYouSettingsView` drive this flow. Switching between `"student"` and `"commuter"` (both already commuter users) skips the sheet and updates lifestyle directly.
+
 `SleepAndWearablesSettingsView` currently supports:
 - Viewing and editing the optimal sleep duration (moved from `SleepInsights`)
-- Shows the current sleep source (WHOOP, Oura Ring, manual, or age-based)
+- Shows the current sleep source from `WearableRecommendationStore` (active wearable, manual, or age-based)
 - Connecting WHOOP via `WhoopManager.shared.connect()`
 - Connecting Oura Ring via `OuraManager.shared.connect()`
 - Disconnecting either wearable with confirmation alerts
-- If a wearable is driving the sleep recommendation, editing sleep shows an override warning first
+- If `WearableRecommendationStore.activeRecommendation(from:)` finds a wearable driving the sleep recommendation, editing sleep shows an override warning first
 
 `SleepInsights` now shows a subtle "Adjust in Settings" link that opens the Sleep & Wearables screen as a sheet. The "change" button and inline `SleepEditSheet` have been removed from `SleepInsights`. `SleepEditSheet` is now a non-private struct so it can be used from both files.
 
@@ -263,7 +292,7 @@ Behavior notes:
 - Wake days are editable in a dedicated screen and sync through `answers.saveToDefaults()` / `answers.saveToFirestore()`
 - Notifications screen currently covers `batteryAlertEnabled`, `wakeReminderEnabled`, and `commuteReminderEnabled`
 - Sleep duration changes are saved locally and to Firestore through `answers.saveToDefaults()` / `answers.saveToFirestore()`
-- Account deletion attempts best-effort Firestore cleanup of `sleepHistory`, `alarmInferences`, and `private` before deleting the Firebase Auth user
+- Account deletion flow: user taps "Delete Account" → confirmation alert → user taps "Delete" → `performDeletion()` runs directly (no reauthentication). It does a best-effort Firestore cleanup of `sleepHistory`, `alarmInferences`, and `private`, then deletes the Firebase Auth user and clears local data.
 
 Not currently present:
 - Additional deeper settings pages beyond About You, Wake Days, Notifications, Sleep & Wearables, and the basic sound flows
@@ -290,7 +319,8 @@ Not currently present:
 - Dashboard startup re-checks alarm authorization and CoreMotion authorization, surfacing settings alerts when denied
 - `CalendarManager` can request EventKit access and fetch today / upcoming events
 - `CalendarManager.firstEventTomorrow` is now consumed end-to-end: `resolveAlarmDate()` uses it as the primary alarm target (step 1), and its title is passed as `eventTitle` to `scheduleAlarm`
-- Alarm calculation is calendar-driven: live event → historical pattern → historical wake → 8 AM fallback
+- Alarm calculation starts from a calendar-driven baseline: live event -> historical pattern -> historical wake -> 8 AM fallback
+- Final alarm timing is now adaptive: `resolveAlarmDate()` applies the safety-constrained smooth contextual bandit offset from `AlarmOffsetBandit` before scheduling the main alarm
 
 ## Design / UI Notes
 - The app uses a dark purple visual style
@@ -302,7 +332,7 @@ Not currently present:
 - LuniferSignin terms checkbox uses `.padding(.horizontal, 5)`
 
 ## WHOOP Integration
-WHOOP connectivity is implemented and currently affects onboarding plus sleep recommendations.
+WHOOP connectivity is implemented and currently affects onboarding, sleep recommendations, bedtime display, and adaptive alarm timing through `WearableRecommendationStore`.
 
 ### Core Files
 - `Engine/Wearables/WhoopManager.swift`
@@ -357,13 +387,13 @@ WHOOP connectivity is implemented and currently affects onboarding plus sleep re
     - silently deselects WHOOP on cancellation
     - writes fetched hours back into `answers.sleep` so downstream alarm logic keeps working without a separate WHOOP-specific alarm path
 - `Screens/Dashboard/SleepInsights.swift`
-  - `recommendedHours` prioritizes WHOOP when `whoopConnected && whoopSleepHours > 0`
-  - Shows a small "via WHOOP" badge when WHOOP is driving the recommendation
+  - `recommendedHours` uses `hasWearable` and `WearableRecommendationStore` rather than a direct WHOOP-specific branch
+  - Shows a small "recommended to you via" badge with the active wearable wordmark when WHOOP is the selected source
   - Calls `WhoopManager.shared.refreshIfNeeded()` on appear to silently resync if the last sync is older than 12 hours
 
 ### Persistence / Cleanup
 - `Data/AppPreferencesStore.swift`
-  - Defines WHOOP preference keys and `resetWhoopData()`
+  - Defines WHOOP preference keys, `hasWearable`, `refreshHasWearable()`, and `resetWhoopData()`
 - `Data/AccountDataManager.swift`
   - Clears WHOOP keychain tokens and WHOOP preferences on sign-out / delete account
 - `Database/cloudflare-worker/src/index.js`
@@ -395,12 +425,12 @@ hours is clamped to [5, 12]
 8. ✅ `Backend.baseURL` in both `WhoopManager.swift` and `OuraManager.swift` points at the deployed Worker URL (`https://lunifer-whoop.dougiebrown516.workers.dev`).
 
 ### Current WHOOP Limitations
-- WHOOP affects both the recommended sleep duration and the 7-day sleep history chart (via `recentSleepSessions` in the backend response → `SleepHistoryManager.shared.recordNight(...)`)
+- WHOOP affects the recommended sleep duration, bedtime display, adaptive alarm timing, and the 7-day sleep history chart (via `recentSleepSessions` in the backend response -> `SleepHistoryManager.shared.recordNight(...)`)
 - Disconnect UI exists in `SleepAndWearablesSettingsView` for both WHOOP and Oura, with confirmation alerts
 - ~~The integration depends on Cloudflare Worker deployment and secret configuration before it will function end-to-end~~ — **Resolved April 2026. All Worker secrets are configured and the integration is live.**
 
 ## Oura Ring Integration
-Oura Ring connectivity is implemented in `Engine/Wearables/OuraManager.swift`, parallel to WHOOP.
+Oura Ring connectivity is implemented in `Engine/Wearables/OuraManager.swift`, parallel to WHOOP, and currently affects sleep recommendations, bedtime display, and adaptive alarm timing through `WearableRecommendationStore`.
 
 ### Core Files
 - `Engine/Wearables/OuraManager.swift`
@@ -432,12 +462,12 @@ Oura Ring connectivity is implemented in `Engine/Wearables/OuraManager.swift`, p
     - `ouraError`
   - `connectOura()` logic mirrors `connectWhoop()`: uses cached connection or launches OAuth, silently deselects on cancellation
 - `Screens/Dashboard/SleepInsights.swift`
-  - `recommendedHours` considers Oura when `ouraConnected && ouraSleepHours > 0`
-  - Shows a small "via Oura" badge when Oura is driving the recommendation
+  - `recommendedHours` uses `hasWearable` and `WearableRecommendationStore` rather than a direct Oura-specific branch
+  - Shows a small "recommended to you via" badge with the active wearable wordmark when Oura is the selected source
   - Calls `OuraManager.shared.refreshIfNeeded()` on appear
 
 ### Persistence / Cleanup
-- `Data/AppPreferencesStore.swift` defines Oura preference keys and `resetOuraData()`
+- `Data/AppPreferencesStore.swift` defines Oura preference keys, participates in the shared `hasWearable` flag, and exposes `resetOuraData()`
 - `Data/AccountDataManager.swift` clears Oura preferences on sign-out / delete account
 
 ## Cloudflare Worker
@@ -537,8 +567,8 @@ Routing and arrival target:
 - `SurveyAnswers` and `TimeValue` still live inside `Survey.swift` instead of a dedicated model file
 - `LocationManager.swift` now exposes a `static let shared` singleton, a `@Published var currentCoordinate: CLLocationCoordinate2D?`, and a `requestCurrentLocation()` method that issues a one-shot `CLLocationManager.requestLocation()` fix. Accuracy is set to `kCLLocationAccuracyHundredMeters` to save battery. Does nothing if location permission has not been granted.
 - WHOOP/Oura integrations still depend on the deployed Cloudflare Worker plus external vendor API availability, so they cannot be fully exercised offline or purely in previews
-- Calendar constraint in adaptive rescheduling uses survey-entered routine/commute times, not the live GPS-based commute routing pipeline
-- `AlarmBehaviourLogger` writes `dismissed` alarm inference documents to Firestore and still has a `logWokeBeforeAlarm(at:)` hook, but no sleep recommendation engine reads `alarmInferences` yet. The old `SleepDurationModel.recommendedDuration(...)` adaptive scaffold was removed; current non-wearable recommendations still use `SleepDurationModel.baselineForAge(_:)`. Snooze frequency is intentionally excluded from the inference system.
+- Same-night adaptive rescheduling in `LuniferAlarm.checkAndAdaptAlarm()` still uses survey-entered routine/commute values for its calendar deadline; the initial `resolveAlarmDate()` path can use the live commute duration fetched by `CommuteManager`.
+- `AlarmBehaviourLogger` stores `scheduledWakeTime` locally when an alarm is scheduled, then writes `dismissed` and `woke_before_alarm` inference documents to Firestore and enriches training rows with adaptive reward fields when a pending decision exists. The bandit currently trains from `AdaptiveAlarmStore` local outcomes, not by replaying the Firestore `alarmInferences` collection back down to the device. Snooze frequency is intentionally excluded from adaptive reward training.
 
 ## Font Usage
 - **Libre Franklin** is a variable font (`LibreFranklin-VariableFont_wght.ttf`). Do NOT use `.custom("Libre Franklin", size:).weight(.light)` — SwiftUI cannot apply weight modifiers to variable fonts via the family-name lookup and logs a warning. Always use `Font.libreFranklin(size:)` from `Utils.swift` instead. Pass `weight: 400` for Regular.
@@ -555,12 +585,16 @@ All five iOS permission prompts are requested during the survey. None are deferr
 | 2 | CoreMotion (Motion & Fitness) | "Allow Lunifer to access your motion and fitness activity?" | Survey step 4 → 5 — fired in `advance()` when `step == 4` and status is `.notDetermined`. A `CMMotionActivityManager` is started briefly then stopped; there is no explicit `requestAuthorization()` API for CoreMotion | `Survey.swift` `advance()` |
 | 3 | AlarmKit | AlarmKit system sheet | End of survey — `handleFinish()`, after local save | `Survey.swift` `handleFinish()` via `LuniferAlarm.shared.requestAuthorization()` |
 | 4 | Notifications (UNUserNotificationCenter) | "Allow Lunifer to send you notifications?" | End of survey — `handleFinish()`, immediately after AlarmKit. Required for WakeNotification, BatteryAlarmNotification, CommuteNotification, and RestDayEventNotification — none of these fire without it | `Survey.swift` `handleFinish()` |
-| 5 | Location (Always) | "Allow Lunifer to always use your location?" | End of survey — `handleFinish()`, after notifications. Only requested when lifestyle is `student` or `commuter` | `Survey.swift` `handleFinish()` via `LocationManager.shared.requestAlwaysAuthorization()` |
+| 5 | Location (Always) | "Allow Lunifer to always use your location?" | End of survey — `handleFinish()`, after notifications. Only requested when lifestyle is `student` or `commuter` | `Survey.swift` `handleFinish()` via `LocationManager.shared.requestAlwaysAuthorizationAsync()` |
 
 **Notes:**
 - `LuniferAlarm.shared.requestAuthorization()` requests AlarmKit permission only — it is completely separate from `UNUserNotificationCenter` and does not satisfy notification permission.
 - The dashboard re-checks AlarmKit and CoreMotion authorization status on load (`checkAlarmAuthorization()`, `checkMotionAuthorization()`) and surfaces settings-redirect alerts if either was denied, but does not re-request them.
-- Location permission is currently just requested at the end of onboarding for commuter/student users. The current survey code does not add a separate custom upgrade/denied alert flow on top of the system prompt.
+- `LocationManager.requestAlwaysAuthorizationAsync()` is an `async` wrapper that suspends via `CheckedContinuation` until `locationManagerDidChangeAuthorization` fires, then returns the resulting `CLAuthorizationStatus`.
+- After the system location prompt, `handleFinish()` checks the result. If not `.authorizedAlways`, it holds `onFinish`, stores the snapshot in `pendingFinishSnapshot`, and sets `showLocationPermissionAlert = true`. The alert is attached to `LuniferSurvey`'s body.
+  - If status is `.authorizedWhenInUse`: alert shows "Allow Always" button → calls `retryAlwaysAuthorization()` which issues a second `requestAlwaysAuthorizationAsync()` (iOS shows the native "Change to Always Allow?" upgrade dialog) + "Continue Without" button.
+  - If status is `.denied`: alert shows "Open Settings" button (opens `UIApplication.openSettingsURLString`) + "Continue Without" button.
+  - Both alert paths call `onFinish?(pendingFinishSnapshot)` when resolved.
 
 ## Practical Guidance For Future Sessions
 - Do not assume `Claude.MD` is authoritative without checking code first

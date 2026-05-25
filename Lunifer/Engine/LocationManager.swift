@@ -28,6 +28,31 @@ final class LocationManager: NSObject, ObservableObject {
         manager.requestWhenInUseAuthorization()
     }
 
+    /// Async version of requestAlwaysAuthorization(). Suspends until the user
+    /// responds to the system prompt and the delegate fires, then returns the
+    /// resulting CLAuthorizationStatus. Returns immediately if the status is
+    /// already determined and no system dialog will be shown.
+    func requestAlwaysAuthorizationAsync() async -> CLAuthorizationStatus {
+        switch manager.authorizationStatus {
+        case .authorizedAlways:
+            return .authorizedAlways
+        case .denied, .restricted:
+            return manager.authorizationStatus
+        case .notDetermined, .authorizedWhenInUse:
+            break
+        @unknown default:
+            return manager.authorizationStatus
+        }
+        return await withCheckedContinuation { continuation in
+            authorizationContinuation = continuation
+            manager.requestAlwaysAuthorization()
+        }
+    }
+
+    // Stored continuation for the async authorization path.
+    // Bridged from the CLLocationManagerDelegate callback on the main queue.
+    private var authorizationContinuation: CheckedContinuation<CLAuthorizationStatus, Never>?
+
     /// Requests a single one-shot location fix. Does nothing if the user
     /// has not granted at least whenInUse authorization. The result is
     /// published on `currentCoordinate` once the fix arrives.
@@ -41,7 +66,15 @@ final class LocationManager: NSObject, ObservableObject {
 extension LocationManager: CLLocationManagerDelegate {
     func locationManagerDidChangeAuthorization(_ manager: CLLocationManager) {
         DispatchQueue.main.async { [weak self] in
-            self?.authorizationStatus = manager.authorizationStatus
+            guard let self else { return }
+            self.authorizationStatus = manager.authorizationStatus
+            // Resume any in-flight async authorization request once the user
+            // has made a choice (status is no longer .notDetermined).
+            if manager.authorizationStatus != .notDetermined,
+               let continuation = self.authorizationContinuation {
+                self.authorizationContinuation = nil
+                continuation.resume(returning: manager.authorizationStatus)
+            }
         }
     }
 

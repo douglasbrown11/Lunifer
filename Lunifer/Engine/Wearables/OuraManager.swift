@@ -196,6 +196,7 @@ final class OuraManager: NSObject, ObservableObject, ASWebAuthenticationPresenta
         AppPreferencesStore.shared.ouraLastSyncDate            = syncDate
         AppPreferencesStore.shared.ouraLatestSleepOnset        = latestOnset
         AppPreferencesStore.shared.ouraLatestWakeTime          = latestWake
+        AppPreferencesStore.shared.refreshHasWearable()
 
         isConnected           = status.connected
         recommendedSleepHours = hours
