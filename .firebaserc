@@ -1,6 +1,7 @@
 {
   "projects": {
-    "Lunifer": "lunifer-ce086"
+    "Lunifer": "lunifer-ce086",
+    "default": "lunifer-ce086"
   },
   "targets": {},
   "etags": {}
