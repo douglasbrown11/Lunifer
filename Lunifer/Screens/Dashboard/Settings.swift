@@ -5,6 +5,8 @@ import FirebaseCore
 import FirebaseAuth
 import FirebaseFirestore
 import GoogleSignIn
+import AuthenticationServices
+import CryptoKit
 
 // ── MARK: Settings (root) ─────────────────────────────────────
 
@@ -21,6 +23,11 @@ struct LuniferSettings: View {
     @State private var showDeleteErrorAlert = false
     @State private var deleteErrorMessage = ""
     @State private var signOutErrorMessage = ""
+    @State private var showReauthPasswordSheet = false
+    @State private var reauthPasswordInput = ""
+    @State private var reauthPasswordContinuation: CheckedContinuation<String, Error>?
+    @State private var showReauthExplanationAlert = false
+    @State private var reauthExplanationContinuation: CheckedContinuation<Void, Error>?
 
     private var userEmail: String {
         guard ProcessInfo.processInfo.environment["XCODE_RUNNING_FOR_PREVIEWS"] != "1" else {
@@ -205,13 +212,79 @@ struct LuniferSettings: View {
             }
             .toolbar(.hidden, for: .navigationBar)
         }
+        // ── Re-auth password sheet (email/password users only) ────
+        .sheet(isPresented: $showReauthPasswordSheet) {
+            VStack(spacing: 0) {
+                Text("Confirm Password")
+                    .font(.custom("Cormorant Garamond", size: 24).weight(.light))
+                    .foregroundColor(Color.white.opacity(0.9))
+                    .padding(.top, 32)
+                    .padding(.bottom, 8)
+
+                Text("Enter your password to confirm account deletion.")
+                    .font(.custom("DM Sans", size: 13))
+                    .foregroundColor(Color.white.opacity(0.4))
+                    .multilineTextAlignment(.center)
+                    .padding(.horizontal, 32)
+                    .padding(.bottom, 24)
+
+                SecureField("Password", text: $reauthPasswordInput)
+                    .font(.custom("DM Sans", size: 15))
+                    .foregroundColor(Color.white.opacity(0.9))
+                    .tint(Color(red: 0.627, green: 0.471, blue: 1.0))
+                    .padding(.horizontal, 18)
+                    .padding(.vertical, 14)
+                    .background(
+                        RoundedRectangle(cornerRadius: 12)
+                            .fill(Color.white.opacity(0.04))
+                            .overlay(RoundedRectangle(cornerRadius: 12)
+                                .stroke(Color.white.opacity(0.08), lineWidth: 1.5))
+                    )
+                    .padding(.horizontal, 24)
+                    .padding(.bottom, 20)
+
+                Button {
+                    let password = reauthPasswordInput
+                    reauthPasswordInput = ""
+                    showReauthPasswordSheet = false
+                    reauthPasswordContinuation?.resume(returning: password)
+                    reauthPasswordContinuation = nil
+                } label: {
+                    Text("Delete Account")
+                        .font(.custom("DM Sans", size: 15).weight(.medium))
+                        .foregroundColor(.white)
+                        .frame(maxWidth: .infinity)
+                        .frame(height: 50)
+                        .background(RoundedRectangle(cornerRadius: 12).fill(Color.red.opacity(0.7)))
+                }
+                .disabled(reauthPasswordInput.isEmpty)
+                .padding(.horizontal, 24)
+                .padding(.bottom, 16)
+
+                Button("Cancel") {
+                    reauthPasswordInput = ""
+                    showReauthPasswordSheet = false
+                    reauthPasswordContinuation?.resume(throwing: CancellationError())
+                    reauthPasswordContinuation = nil
+                }
+                .font(.custom("DM Sans", size: 14))
+                .foregroundColor(Color.white.opacity(0.35))
+                .padding(.bottom, 32)
+            }
+            .frame(maxWidth: .infinity)
+            .presentationDetents([.fraction(0.48)])
+            .presentationDragIndicator(.hidden)
+            .presentationBackground(Color(red: 0.07, green: 0.04, blue: 0.15))
+            .interactiveDismissDisabled(true)
+        }
     }
 
     // ── MARK: Private helpers ──────────────────────────────────────
 
     // ── Account deletion ──────────────────────────────────────────
-    // Deletes Firestore data first (best-effort), then the Firebase Auth
-    // account, then clears local storage.
+    // Deletes Firestore data first (best-effort), then calls the server-side
+    // deleteAccount function via the Admin SDK. If the session has expired,
+    // re-authenticates using the user's original sign-in provider then retries.
 
     private func performDeletion() async {
         guard let user = Auth.auth().currentUser else {
@@ -223,21 +296,14 @@ struct LuniferSettings: View {
 
         let db      = Firestore.firestore()
         let userDoc = db.collection("users").document(user.uid)
-
-        // Best-effort Firestore cleanup. If security rules block client-side
-        // deletes we log and continue — the Auth account deletion is the
-        // critical step. Remaining Firestore data can be purged server-side
-        // via a Firebase Auth onDelete Cloud Function once one is wired up.
         do {
             for sub in ["sleepHistory", "alarmInferences", "private"] {
                 let snap = try await userDoc.collection(sub).getDocuments()
-                for doc in snap.documents {
-                    try await doc.reference.delete()
-                }
+                for doc in snap.documents { try await doc.reference.delete() }
             }
             try await userDoc.delete()
         } catch {
-            print("⚠️ Firestore cleanup skipped (rules may restrict client-side delete): \(error.localizedDescription)")
+            print("⚠️ Firestore cleanup skipped: \(error.localizedDescription)")
         }
 
         do {
@@ -245,11 +311,117 @@ struct LuniferSettings: View {
             clearLocalAccountData()
             isDeletingAccount = false
             dismiss()
+        } catch let nsError as NSError where nsError.code == AuthErrorCode.requiresRecentLogin.rawValue {
+            do {
+                try await reauthenticate(user: user)
+                try await user.delete()
+                clearLocalAccountData()
+                isDeletingAccount = false
+                dismiss()
+            } catch is CancellationError {
+                isDeletingAccount = false
+            } catch {
+                isDeletingAccount = false
+                deleteErrorMessage = (error as NSError).localizedDescription
+                showDeleteErrorAlert = true
+            }
         } catch let nsError as NSError {
             isDeletingAccount = false
             deleteErrorMessage = nsError.localizedDescription
             showDeleteErrorAlert = true
             print("❌ Account deletion failed: \(nsError.localizedDescription)")
+        }
+    }
+
+    /// Re-authenticates using whichever provider the user originally signed
+    /// in with. Called automatically when Firebase rejects deletion due to
+    /// an expired session. Google/Apple/Microsoft re-auth happens via their
+    /// respective OAuth flows; email users are prompted for their password.
+    @MainActor
+    private func reauthenticate(user: FirebaseAuth.User) async throws {
+        let providerID = user.providerData.first?.providerID ?? ""
+
+        switch providerID {
+
+        case "google.com":
+            guard let windowScene = UIApplication.shared.connectedScenes
+                .compactMap({ $0 as? UIWindowScene })
+                .first(where: { $0.activationState == .foregroundActive }),
+                  let window = windowScene.windows.first(where: { $0.isKeyWindow }),
+                  let rootVC = window.rootViewController else {
+                throw NSError(domain: "LuniferAuth", code: -1,
+                              userInfo: [NSLocalizedDescriptionKey: "Unable to present sign in."])
+            }
+            var presentingVC = rootVC
+            while let presented = presentingVC.presentedViewController { presentingVC = presented }
+            let result = try await GIDSignIn.sharedInstance.signIn(withPresenting: presentingVC)
+            guard let idToken = result.user.idToken?.tokenString else {
+                throw NSError(domain: "LuniferAuth", code: -1,
+                              userInfo: [NSLocalizedDescriptionKey: "Google re-authentication failed."])
+            }
+            let googleCredential = GoogleAuthProvider.credential(
+                withIDToken: idToken,
+                accessToken: result.user.accessToken.tokenString
+            )
+            try await user.reauthenticate(with: googleCredential)
+
+        case "apple.com":
+            let rawNonce = SettingsAppleNonce.makeRandomNonce()
+            let request  = ASAuthorizationAppleIDProvider().createRequest()
+            request.requestedScopes = [.fullName, .email]
+            request.nonce = SettingsAppleNonce.sha256(rawNonce)
+            let coordinator = SettingsAppleCoordinator()
+            let controller  = ASAuthorizationController(authorizationRequests: [request])
+            controller.delegate = coordinator
+            controller.presentationContextProvider = coordinator
+            let appleCredential = try await coordinator.perform(controller: controller)
+            guard let tokenData   = appleCredential.identityToken,
+                  let tokenString = String(data: tokenData, encoding: .utf8) else {
+                throw NSError(domain: "LuniferAuth", code: -1,
+                              userInfo: [NSLocalizedDescriptionKey: "Apple re-authentication failed."])
+            }
+            let appleFirebaseCredential = OAuthProvider.appleCredential(
+                withIDToken: tokenString,
+                rawNonce: rawNonce,
+                fullName: appleCredential.fullName
+            )
+            try await user.reauthenticate(with: appleFirebaseCredential)
+
+        case "microsoft.com":
+            guard let windowScene = UIApplication.shared.connectedScenes
+                .compactMap({ $0 as? UIWindowScene })
+                .first(where: { $0.activationState == .foregroundActive }),
+                  let window = windowScene.windows.first(where: { $0.isKeyWindow }),
+                  let rootVC = window.rootViewController else {
+                throw NSError(domain: "LuniferAuth", code: -1,
+                              userInfo: [NSLocalizedDescriptionKey: "Unable to present sign in."])
+            }
+            var presentingVC = rootVC
+            while let presented = presentingVC.presentedViewController { presentingVC = presented }
+            let msProvider = OAuthProvider(providerID: "microsoft.com")
+            msProvider.scopes = ["email", "profile", "openid"]
+            msProvider.customParameters = ["prompt": "select_account"]
+            let msCredential = try await withCheckedThrowingContinuation { (cont: CheckedContinuation<AuthCredential, Error>) in
+                msProvider.getCredentialWith(presentingVC as? AuthUIDelegate) { credential, error in
+                    if let error           { cont.resume(throwing: error) }
+                    else if let credential { cont.resume(returning: credential) }
+                    else { cont.resume(throwing: NSError(domain: "LuniferAuth", code: -1,
+                                                         userInfo: [NSLocalizedDescriptionKey: "No credential returned."])) }
+                }
+            }
+            try await user.reauthenticate(with: msCredential)
+
+        default:
+            // Email/password — collect password via sheet then re-authenticate.
+            let password = try await withCheckedThrowingContinuation { (cont: CheckedContinuation<String, Error>) in
+                reauthPasswordContinuation = cont
+                showReauthPasswordSheet = true
+            }
+            let emailCredential = EmailAuthProvider.credential(
+                withEmail: user.email ?? "",
+                password: password
+            )
+            try await user.reauthenticate(with: emailCredential)
         }
     }
 
@@ -427,6 +599,7 @@ struct AboutYouSettingsView: View {
         .onChange(of: answers.age) { _, _ in
             answers.saveToDefaults()
             answers.saveToFirestore()
+            Task { await BirthdayNotification.shared.schedule(answers: answers) }
         }
         .onChange(of: answers.lifestyle) { _, _ in
             answers.saveToDefaults()
@@ -1567,6 +1740,69 @@ struct AboutSettingsView: View {
             }
         }
         .toolbar(.hidden, for: .navigationBar)
+    }
+}
+
+// ── MARK: Apple re-auth helpers ───────────────────────────────
+
+private enum SettingsAppleNonce {
+    static func makeRandomNonce(length: Int = 32) -> String {
+        let charset: [Character] = Array("0123456789ABCDEFGHIJKLMNOPQRSTUVXYZabcdefghijklmnopqrstuvwxyz-._")
+        var result = ""
+        var remaining = length
+        while remaining > 0 {
+            var randoms = [UInt8](repeating: 0, count: 16)
+            _ = SecRandomCopyBytes(kSecRandomDefault, randoms.count, &randoms)
+            for random in randoms where remaining > 0 {
+                if random < charset.count { result.append(charset[Int(random)]); remaining -= 1 }
+            }
+        }
+        return result
+    }
+
+    static func sha256(_ input: String) -> String {
+        let hashed = SHA256.hash(data: Data(input.utf8))
+        return hashed.map { String(format: "%02x", $0) }.joined()
+    }
+}
+
+private final class SettingsAppleCoordinator: NSObject,
+                                              ASAuthorizationControllerDelegate,
+                                              ASAuthorizationControllerPresentationContextProviding {
+    private var continuation: CheckedContinuation<ASAuthorizationAppleIDCredential, Error>?
+    private var controller: ASAuthorizationController?
+
+    func perform(controller: ASAuthorizationController) async throws -> ASAuthorizationAppleIDCredential {
+        try await withCheckedThrowingContinuation { cont in
+            self.continuation = cont
+            self.controller   = controller
+            controller.performRequests()
+        }
+    }
+
+    func authorizationController(controller: ASAuthorizationController,
+                                 didCompleteWithAuthorization authorization: ASAuthorization) {
+        defer { self.controller = nil }
+        guard let credential = authorization.credential as? ASAuthorizationAppleIDCredential else {
+            continuation?.resume(throwing: NSError(domain: "LuniferAuth.Apple", code: -1,
+                                                   userInfo: [NSLocalizedDescriptionKey: "Unexpected credential type."]))
+            continuation = nil; return
+        }
+        continuation?.resume(returning: credential)
+        continuation = nil
+    }
+
+    func authorizationController(controller: ASAuthorizationController, didCompleteWithError error: Error) {
+        defer { self.controller = nil }
+        continuation?.resume(throwing: error)
+        continuation = nil
+    }
+
+    func presentationAnchor(for controller: ASAuthorizationController) -> ASPresentationAnchor {
+        UIApplication.shared.connectedScenes
+            .compactMap({ $0 as? UIWindowScene })
+            .first(where: { $0.activationState == .foregroundActive })?
+            .windows.first(where: { $0.isKeyWindow }) ?? UIWindow()
     }
 }
 

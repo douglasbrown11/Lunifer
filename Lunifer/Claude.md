@@ -63,6 +63,7 @@ Try to avoid mechanisms that asks the user to manually provide data — this inc
 - `Notifications/WakeNotification.swift`: 1-hour-before-bedtime wake reminder notification
 - `Notifications/CommuteNotification.swift`: leave-reminder and commute-delta notifications
 - `Notifications/RestDayEventNotification.swift`: rest-day early-event reminder with notification actions
+- `Notifications/BirthdayNotification.swift`: yearly birthday notification — fires at 10 AM local time on the user's birthday with title "Happy Birthday {firstName}!". First name derived from `Auth.auth().currentUser?.displayName`. Birthday parsed from `answers.age` ("yyyy-MM-dd" format only; plain integer legacy ages are silently skipped). Scheduled on dashboard load and rescheduled automatically whenever the user changes their age in About You settings.
 - `Screens/Intro/Intro.swift`: onboarding intro flow
 - `Screens/Intro/IntroObjects.swift`: shared intro UI components
 - `Screens/SignIn/Signin.swift`: email/password + Google + Microsoft sign-in UI (`LuniferSignin` struct)
@@ -565,9 +566,6 @@ Routing and arrival target:
 
 ## Known Gaps
 - `SurveyAnswers` and `TimeValue` still live inside `Survey.swift` instead of a dedicated model file
-- `LocationManager.swift` now exposes a `static let shared` singleton, a `@Published var currentCoordinate: CLLocationCoordinate2D?`, and a `requestCurrentLocation()` method that issues a one-shot `CLLocationManager.requestLocation()` fix. Accuracy is set to `kCLLocationAccuracyHundredMeters` to save battery. Does nothing if location permission has not been granted.
-- WHOOP/Oura integrations still depend on the deployed Cloudflare Worker plus external vendor API availability, so they cannot be fully exercised offline or purely in previews
-- Same-night adaptive rescheduling in `LuniferAlarm.checkAndAdaptAlarm()` still uses survey-entered routine/commute values for its calendar deadline; the initial `resolveAlarmDate()` path can use the live commute duration fetched by `CommuteManager`.
 - `AlarmBehaviourLogger` stores `scheduledWakeTime` locally when an alarm is scheduled, then writes `dismissed` and `woke_before_alarm` inference documents to Firestore and enriches training rows with adaptive reward fields when a pending decision exists. The bandit currently trains from `AdaptiveAlarmStore` local outcomes, not by replaying the Firestore `alarmInferences` collection back down to the device. Snooze frequency is intentionally excluded from adaptive reward training.
 
 ## Font Usage

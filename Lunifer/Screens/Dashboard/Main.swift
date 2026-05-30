@@ -607,6 +607,7 @@ struct LuniferMain: View {
             BatteryAlarmNotification.shared.startMonitoring()
             LuniferAlarm.shared.startAdaptiveRescheduling()
             await WakeNotification.shared.schedule(wakeDate: calculatedAlarmDate, answers: answers)
+            await BirthdayNotification.shared.schedule(answers: answers)
             // Request alarm authorization — waits for the user to respond
             await LuniferAlarm.shared.requestAuthorization()
 
