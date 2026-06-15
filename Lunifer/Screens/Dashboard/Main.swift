@@ -69,13 +69,6 @@ struct AddedAlarm: Codable, Identifiable {
     }
 }
 
-private struct BaselineAlarmResolution {
-    let alarmDate: Date
-    let routineMinutes: Int
-    let commuteMinutes: Int
-    let firstEvent: CalendarEvent?
-}
-
 // ── MARK: Dashboard ──────────────────────────────────────────
 
 
@@ -232,158 +225,10 @@ struct LuniferMain: View {
         return f.string(from: overrideActive ? overrideTime : resolvedAlarmDate)
     }
 
-    // ── Alarm date resolution helpers ─────────────────────────
-
-    /// Returns the routine + commute buffer in seconds for synchronous callers.
-    ///
-    /// When commute auto-mode is on, reads the cached live duration from
-    /// CommuteManager (populated by resolveAlarmDate() earlier in the session).
-    /// Falls back to 30 minutes on cold start before any live fetch has run.
-    private func bufferSeconds() -> TimeInterval {
-        let routine = answers.routine.auto
-            ? 60
-            : answers.routine.hours * 60 + answers.routine.minutes
-        let commute: Int = (answers.lifestyle == "student" || answers.lifestyle == "commuter")
-            ? (answers.commute.auto
-                ? (CommuteManager.shared.currentDurationMinutes > 0
-                    ? CommuteManager.shared.currentDurationMinutes
-                    : 30)
-                : answers.commute.hours * 60 + answers.commute.minutes)
-            : 0
-        return Double(routine + commute) * 60
-    }
-
-    /// Builds a Date for today using the supplied hour and minute.
-    private func todayAt(hour: Int, minute: Int) -> Date {
-        var comps = Calendar.current.dateComponents([.year, .month, .day], from: Date())
-        comps.hour = hour; comps.minute = minute; comps.second = 0
-        return Calendar.current.date(from: comps) ?? Date()
-    }
-
-    /// Builds a Date for tomorrow using the supplied hour and minute.
-    /// Used by resolveAlarmDate() so fallback steps land on the correct calendar date
-    /// rather than today (which would already be in the past by evening).
-    private func tomorrowAt(hour: Int, minute: Int) -> Date {
-        let cal = Calendar.current
-        let tomorrow = cal.date(byAdding: .day, value: 1, to: cal.startOfDay(for: Date())) ?? Date()
-        var comps = cal.dateComponents([.year, .month, .day], from: tomorrow)
-        comps.hour = hour; comps.minute = minute; comps.second = 0
-        return cal.date(from: comps) ?? Date()
-    }
-
-    /// Resolves the best alarm date for tomorrow. The deterministic fallback
-    /// chain creates the baseline; the adaptive bandit then chooses a bounded
-    /// one-minute offset and clamps it inside the safety window.
-    @MainActor
-    private func resolveAlarmDate() async -> Date {
-        let baseline = await resolveBaselineAlarmDate()
-        let context = AlarmContextBuilder.build(
-            answers: answers,
-            baselineAlarm: baseline.alarmDate,
-            routineMinutes: baseline.routineMinutes,
-            commuteMinutes: baseline.commuteMinutes,
-            firstEvent: baseline.firstEvent
-        )
-
-        let oneHour: TimeInterval = 60 * 60
-        let latestAllowedAlarm = baseline.firstEvent.map {
-            $0.startDate.addingTimeInterval(-Double(baseline.routineMinutes + baseline.commuteMinutes) * 60)
-        } ?? baseline.alarmDate.addingTimeInterval(oneHour)
-
-        let safetyWindow = AdaptiveAlarmSafetyWindow(
-            earliestAllowedAlarm: baseline.alarmDate.addingTimeInterval(-oneHour),
-            latestAllowedAlarm: max(
-                baseline.alarmDate.addingTimeInterval(-oneHour),
-                latestAllowedAlarm
-            )
-        )
-
-        let decision = AlarmOffsetBandit.chooseDecision(
-            baselineAlarm: baseline.alarmDate,
-            context: context,
-            safetyWindow: safetyWindow,
-            outcomes: AdaptiveAlarmStore.shared.recentOutcomes()
-        )
-        AdaptiveAlarmStore.shared.savePendingDecision(decision)
-
-        return decision.finalAlarm
-    }
-
-    /// Resolves the deterministic baseline alarm for tomorrow using a 4-step
-    /// fallback chain.
-    /// Asynchronous because steps 1-2 may require a calendar fetch and, when
-    /// commute auto-mode is on, a live MKDirections fetch for accurate buffer math.
-    @MainActor
-    private func resolveBaselineAlarmDate() async -> BaselineAlarmResolution {
-        let cal = Calendar.current
-        let tomorrow = cal.date(byAdding: .day, value: 1, to: cal.startOfDay(for: Date()))!
-        let tomorrowWeekday = cal.component(.weekday, from: tomorrow)
-
-        // Compute the wake-up buffer (routine + commute) asynchronously so that
-        // auto-commute users get a live MKDirections duration rather than the
-        // 30-minute placeholder that bufferSeconds() returns pre-fetch.
-        let routineMinutes = answers.routine.auto
-            ? 60
-            : answers.routine.hours * 60 + answers.routine.minutes
-        let commuteMinutes: Int
-        if answers.lifestyle == "student" || answers.lifestyle == "commuter" {
-            if answers.commute.auto {
-                let live = await CommuteManager.fetchLiveDuration(answers: answers)
-                // Cache in the shared manager so bufferSeconds() (and the commute
-                // card) can read it synchronously for the rest of this session.
-                CommuteManager.shared.currentDurationMinutes = live
-                commuteMinutes = live
-            } else {
-                commuteMinutes = answers.commute.hours * 60 + answers.commute.minutes
-            }
-        } else {
-            commuteMinutes = 0
-        }
-        let buffer = Double(routineMinutes + commuteMinutes) * 60
-
-        // Step 1: Live calendar event tomorrow
-        await CalendarManager.shared.fetchEvents()
-        if let event = CalendarManager.shared.firstEventTomorrow {
-            return BaselineAlarmResolution(
-                alarmDate: event.startDate.addingTimeInterval(-buffer),
-                routineMinutes: routineMinutes,
-                commuteMinutes: commuteMinutes,
-                firstEvent: event
-            )
-        }
-
-        // Step 2: Historical average first-event time for this weekday
-        if let typical = CalendarManager.shared.typicalFirstEventTime(forWeekday: tomorrowWeekday) {
-            let alarm = tomorrowAt(hour: typical.hour, minute: typical.minute)
-                .addingTimeInterval(-buffer)
-            return BaselineAlarmResolution(
-                alarmDate: alarm,
-                routineMinutes: routineMinutes,
-                commuteMinutes: commuteMinutes,
-                firstEvent: nil
-            )
-        }
-
-        // Step 3: Historical average wake time for this weekday
-        // Wake times already reflect how early the user needed to be up,
-        // so routine + commute are not subtracted again.
-        if let avgWake = SleepHistoryStore.shared.averageWakeTime(forWeekday: tomorrowWeekday) {
-            return BaselineAlarmResolution(
-                alarmDate: tomorrowAt(hour: avgWake.hour, minute: avgWake.minute),
-                routineMinutes: routineMinutes,
-                commuteMinutes: commuteMinutes,
-                firstEvent: nil
-            )
-        }
-
-        // Step 4: 8 AM hard fallback (cold-start, no data yet)
-        return BaselineAlarmResolution(
-            alarmDate: tomorrowAt(hour: 8, minute: 0).addingTimeInterval(-buffer),
-            routineMinutes: routineMinutes,
-            commuteMinutes: commuteMinutes,
-            firstEvent: nil
-        )
-    }
+    // Alarm-date resolution now lives on LuniferAlarm (Engine/Alarm.swift) so it
+    // can run without the dashboard on screen (e.g. self-rescheduling). The
+    // dashboard calls LuniferAlarm.shared.resolveAlarmDate(answers:targetDay:)
+    // and routineCommuteBufferSeconds(answers:).
 
     // ── Rest period helpers ───────────────────────────────────
 
@@ -599,9 +444,13 @@ struct LuniferMain: View {
             // when running inside the Xcode preview canvas.
             guard !isRunningPreview else { return }
 
+            // Enable morning-routine estimation for commuters/students (no-op otherwise).
+            MorningRoutineEstimator.shared.configure(for: answers)
+
             // Resolve the alarm date before starting any services so that the
             // wake notification and commute polling all use the same target.
-            resolvedAlarmDate = await resolveAlarmDate()
+            let tomorrow = Calendar.current.date(byAdding: .day, value: 1, to: Calendar.current.startOfDay(for: Date())) ?? Date()
+            resolvedAlarmDate = await LuniferAlarm.shared.resolveAlarmDate(answers: answers, targetDay: tomorrow)
 
             await SleepTracker.shared.startTracking()
             BatteryAlarmNotification.shared.startMonitoring()
@@ -654,7 +503,7 @@ struct LuniferMain: View {
             // target; fall back to wake time + buffer when no event is found.
             if isCommuterUser && answers.wakeDays.contains(weekdayID(for: Date())) {
                 let arrival = CalendarManager.shared.firstEventTomorrow?.startDate
-                    ?? resolvedAlarmDate.addingTimeInterval(bufferSeconds())
+                    ?? resolvedAlarmDate.addingTimeInterval(LuniferAlarm.shared.routineCommuteBufferSeconds(answers: answers))
                 CommuteManager.shared.startPolling(answers: answers, arrivalDate: arrival)
             }
 
@@ -693,6 +542,7 @@ struct LuniferMain: View {
             guard !isRunningPreview else { return }
             checkAlarmAuthorization()
             checkMotionAuthorization()
+            MorningRoutineEstimator.shared.refresh(answers: answers)
             guard luniferEnabled && !overrideActive else { return }
             Task { await LuniferAlarm.shared.checkAlarmAgainstCalendar() }
         }
@@ -1434,6 +1284,7 @@ struct AddAlarmSheet: View {
                             }
                             .padding(.horizontal, 20)
                             .padding(.vertical, 16)
+                            .contentShape(Rectangle())
                         }
                         .buttonStyle(.plain)
 
@@ -1909,6 +1760,7 @@ struct EditAddedAlarmSheet: View {
                             }
                             .padding(.horizontal, 20)
                             .padding(.vertical, 16)
+                            .contentShape(Rectangle())
                         }
                         .buttonStyle(.plain)
 

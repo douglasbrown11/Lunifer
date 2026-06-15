@@ -69,7 +69,7 @@ struct LuniferSettings: View {
                             NavigationLink {
                                 AboutYouSettingsView(answers: $answers)
                             } label: {
-                                settingsNavRow(title: "About You")
+                                settingsNavRow(title: "My Profile")
                             }
 
                             NavigationLink {
@@ -388,21 +388,11 @@ struct LuniferSettings: View {
             try await user.reauthenticate(with: appleFirebaseCredential)
 
         case "microsoft.com":
-            guard let windowScene = UIApplication.shared.connectedScenes
-                .compactMap({ $0 as? UIWindowScene })
-                .first(where: { $0.activationState == .foregroundActive }),
-                  let window = windowScene.windows.first(where: { $0.isKeyWindow }),
-                  let rootVC = window.rootViewController else {
-                throw NSError(domain: "LuniferAuth", code: -1,
-                              userInfo: [NSLocalizedDescriptionKey: "Unable to present sign in."])
-            }
-            var presentingVC = rootVC
-            while let presented = presentingVC.presentedViewController { presentingVC = presented }
             let msProvider = OAuthProvider(providerID: "microsoft.com")
             msProvider.scopes = ["email", "profile", "openid"]
             msProvider.customParameters = ["prompt": "select_account"]
             let msCredential = try await withCheckedThrowingContinuation { (cont: CheckedContinuation<AuthCredential, Error>) in
-                msProvider.getCredentialWith(presentingVC as? AuthUIDelegate) { credential, error in
+                msProvider.getCredentialWith(nil) { credential, error in
                     if let error           { cont.resume(throwing: error) }
                     else if let credential { cont.resume(returning: credential) }
                     else { cont.resume(throwing: NSError(domain: "LuniferAuth", code: -1,
@@ -556,7 +546,7 @@ struct AboutYouSettingsView: View {
                             .frame(width: 36, height: 36)
                     }
                     Spacer()
-                    Text("About you")
+                    Text("My Profile")
                         .font(.custom("Cormorant Garamond", size: 28).weight(.light))
                         .foregroundColor(Color.white.opacity(0.9))
                     Spacer()
@@ -604,6 +594,8 @@ struct AboutYouSettingsView: View {
         .onChange(of: answers.lifestyle) { _, _ in
             answers.saveToDefaults()
             answers.saveToFirestore()
+            // Turn morning-routine estimation on/off with the lifestyle change.
+            MorningRoutineEstimator.shared.configure(for: answers)
         }
         .onChange(of: answers.calendar) { _, _ in
             answers.saveToDefaults()
@@ -783,6 +775,11 @@ struct AboutYouSettingsView: View {
 
                     case "calendar":
                         VStack(spacing: 8) {
+                            Text("Which calendar should Lunifer check?")
+                                .font(.custom("DM Sans", size: 13))
+                                .foregroundColor(Color.white.opacity(0.45))
+                                .frame(maxWidth: .infinity, alignment: .leading)
+                                .padding(.horizontal, 4)
                             ForEach([
                                 ("apple", "Apple Calendar"),
                                 ("google", "Google Calendar"),
@@ -836,7 +833,8 @@ struct AboutYouSettingsView: View {
                     case "routine":
                         TimeScalePicker(
                             value: $answers.routine,
-                            autoLabel: "Let Lunifer figure this out"
+                            autoLabel: "Let Lunifer figure this out",
+                            showAutoToggle: false
                         )
 
                     case "commuteMode":

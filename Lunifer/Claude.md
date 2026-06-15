@@ -54,6 +54,7 @@ Try to avoid mechanisms that asks the user to manually provide data — this inc
 - `Engine/Alarm.swift`: AlarmKit scheduling / monitoring
 - `Engine/AdaptiveAlarm/*`: adaptive-alarm context building, smooth contextual bandit offset scoring, safety-window types, reward scoring, and local decision/outcome storage
 - `Engine/CommuteManager.swift`: live commute routing, 5-minute polling, background refresh, and duration persistence
+- `Engine/MorningRoutine/MorningRoutineEstimator.swift`: passively estimates actual morning routine length (wake → departure) for `student`/`commuter` lifestyles only, on wake days only. Uses CoreMotion historical activity to detect departure, stores a rolling window (20) of wake-day samples, and recommends a routine change only when the median of ≥12 samples differs from the manual `answers.routine` by more than 10 minutes. Never overwrites the manual value on its own — produces a `RoutineRecommendation` via `recommendation(currentRoutineMinutes:)` for the UI to act on. Now wired in: `configure(for:)` is called on dashboard load (`Main.swift` `.task`) and on lifestyle change (`AboutYouSettingsView` `onChange(of: answers.lifestyle)`) so it toggles on/off with lifestyle; `handleWakeDetected(at:answers:)` is called from all three `SleepTracker` wake paths (retro, live, manual); `refresh(answers:)` is called on app-active (`Main.swift` `didBecomeActive`) and from the sleep background task; `clearStoredData()` (nonisolated static) is called from `AccountDataManager.clearLocalSessionDataOnSignOut()`. `handleWakeDetected`/`refresh` call `configure(for:)` internally so collection still works on a cold background relaunch. Its UserDefaults keys are self-contained in the file (same pattern as `SleepTrackingStore`/`AdaptiveAlarmStore`), not in `AppPreferencesStore.Keys`. **Remaining:** no UI yet surfaces the recommendation (nothing calls `recommendation(...)` / writes an accepted value into `answers.routine`).
 - `Engine/Wearables/WhoopManager.swift`: WHOOP OAuth + sleep-need fetch / refresh logic
 - `Engine/Wearables/OuraManager.swift`: Oura Ring OAuth + sleep-need fetch / refresh logic
 - `Engine/Wearables/WearableRecommendationStore.swift`: shared wearable source resolver used by recommendation UI, bedtime display, and alarm adaptation to select an active wearable before falling back to survey sleep answers
@@ -103,7 +104,7 @@ Current survey step order in `Survey.swift`:
 3. Wake days
 4. Calendar
 5. Sleep duration / WHOOP sleep recommendation
-6. Morning routine duration, skipped for `not_working`
+6. Morning routine duration, skipped for `not_working` — manual entry only; the "let Lunifer figure this out" auto toggle has been removed (Lunifer does not learn routine duration)
 7. Commute transport mode (drive/transit/walk/bike), only for `student` or `commuter` — duration is NOT asked; CommuteManager provides live MKDirections routing with 30-min fallback
 
 Notes:
@@ -147,8 +148,8 @@ Home and work location tracking have been removed from the app. There is no save
 The commute routing origin is always the user's live GPS fix (`LocationManager.shared.currentCoordinate`). If no GPS fix is available, routing falls back to the survey/default commute duration.
 
 Commute buffer:
-- `resolveAlarmDate()` fetches live commute duration via `CommuteManager.fetchLiveDuration(answers:)` when `commute.auto == true` and caches the result in `CommuteManager.shared.currentDurationMinutes`
-- `bufferSeconds()` reads this cached value for synchronous callers; falls back to 30 min before the first live fetch
+- `LuniferAlarm.resolveBaselineAlarmDate(answers:targetDay:)` fetches live commute duration via `CommuteManager.fetchLiveDuration(answers:)` when `commute.auto == true` and caches the result in `CommuteManager.shared.currentDurationMinutes`
+- `LuniferAlarm.routineCommuteBufferSeconds(answers:)` reads this cached value for synchronous callers; falls back to 30 min before the first live fetch
 - Commute polling interval is 5 minutes (foreground Timer and BGAppRefreshTask both use 5-min windows)
 
 ## Dashboard Status
@@ -174,9 +175,9 @@ Commute buffer:
 - Persists added alarms as JSON in `UserDefaults` key `addedAlarms`
 
 Alarm scheduling:
-- `resolveBaselineAlarmDate()` runs the deterministic 4-step fallback chain: (1) first calendar event tomorrow, (2) historical average first-event time for that weekday, (3) historical average wake time for that weekday, (4) 8 AM hard fallback
-- All baseline steps correctly target tomorrow's calendar date via `tomorrowAt(hour:minute:)`
-- `resolveAlarmDate()` wraps that baseline with `AlarmContextBuilder.build(...)`, `AlarmOffsetBandit.chooseDecision(...)`, and an `AdaptiveAlarmSafetyWindow`, then saves the pending decision in `AdaptiveAlarmStore.shared`
+- Alarm-date resolution now lives on `LuniferAlarm` (`Engine/Alarm.swift`), not the dashboard view, so it can run with no view on screen. `LuniferAlarm.resolveBaselineAlarmDate(answers:targetDay:)` runs the deterministic 4-step fallback chain: (1) first calendar event on the target day, (2) historical average first-event time for that weekday, (3) historical average wake time for that weekday, (4) 8 AM hard fallback
+- Baseline steps target the supplied `targetDay`'s calendar date via the private `dateOn(_:hour:minute:)` helper (the dashboard passes tomorrow). First-event lookup uses `CalendarManager.shared.events(for:)` filtered to non-all-day
+- `LuniferAlarm.decideAlarm(from:answers:)` wraps that baseline with `AlarmContextBuilder.build(...)`, `AlarmOffsetBandit.chooseDecision(...)`, and an `AdaptiveAlarmSafetyWindow`, then saves the pending decision in `AdaptiveAlarmStore.shared`; `LuniferAlarm.resolveAlarmDate(answers:targetDay:)` is the async convenience combining both. The dashboard `.task` calls `LuniferAlarm.shared.resolveAlarmDate(answers:targetDay:)` with tomorrow
 - The bandit chooses one-minute offsets in `[-60, +60]`; the safety window clamps the result to no earlier than `baseline - 1 hour` and no later than the earliest event deadline or `baseline + 1 hour` when no event deadline exists
 - After `resolveAlarmDate()` resolves and AlarmKit authorization is confirmed, the alarm is scheduled automatically via `LuniferAlarm.shared.scheduleAlarm(for: resolvedAlarmDate, ...)`; there is no silent no-op on launch
 - Wake days affect both rest-period handling and whether the alarm is active
@@ -273,7 +274,7 @@ Sound playback is implemented in `AlarmScreen.swift` via `AVFoundation`. When th
 - Age
 - Lifestyle
 - Calendar
-- Morning Routine (hidden for `not_working` lifestyle; uses `TimeScalePicker` bound to `answers.routine`)
+- Morning Routine (hidden for `not_working` lifestyle; uses `TimeScalePicker` bound to `answers.routine`, manual-only — passed `showAutoToggle: false` so there is no auto/learn option)
 - Commute Type (drive/transit/walk/bike; shown only for `student` or `commuter` lifestyle; bound to `answers.commuteMode`)
 
 When the user changes their lifestyle **to** `"student"` or `"commuter"` from any non-commuter value (`"wfh"` or `"not_working"`), `AboutYouSettingsView` intercepts the tap and instead opens `CommuteTypeRequiredSheet` (a non-dismissable `.sheet` with `.interactiveDismissDisabled(true)`). The sheet shows the same four transport-mode tiles (drive/transit/walk/bike) used in the survey's commute step. The user cannot exit the sheet without selecting a mode and tapping "Confirm →". On confirm, `answers.lifestyle` and `answers.commuteMode` are set together and persisted via their `onChange` handlers. State variables `showCommuteTypeSheet`, `pendingLifestyle`, and `pendingCommuteMode` on `AboutYouSettingsView` drive this flow. Switching between `"student"` and `"commuter"` (both already commuter users) skips the sheet and updates lifestyle directly.
@@ -321,7 +322,8 @@ Not currently present:
 - `CalendarManager` can request EventKit access and fetch today / upcoming events
 - `CalendarManager.firstEventTomorrow` is now consumed end-to-end: `resolveAlarmDate()` uses it as the primary alarm target (step 1), and its title is passed as `eventTitle` to `scheduleAlarm`
 - Alarm calculation starts from a calendar-driven baseline: live event -> historical pattern -> historical wake -> 8 AM fallback
-- Final alarm timing is now adaptive: `resolveAlarmDate()` applies the safety-constrained smooth contextual bandit offset from `AlarmOffsetBandit` before scheduling the main alarm
+- Final alarm timing is now adaptive: `resolveAlarmDate(answers:targetDay:)` applies the safety-constrained smooth contextual bandit offset from `AlarmOffsetBandit` before scheduling the main alarm
+- **Self-perpetuation:** when the main alarm is dismissed, `LuniferAlarm.stopAlarm()` clears any manual override and calls `scheduleNextWakeAlarm(answers:)`, which finds the next wake day via `nextWakeDay(after:answers:)`, resolves + schedules that day's alarm, and re-arms the wake reminder — so the alarm keeps running day to day without the user reopening the app (rest days are skipped because it targets the next *wake* day, which may be several days out). Added-alarm dismissals do not trigger this. NOTE: this relies on `stopAlarm()` actually running on dismissal; a future evening silent-push backstop is still recommended for full reliability when the app isn't brought to the foreground.
 
 ## Design / UI Notes
 - The app uses a dark purple visual style
@@ -544,7 +546,7 @@ Both managers use `https://lunifer-whoop.dougiebrown516.workers.dev` as `Backend
 - `Main.swift`:
   - `isCommuterUser` — true when lifestyle is `"student"` or `"commuter"`
   - `shouldShowCommuteCard` — true when: user is a commuter, today is a wake day, `CalendarManager.shared.todayEvents.first` exists, and current time is between alarm fire time and that event's `startDate`. Card is never shown if there are no calendar events today.
-  - Commute polling started in `.task` via `CommuteManager.shared.startPolling(answers:arrivalDate:)`; arrival target is `CalendarManager.shared.firstEventTomorrow?.startDate` when available, otherwise `resolvedAlarmDate + bufferSeconds()`
+  - Commute polling started in `.task` via `CommuteManager.shared.startPolling(answers:arrivalDate:)`; arrival target is `CalendarManager.shared.firstEventTomorrow?.startDate` when available, otherwise `resolvedAlarmDate + LuniferAlarm.shared.routineCommuteBufferSeconds(answers:)`
   - `CommuteStatusCard` (defined in `CommuteDashboard.swift`) is injected into `alarmPage` below the added alarm card when `shouldShowCommuteCard && !alarmExpanded`
 
 ### Routing Implementation
@@ -561,10 +563,11 @@ Both managers use `https://lunifer-whoop.dougiebrown516.workers.dev` as `Backend
 
 Routing and arrival target:
 - `resolveAlarmDate()` fetches live commute duration via `CommuteManager.fetchLiveDuration(answers:)` when `commute.auto == true`, caching the result in `CommuteManager.shared.currentDurationMinutes` for sync callers
-- `bufferSeconds()` reads `CommuteManager.shared.currentDurationMinutes` when auto-commute is on; falls back to 30 min on cold start (before any live fetch)
-- `startPolling(arrivalDate:)` is passed `CalendarManager.shared.firstEventTomorrow?.startDate` when available, falling back to `resolvedAlarmDate + bufferSeconds()`
+- `LuniferAlarm.routineCommuteBufferSeconds(answers:)` reads `CommuteManager.shared.currentDurationMinutes` when auto-commute is on; falls back to 30 min on cold start (before any live fetch)
+- `startPolling(arrivalDate:)` is passed `CalendarManager.shared.firstEventTomorrow?.startDate` when available, falling back to `resolvedAlarmDate + LuniferAlarm.shared.routineCommuteBufferSeconds(answers:)`
 
 ## Known Gaps
+- `Engine/MorningRoutine/MorningRoutineEstimator.swift` is wired for data collection and lifestyle on/off, but **no UI surfaces its recommendation yet**. The remaining work is a dashboard/settings prompt that calls `recommendation(currentRoutineMinutes:)`, shows the suggested median when non-nil, and on accept writes the value into `answers.routine` (then calls `acknowledgeAcceptedRecommendation()`), or on decline calls `dismissRecommendation(suggestedMinutes:)`.
 - `SurveyAnswers` and `TimeValue` still live inside `Survey.swift` instead of a dedicated model file
 - `AlarmBehaviourLogger` stores `scheduledWakeTime` locally when an alarm is scheduled, then writes `dismissed` and `woke_before_alarm` inference documents to Firestore and enriches training rows with adaptive reward fields when a pending decision exists. The bandit currently trains from `AdaptiveAlarmStore` local outcomes, not by replaying the Firestore `alarmInferences` collection back down to the device. Snooze frequency is intentionally excluded from adaptive reward training.
 
