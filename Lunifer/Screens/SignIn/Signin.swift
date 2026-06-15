@@ -475,14 +475,10 @@ struct LuniferSignin: View {
     }
 
     // ── MARK: Microsoft sign-in ──────────────────────────────
-    // SETUP REQUIRED before this works:
-    //   1. Firebase Console → Authentication → Sign-in method → Add provider → Microsoft
-    //      Paste in your Azure Application (client) ID and set the redirect URI.
-    //   2. Azure Portal → App registrations → New registration
-    //      • Supported account types: "Accounts in any org + personal Microsoft accounts"
-    //      • Redirect URI: the custom scheme Firebase gives you (e.g. msauth.<bundle-id>://auth)
-    //      • Add API permission: Calendars.Read (Microsoft Graph, Delegated)
-    //   3. In Azure, copy the Application (client) ID into Firebase Console.
+    // Passes nil as the UIDelegate so Firebase uses ASWebAuthenticationSession
+    // (ephemeral, isolated) rather than SFSafariViewController. This avoids
+    // iOS ITP storage partitioning on firebaseapp.com which caused the
+    // "missing initial state / sessionStorage" error on older SDK versions.
 
     private func handleMicrosoftSignIn() {
         guard agreedToTerms else {
@@ -493,38 +489,22 @@ struct LuniferSignin: View {
             loading = true
             errorMessage = nil
 
-            guard let windowScene = UIApplication.shared.connectedScenes
-                .compactMap({ $0 as? UIWindowScene })
-                .first(where: { $0.activationState == .foregroundActive }),
-                  let window = windowScene.windows.first(where: { $0.isKeyWindow }),
-                  let rootVC = window.rootViewController else {
-                errorMessage = "Unable to present sign in. Please try again."
-                loading = false
-                return
-            }
-            var presentingVC = rootVC
-            while let presented = presentingVC.presentedViewController {
-                presentingVC = presented
-            }
-
             let provider = OAuthProvider(providerID: "microsoft.com")
             provider.scopes = ["email", "profile", "openid"]
-            // prompt=select_account forces the account picker even if already signed in
             provider.customParameters = ["prompt": "select_account"]
 
             do {
-                // Firebase presents Microsoft's OAuth web page via ASWebAuthenticationSession.
-                // The callback fires after the user signs in or cancels.
                 let credential = try await withCheckedThrowingContinuation { (continuation: CheckedContinuation<AuthCredential, Error>) in
-                    provider.getCredentialWith(presentingVC as? AuthUIDelegate) { credential, error in
+                    // Passing nil forces ASWebAuthenticationSession instead of
+                    // SFSafariViewController, sidestepping the ITP sessionStorage issue.
+                    provider.getCredentialWith(nil) { credential, error in
                         if let error {
                             continuation.resume(throwing: error)
                         } else if let credential {
                             continuation.resume(returning: credential)
                         } else {
                             continuation.resume(throwing: NSError(
-                                domain: "LuniferSignin",
-                                code: -1,
+                                domain: "LuniferSignin", code: -1,
                                 userInfo: [NSLocalizedDescriptionKey: "No credential returned."]
                             ))
                         }
