@@ -221,21 +221,28 @@ struct TimeScalePicker: View {
     @Binding var value: TimeValue
     let autoLabel: String
     let hourRange: ClosedRange<Int>
+    /// When false, the "let Lunifer figure this out" auto toggle is hidden and
+    /// the hours/minutes wheels are always shown. Used by the morning-routine
+    /// picker, which is manual-only (Lunifer does not learn routine duration).
+    let showAutoToggle: Bool
 
     init(
         value: Binding<TimeValue>,
         autoLabel: String,
-        hourRange: ClosedRange<Int> = 0...5
+        hourRange: ClosedRange<Int> = 0...5,
+        showAutoToggle: Bool = true
     ) {
         self._value = value
         self.autoLabel = autoLabel
         self.hourRange = hourRange
+        self.showAutoToggle = showAutoToggle
     }
 
     var body: some View {
         VStack(spacing: 0) {
 
             // Auto toggle — mirrors the .auto-toggle div in React
+            if showAutoToggle {
             HStack(spacing: 12) {
                 Toggle("", isOn: $value.auto)
                     .labelsHidden()
@@ -266,9 +273,10 @@ struct TimeScalePicker: View {
                     )
             )
             .animation(.easeInOut(duration: 0.2), value: value.auto)
+            }
 
             // Hours + minutes scroll pickers
-            if !value.auto {
+            if !value.auto || !showAutoToggle {
                 HStack(spacing: 0) {
                     Spacer()
 
@@ -314,6 +322,13 @@ struct TimeScalePicker: View {
             }
         }
         .animation(.easeInOut(duration: 0.3), value: value.auto)
+        .onAppear {
+            // Routine no longer offers an auto/learn option. When the toggle is
+            // hidden, force a concrete manual value so downstream alarm math uses
+            // the entered duration rather than the 60-minute auto fallback —
+            // this also migrates any legacy answers that stored auto == true.
+            if !showAutoToggle && value.auto { value.auto = false }
+        }
     }
 }
 
@@ -949,7 +964,8 @@ struct LuniferSurvey: View {
                     .padding(.bottom, 16)
 
                 TimeScalePicker(value: $answers.routine,
-                                autoLabel: "Not sure — let Lunifer figure this out")
+                                autoLabel: "Not sure — let Lunifer figure this out",
+                                showAutoToggle: false)
                 .padding(.bottom, 24)
                 .padding(.horizontal, 40)
             }

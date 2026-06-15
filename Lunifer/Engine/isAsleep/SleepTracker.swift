@@ -161,6 +161,12 @@ final class SleepTracker: ObservableObject {
         // won't last until their alarm
         await BatteryAlarmNotification.shared.checkAndWarnIfNeeded()
 
+        // Resolve any armed morning-routine session — the user's departure may
+        // have happened while the app was suspended.
+        if let answers = SurveyAnswers.loadFromDefaults() {
+            MorningRoutineEstimator.shared.refresh(answers: answers)
+        }
+
         // Tell iOS we're done
         task.setTaskCompleted(success: true)
         print("✅ Background sleep analysis completed")
@@ -280,6 +286,9 @@ final class SleepTracker: ObservableObject {
                     wake: wake
                 )
                 LuniferAlarm.shared.recordWokeBeforeAlarmIfNeeded(at: wake)
+                if let answers = SurveyAnswers.loadFromDefaults() {
+                    MorningRoutineEstimator.shared.handleWakeDetected(at: wake, answers: answers)
+                }
 
                 logSleepEvent(type: "retro_sleep_onset", at: onset)
                 logSleepEvent(type: "retro_wake", at: wake)
@@ -359,6 +368,9 @@ final class SleepTracker: ObservableObject {
                     )
                     if let wake = estimatedWakeTime {
                         LuniferAlarm.shared.recordWokeBeforeAlarmIfNeeded(at: wake)
+                        if let answers = SurveyAnswers.loadFromDefaults() {
+                            MorningRoutineEstimator.shared.handleWakeDetected(at: wake, answers: answers)
+                        }
                     }
                 }
                 consecutiveAsleepCount = 0
@@ -442,6 +454,9 @@ final class SleepTracker: ObservableObject {
                 wake: now
             )
             LuniferAlarm.shared.recordWokeBeforeAlarmIfNeeded(at: now)
+            if let answers = SurveyAnswers.loadFromDefaults() {
+                MorningRoutineEstimator.shared.handleWakeDetected(at: now, answers: answers)
+            }
         }
     }
 

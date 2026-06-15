@@ -22,6 +22,17 @@ struct LuniferAlarmMetadata: AlarmMetadata {
     var commuteMinutes: Int          // How long their commute takes
 }
 
+/// Result of the deterministic baseline alarm resolution (before the adaptive
+/// bandit offset is applied). Lives here because LuniferAlarm now owns the
+/// resolution logic so it can run without any dashboard view on screen — e.g.
+/// when self-rescheduling from stopAlarm().
+struct BaselineAlarmResolution {
+    let alarmDate: Date
+    let routineMinutes: Int
+    let commuteMinutes: Int
+    let firstEvent: CalendarEvent?
+}
+
 // ─────────────────────────────────────────────────────────────
 // SECTION 2: THE MAIN ALARM CLASS
 // ─────────────────────────────────────────────────────────────
@@ -416,6 +427,190 @@ class LuniferAlarm: ObservableObject {
     }
 
     // ─────────────────────────────────────────────────────────
+    // SECTION 4c: ALARM DATE RESOLUTION  (moved from LuniferMain)
+    // ─────────────────────────────────────────────────────────
+    // Resolves the wake time for a given calendar day via the
+    // deterministic 4-step fallback chain, then applies the adaptive
+    // bandit offset inside a safety window. Lives on the engine (not
+    // the dashboard view) so it can run with no view on screen — e.g.
+    // self-rescheduling the next wake day from stopAlarm().
+
+    /// Routine + commute buffer (seconds) for synchronous callers. Reads the
+    /// cached live commute duration when auto-commute is on; 30-min fallback
+    /// before the first live fetch has run.
+    func routineCommuteBufferSeconds(answers: SurveyAnswers) -> TimeInterval {
+        let routine = answers.routine.auto
+            ? 60
+            : answers.routine.hours * 60 + answers.routine.minutes
+        let commute: Int = (answers.lifestyle == "student" || answers.lifestyle == "commuter")
+            ? (answers.commute.auto
+                ? (CommuteManager.shared.currentDurationMinutes > 0
+                    ? CommuteManager.shared.currentDurationMinutes
+                    : 30)
+                : answers.commute.hours * 60 + answers.commute.minutes)
+            : 0
+        return Double(routine + commute) * 60
+    }
+
+    /// The next calendar day (start-of-day) after `referenceDay` that is one of
+    /// the user's wake days, or nil if none falls within the next 7 days.
+    func nextWakeDay(after referenceDay: Date, answers: SurveyAnswers) -> Date? {
+        let cal = Calendar.current
+        let ids = ["sun", "mon", "tue", "wed", "thu", "fri", "sat"]
+        for offset in 1...7 {
+            guard let day = cal.date(byAdding: .day, value: offset, to: cal.startOfDay(for: referenceDay)) else { continue }
+            let id = ids[cal.component(.weekday, from: day) - 1]
+            if answers.wakeDays.contains(id) { return day }
+        }
+        return nil
+    }
+
+    /// Builds a Date on `day` with the supplied hour/minute.
+    private func dateOn(_ day: Date, hour: Int, minute: Int) -> Date {
+        let cal = Calendar.current
+        var comps = cal.dateComponents([.year, .month, .day], from: day)
+        comps.hour = hour; comps.minute = minute; comps.second = 0
+        return cal.date(from: comps) ?? day
+    }
+
+    /// Resolves the deterministic baseline alarm for `targetDay` using the
+    /// 4-step fallback chain: live calendar event → historical event pattern →
+    /// historical wake average → 8 AM. Async because it may fetch calendar
+    /// events and a live commute duration.
+    func resolveBaselineAlarmDate(answers: SurveyAnswers, targetDay: Date) async -> BaselineAlarmResolution {
+        let cal = Calendar.current
+        let day = cal.startOfDay(for: targetDay)
+        let weekday = cal.component(.weekday, from: day)
+
+        let routineMinutes = answers.routine.auto
+            ? 60
+            : answers.routine.hours * 60 + answers.routine.minutes
+        let commuteMinutes: Int
+        if answers.lifestyle == "student" || answers.lifestyle == "commuter" {
+            if answers.commute.auto {
+                let live = await CommuteManager.fetchLiveDuration(answers: answers)
+                // Cache so routineCommuteBufferSeconds() and the commute card can
+                // read it synchronously for the rest of the session.
+                CommuteManager.shared.currentDurationMinutes = live
+                commuteMinutes = live
+            } else {
+                commuteMinutes = answers.commute.hours * 60 + answers.commute.minutes
+            }
+        } else {
+            commuteMinutes = 0
+        }
+        let buffer = Double(routineMinutes + commuteMinutes) * 60
+
+        // Step 1: Live calendar event on the target day
+        await CalendarManager.shared.fetchEvents()
+        let firstEvent = CalendarManager.shared.events(for: day)
+            .filter { !$0.isAllDay }
+            .sorted { $0.startDate < $1.startDate }
+            .first
+        if let event = firstEvent {
+            return BaselineAlarmResolution(
+                alarmDate: event.startDate.addingTimeInterval(-buffer),
+                routineMinutes: routineMinutes,
+                commuteMinutes: commuteMinutes,
+                firstEvent: event
+            )
+        }
+
+        // Step 2: Historical average first-event time for this weekday
+        if let typical = CalendarManager.shared.typicalFirstEventTime(forWeekday: weekday) {
+            return BaselineAlarmResolution(
+                alarmDate: dateOn(day, hour: typical.hour, minute: typical.minute).addingTimeInterval(-buffer),
+                routineMinutes: routineMinutes,
+                commuteMinutes: commuteMinutes,
+                firstEvent: nil
+            )
+        }
+
+        // Step 3: Historical average wake time for this weekday.
+        // Wake times already reflect how early the user needed to be up, so
+        // routine + commute are not subtracted again.
+        if let avgWake = SleepHistoryStore.shared.averageWakeTime(forWeekday: weekday) {
+            return BaselineAlarmResolution(
+                alarmDate: dateOn(day, hour: avgWake.hour, minute: avgWake.minute),
+                routineMinutes: routineMinutes,
+                commuteMinutes: commuteMinutes,
+                firstEvent: nil
+            )
+        }
+
+        // Step 4: 8 AM hard fallback (cold-start, no data yet)
+        return BaselineAlarmResolution(
+            alarmDate: dateOn(day, hour: 8, minute: 0).addingTimeInterval(-buffer),
+            routineMinutes: routineMinutes,
+            commuteMinutes: commuteMinutes,
+            firstEvent: nil
+        )
+    }
+
+    /// Applies the adaptive bandit offset to a baseline, saves the pending
+    /// decision, and returns the final alarm date. Synchronous — the baseline
+    /// already carries the event and buffer it needs.
+    func decideAlarm(from baseline: BaselineAlarmResolution, answers: SurveyAnswers) -> Date {
+        let context = AlarmContextBuilder.build(
+            answers: answers,
+            baselineAlarm: baseline.alarmDate,
+            routineMinutes: baseline.routineMinutes,
+            commuteMinutes: baseline.commuteMinutes,
+            firstEvent: baseline.firstEvent
+        )
+
+        let oneHour: TimeInterval = 60 * 60
+        let latestAllowedAlarm = baseline.firstEvent.map {
+            $0.startDate.addingTimeInterval(-Double(baseline.routineMinutes + baseline.commuteMinutes) * 60)
+        } ?? baseline.alarmDate.addingTimeInterval(oneHour)
+
+        let safetyWindow = AdaptiveAlarmSafetyWindow(
+            earliestAllowedAlarm: baseline.alarmDate.addingTimeInterval(-oneHour),
+            latestAllowedAlarm: max(
+                baseline.alarmDate.addingTimeInterval(-oneHour),
+                latestAllowedAlarm
+            )
+        )
+
+        let decision = AlarmOffsetBandit.chooseDecision(
+            baselineAlarm: baseline.alarmDate,
+            context: context,
+            safetyWindow: safetyWindow,
+            outcomes: AdaptiveAlarmStore.shared.recentOutcomes()
+        )
+        AdaptiveAlarmStore.shared.savePendingDecision(decision)
+        return decision.finalAlarm
+    }
+
+    /// Convenience: resolve the final adaptive alarm date for a target day.
+    /// Used by the dashboard for tomorrow's displayed/scheduled alarm.
+    func resolveAlarmDate(answers: SurveyAnswers, targetDay: Date) async -> Date {
+        let baseline = await resolveBaselineAlarmDate(answers: answers, targetDay: targetDay)
+        return decideAlarm(from: baseline, answers: answers)
+    }
+
+    /// Schedules the next wake day's alarm so Lunifer keeps running without the
+    /// user reopening the app. No-op when Lunifer is disabled or no upcoming
+    /// wake day exists. Called from stopAlarm() after the main alarm is dismissed.
+    func scheduleNextWakeAlarm(answers: SurveyAnswers) async {
+        guard UserDefaults.standard.bool(forKey: "luniferEnabled") else { return }
+        guard let nextDay = nextWakeDay(after: Date(), answers: answers) else { return }
+
+        let baseline = await resolveBaselineAlarmDate(answers: answers, targetDay: nextDay)
+        let finalAlarm = decideAlarm(from: baseline, answers: answers)
+
+        await scheduleAlarm(
+            for: finalAlarm,
+            eventTitle: baseline.firstEvent?.title ?? "your first event",
+            routineMinutes: baseline.routineMinutes,
+            commuteMinutes: baseline.commuteMinutes
+        )
+
+        // Keep the wake-reminder chain alive for the newly scheduled day.
+        await WakeNotification.shared.schedule(wakeDate: finalAlarm, answers: answers)
+    }
+
+    // ─────────────────────────────────────────────────────────
     // SECTION 5: CANCELLING THE ALARM
     // ─────────────────────────────────────────────────────────
     // Cancels the main Lunifer alarm. Called before scheduling a new
@@ -530,6 +725,7 @@ class LuniferAlarm: ObservableObject {
     // Dismisses the currently firing alarm and logs the dismiss event.
 
     func stopAlarm() async {
+        var wasMainAlarm = false
         if let alarm = alertingAlarm {
             // Check whether this is a user-added alarm and handle repeat/delete logic.
             if let logicalID = addedAlarmIDs.first(where: { $0.value == alarm.id })?.key {
@@ -545,6 +741,9 @@ class LuniferAlarm: ObservableObject {
                     rescheduleRepeatingAddedAlarm(logicalID: logicalID)
                     NotificationCenter.default.post(name: .luniferAddedAlarmModified, object: nil)
                 }
+            } else {
+                // No logical mapping → this is the main Lunifer alarm.
+                wasMainAlarm = true
             }
             try? manager.cancel(id: alarm.id)
         }
@@ -552,6 +751,20 @@ class LuniferAlarm: ObservableObject {
         DebugAlarmEventStore.shared.log(type: "dismissed")
         alertingAlarm = nil
         scheduledWakeTime = nil
+
+        // ── Self-perpetuation ────────────────────────────────────
+        // Once the main alarm is dismissed, immediately schedule the next wake
+        // day so Lunifer keeps running without the user reopening the app. The
+        // logDismiss() above already consumed the fired decision's outcome, so
+        // scheduleNextWakeAlarm() safely creates a fresh pending decision.
+        if wasMainAlarm {
+            // The manual override only applied to the alarm that just fired.
+            UserDefaults.standard.set(false, forKey: "overrideActive")
+            UserDefaults.standard.removeObject(forKey: "overrideTimestamp")
+            if let answers = SurveyAnswers.loadFromDefaults() {
+                await scheduleNextWakeAlarm(answers: answers)
+            }
+        }
     }
 
     func recordWokeBeforeAlarmIfNeeded(at wakeDate: Date) {
