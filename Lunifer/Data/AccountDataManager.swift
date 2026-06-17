@@ -13,6 +13,8 @@ final class AccountDataManager {
         HealthKitManager.clearStoredData()
         AppPreferencesStore.shared.resetBatteryMonitoringState()
         AppPreferencesStore.shared.resetAlarmOverride()
+        // Clear added-alarm storage so orphaned alarm cards don't appear on the next login
+        UserDefaults.standard.removeObject(forKey: AppPreferencesStore.Keys.addedAlarms)
         // Clear WHOOP tokens and prefs
         KeychainHelper.delete(forKey: KeychainHelper.Keys.whoopAccessToken)
         KeychainHelper.delete(forKey: KeychainHelper.Keys.whoopRefreshToken)

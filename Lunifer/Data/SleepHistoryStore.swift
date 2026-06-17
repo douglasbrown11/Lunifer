@@ -92,8 +92,22 @@ final class SleepHistoryStore {
     }
 
     func allHistory() -> [SleepHistoryEntry] {
+        // Logic inlined from the former historyEntry(from:) static method to avoid
+        // Swift actor-inference warnings about calling a @MainActor-inferred static
+        // method from a synchronous nonisolated context.
         loadRawEntries()
-            .compactMap(Self.historyEntry(from:))
+            .compactMap { dict -> SleepHistoryEntry? in
+                guard let dateTS    = dict["date"]     as? Double,
+                      let duration  = dict["duration"] as? Double else { return nil }
+                let onsetTS = dict["onset"] as? Double ?? 0
+                let wakeTS  = dict["wake"]  as? Double ?? 0
+                return SleepHistoryEntry(
+                    date:          Date(timeIntervalSince1970: dateTS),
+                    durationHours: duration,
+                    sleepOnset:    onsetTS > 0 ? Date(timeIntervalSince1970: onsetTS) : nil,
+                    wakeTime:      wakeTS  > 0 ? Date(timeIntervalSince1970: wakeTS)  : nil
+                )
+            }
             .sorted { $0.date > $1.date }
     }
 
@@ -155,23 +169,6 @@ final class SleepHistoryStore {
 
     private func loadRawEntries() -> [[String: Any]] {
         defaults.array(forKey: storageKey) as? [[String: Any]] ?? []
-    }
-
-    private static func historyEntry(from dict: [String: Any]) -> SleepHistoryEntry? {
-        guard let dateTS = dict["date"] as? Double,
-              let duration = dict["duration"] as? Double else {
-            return nil
-        }
-
-        let onsetTS = dict["onset"] as? Double ?? 0
-        let wakeTS = dict["wake"] as? Double ?? 0
-
-        return SleepHistoryEntry(
-            date: Date(timeIntervalSince1970: dateTS),
-            durationHours: duration,
-            sleepOnset: onsetTS > 0 ? Date(timeIntervalSince1970: onsetTS) : nil,
-            wakeTime: wakeTS > 0 ? Date(timeIntervalSince1970: wakeTS) : nil
-        )
     }
 
     private func entryReferenceDate(_ entry: [String: Any]) -> Date? {

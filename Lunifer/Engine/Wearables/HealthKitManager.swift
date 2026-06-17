@@ -147,7 +147,10 @@ final class HealthKitManager: ObservableObject {
     }
 
     private func fetchAsleepSamples(from start: Date, to end: Date) async -> [HKCategorySample] {
-        await withCheckedContinuation { continuation in
+        // Capture on the MainActor before entering the nonisolated HealthKit callback,
+        // avoiding the "MainActor-isolated property referenced from nonisolated context" warning.
+        let values = Self.asleepValues
+        return await withCheckedContinuation { continuation in
             let predicate = HKQuery.predicateForSamples(withStart: start, end: end, options: [])
             let sort = NSSortDescriptor(key: HKSampleSortIdentifierStartDate, ascending: true)
             let query = HKSampleQuery(
@@ -157,7 +160,7 @@ final class HealthKitManager: ObservableObject {
                 sortDescriptors: [sort]
             ) { _, samples, _ in
                 let asleep = (samples as? [HKCategorySample] ?? [])
-                    .filter { Self.asleepValues.contains($0.value) }
+                    .filter { values.contains($0.value) }
                 continuation.resume(returning: asleep)
             }
             healthStore.execute(query)
