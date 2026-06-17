@@ -14,7 +14,7 @@ Try to avoid mechanisms that asks the user to manually provide data — this inc
 ## Current Stack
 - Language: Swift / SwiftUI
 - Backend: Firebase Auth + Firestore + Google Sign-In + Microsoft Sign-In
-- Apple frameworks in use: AlarmKit, EventKit, CoreLocation, MapKit, AVFoundation, CoreMotion, BackgroundTasks, AuthenticationServices, CryptoKit, Security, UserNotifications, UIKit
+- Apple frameworks in use: AlarmKit, EventKit, CoreLocation, MapKit, AVFoundation, CoreMotion, BackgroundTasks, AuthenticationServices, CryptoKit, Security, UserNotifications, UIKit, HealthKit
 - State / persistence:
   - `SurveyAnswersStore` for onboarding/profile answers
   - `SleepHistoryStore` for completed sleep nights
@@ -200,21 +200,20 @@ The adaptive alarm now has two layers: the nightly initial offset model in `Engi
 - `AlarmBehaviourLogger.saveInference(outcome:at:)` still writes to Firestore `alarmInferences`, and now enriches rows with `adaptiveDecisionID`, `adaptiveOffsetMinutes`, `adaptiveReward`, `adaptiveRecommendedSleepHours`, and optional `adaptiveActualSleepHours` when a training-eligible decision exists
 - `AlarmRewardScorer.reward(...)` scores outcomes from sleep-duration fit, wake timing, and safety clamp status; snooze is intentionally excluded from reward training
 
-**Path A — User fell asleep (early or late):**
-- Once `SleepTracker.shared.isAsleep` becomes true and `estimatedSleepOnset` is available, the alarm shifts by the delta between actual sleep onset and expected bedtime
-- If user slept 15 min late → alarm pushes 15 min later
-- If user slept 30 min early → alarm pulls 30 min earlier
-- Adjustment happens once per night (`sleepOnsetAdjusted` flag)
-
-**Path B — User is still awake past bedtime:**
-- Pushes the alarm later so the user still gets a full night of sleep from the current moment
-- Capped at 3 hours past the original alarm (`maxAdaptivePushHours`)
+**Unified sleep-onset mechanism (replaced old Path A + Path B):**
+- Runs on every 5-minute timer tick after expected bedtime has passed
+- `proposedWakeTime = (estimatedSleepOnset ?? now) + sleepHours`
+- Before sleep onset is known: `now` acts as a running proxy, keeping the alarm ahead of "now + sleepHours" so it never fires while the user is still awake
+- Once `estimatedSleepOnset` is detected by the sleep tracker (~15 min of consecutive sleep): anchors precisely to actual sleep onset
+- No one-shot flag — repeated ticks after onset is stable are filtered by the 2-minute minimum-change threshold
+- Capped at 3 hours later / 2 hours earlier than `originalScheduledWakeTime` (`maxAdaptivePushHours` / `maxAdaptivePullHours`)
+- `sleepOnsetAdjusted` flag and its associated `isAsleep` branch have been removed
 
 **Wearable sleep target:**
 - `checkAndAdaptAlarm()` now resolves sleep need through `WearableRecommendationStore.recommendedHours(from:fallback:)`, so active WHOOP or Oura recommendations drive same-night adaptation before falling back to `answers.sleep`
 - `Screens/Dashboard/Main.swift` uses the same wearable-first sleep-hour source for its bedtime display
 
-**Calendar constraint (both paths):**
+**Calendar constraint:**
 - Uses `CalendarManager.shared.firstEventTomorrow` to find the earliest timed event
 - Computes `latestAllowedAlarm = event.startDate − routineMinutes − commuteMinutes`
 - The alarm will never be pushed past this deadline, ensuring the user can still complete their morning routine and commute before their first event
@@ -298,10 +297,18 @@ Behavior notes:
 - Wake days are editable in a dedicated screen and sync through `answers.saveToDefaults()` / `answers.saveToFirestore()`
 - Notifications screen currently covers `batteryAlertEnabled`, `wakeReminderEnabled`, and `commuteReminderEnabled`
 - Sleep duration changes are saved locally and to Firestore through `answers.saveToDefaults()` / `answers.saveToFirestore()`
-- Account deletion flow: user taps "Delete Account" → confirmation alert → user taps "Delete" → `performDeletion()` runs directly (no reauthentication). It does a best-effort Firestore cleanup of `sleepHistory`, `alarmInferences`, and `private`, then deletes the Firebase Auth user and clears local data.
+- Account deletion flow: user taps "Delete Account" → confirmation alert → user taps "Delete" → `performDeletion()` runs. In order: (1) cancels all AlarmKit alarms (`LuniferAlarm.shared.cancelAlarm()` + `cancelAllAddedAlarms()`), (2) disconnects WHOOP and Oura from Cloudflare KV while the Firebase token is still valid, (3) best-effort Firestore cleanup of `sleepHistory`, `alarmInferences`, `private`, and the root user document, (4) `user.delete()`. If Firebase throws `requiresRecentLogin`, the user is prompted for their password via a sheet; if they're a Google/Apple/Microsoft-only account without a linked password, a clear message tells them to sign out and back in first. On success, `clearLocalAccountData()` wipes all local data and `surveyCompleted` is set to `false`, navigating back to the intro screen.
+- **Microsoft re-auth** (used when deletion requires re-login): implemented in `Settings.swift` as `msReauthenticate()` using direct PKCE OAuth with Microsoft's endpoint (`login.microsoftonline.com/common/oauth2/v2.0/authorize`) via `ASWebAuthenticationSession`. Callback scheme: `msauth.Dream-AI.Lunifer` (registered in Azure under iOS/macOS redirect URIs). Auth code is exchanged for tokens at Microsoft's token endpoint (PKCE — no client secret on device). Resulting `id_token` + `access_token` are wrapped in `OAuthProvider.credential(providerID: "microsoft.com", ...)` for `user.reauthenticate(with:)`. This approach **permanently bypasses Firebase's `/__/auth/handler` redirect page**, which previously caused the recurring "missing initial state" / sessionStorage-loss error on iOS. Helper types `MicrosoftReauthCoordinator` (ASWebAuthenticationPresentationContextProviding) and PKCE helpers `generateMSVerifier()` / `generateMSChallenge(from:)` live at the bottom of `Settings.swift`. The Azure app registration (App ID `55d084c8-c89d-4023-95c9-c20ac76a9a30`, tenant `7cd7b2e9-d283-4aff-af86-f654b9b97237`) has two client secrets both expiring 3/25/2028.
 
 Not currently present:
 - Additional deeper settings pages beyond About You, Wake Days, Notifications, Sleep & Wearables, and the basic sound flows
+
+## Apple Watch / HealthKit Status
+- HealthKit capability is **enabled** in the Xcode project (entitlement: `com.apple.developer.healthkit`). The capability must also be enabled on the App ID in the Apple Developer portal, and `NSHealthShareUsageDescription` must be in `Info.plist`.
+- `Engine/Wearables/HealthKitManager.swift` reads Apple Watch sleep retrospectively from HealthKit (`HKCategoryTypeIdentifier.sleepAnalysis`) and records nights as `.wearable`-priority via `SleepHistoryManager.recordNight(..., source: .wearable)`. HealthKit does NOT feed into `WearableRecommendationStore` — it is a measured-sleep data source only, not a recommendation source.
+- The Apple Watch is NOT connected to directly — the watch writes sleep data to HealthKit on the paired iPhone, and `HealthKitManager` reads it there.
+- `HealthKitManager` is NOT part of the one-wearable exclusivity rule that governs WHOOP and Oura. Users can have Apple Watch + one of WHOOP/Oura simultaneously.
+- Cleared on sign-out/delete via `HealthKitManager.clearStoredData()` (nonisolated static) in `AccountDataManager`.
 
 ## Auth / Firebase Status
 - Email/password auth exists

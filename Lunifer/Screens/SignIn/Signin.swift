@@ -7,14 +7,14 @@ import CryptoKit
 
 // ── MARK: Types ──────────────────────────────────────────────
 
-private enum SigninMode {
+enum SigninMode {
     case signIn, create
 }
 
 // ── MARK: Error mapping ──────────────────────────────────────
 // Mirrors the getFriendlyError() function in luniferAuth.jsx
 
-private func friendlySigninError(_ error: Error) -> String {
+func friendlySigninError(_ error: Error) -> String {
     let nsError = error as NSError
 
     // Google Sign In cancellation (kGIDSignInErrorDomain, code -5)
@@ -50,317 +50,31 @@ private func friendlySigninError(_ error: Error) -> String {
     }
 }
 
-// ── MARK: Input field ────────────────────────────────────────
+// ── MARK: SigninBackend ──────────────────────────────────────
+// Owns all auth state and every sign-in action. The view observes
+// loading / errorMessage / resetMessage and calls the handle* methods.
 
-private struct LuniferInputField: View {
-    let placeholder: String
-    @Binding var text: String
-    var isSecure: Bool = false
-    @FocusState private var focused: Bool
+@MainActor
+final class SigninBackend: ObservableObject {
+    @Published var loading = false
+    @Published var errorMessage: String? = nil
+    @Published var resetMessage: String? = nil
 
-    var body: some View {
-        Group {
-            if isSecure {
-                SecureField(placeholder, text: $text)
-                    .focused($focused)
-            } else {
-                TextField(placeholder, text: $text)
-                    .keyboardType(.emailAddress)
-                    .autocapitalization(.none)
-                    .autocorrectionDisabled()
-                    .focused($focused)
-            }
-        }
-        .font(.custom("DM Sans", size: 15))
-        .foregroundColor(Color.white.opacity(0.9))
-        .tint(Color(red: 0.627, green: 0.471, blue: 1.0))
-        .padding(.horizontal, 18)
-        .padding(.vertical, 14)
-        .background(
-            RoundedRectangle(cornerRadius: 12)
-                .fill(focused
-                      ? Color(red: 0.627, green: 0.471, blue: 1.0).opacity(0.06)
-                      : Color.white.opacity(0.04))
-                .overlay(
-                    RoundedRectangle(cornerRadius: 12)
-                        .stroke(focused
-                                ? Color(red: 0.627, green: 0.471, blue: 1.0).opacity(0.6)
-                                : Color.white.opacity(0.08),
-                                lineWidth: 1.5)
-                )
-        )
-        .contentShape(Rectangle())
-        .onTapGesture { focused = true }
-        .animation(.easeInOut(duration: 0.2), value: focused)
-    }
-}
+    // Held alive for the duration of their respective auth flows
+    private var currentAppleNonce: String? = nil
+    private var msSignInSession: ASWebAuthenticationSession? = nil
+    private var msSignInCoordinator: MicrosoftSignInCoordinator? = nil
 
-// ── MARK: LuniferSignin ───────────────────────────────────────
+    // ── Email / password ─────────────────────────────────────
 
-struct LuniferSignin: View {
-    var onSignedIn: (_ isNewUser: Bool) async -> Void = { _ in }
-
-    @State private var mode: SigninMode = .create
-    @State private var email = ""
-    @State private var password = ""
-    @State private var loading = false
-    @State private var errorMessage: String?
-    @State private var agreedToTerms: Bool = false
-
-    /// Holds the raw (un-hashed) nonce while a Sign in with Apple flow is
-    /// in progress. Firebase requires the original nonce when exchanging
-    /// the Apple identity token for an `OAuthCredential`.
-    @State private var currentAppleNonce: String? = nil
-
-    private var canSubmit: Bool { !email.isEmpty && password.count >= 6 }
-
-    private var termsAttributedString: AttributedString {
-        let tosURL  = URL(string: "https://lunifer-ce086.web.app/terms.html")!
-        let ppURL   = URL(string: "https://lunifer-ce086.web.app/privacy-policy.html")!
-        let base    = Font.custom("DM Sans", size: 12)
-        let muted   = Color.white.opacity(0.35)
-        let accent  = Color(red: 0.627, green: 0.471, blue: 1.0).opacity(0.85)
-        var s   = AttributedString("By continuing, you agree to our "); s.font = base;   s.foregroundColor = muted
-        var tos = AttributedString("Terms of Service");                  tos.font = base; tos.foregroundColor = accent; tos.link = tosURL
-        var and = AttributedString(" and ");                             and.font = base; and.foregroundColor = muted
-        var pp  = AttributedString("Privacy Policy");                   pp.font = base;  pp.foregroundColor = accent;  pp.link = ppURL
-        var dot = AttributedString(".");                                 dot.font = base; dot.foregroundColor = muted
-        return s + tos + and + pp + dot
-    }
-
-    var body: some View {
-        ZStack {
-            LuniferBackground(showStars: false)
-
-            ScrollView {
-                VStack(spacing: 0) {
-
-                    FloatingMoon()
-                        .padding(.bottom, 10)
-
-                    Text("Lunifer")
-                        .font(.custom("Cormorant Garamond", size: 30))
-                        .fontWeight(.light)
-                        .foregroundColor(Color.white.opacity(0.95))
-                        .frame(maxWidth: .infinity, alignment: .center)
-                        .padding(.bottom, 14)
-
-
-                    // ── Error box ────────────────────────────
-                    if let error = errorMessage {
-                        Text(error)
-                            .font(.custom("DM Sans", size: 13))
-                            .foregroundColor(Color(red: 1, green: 0.392, blue: 0.392).opacity(0.85))
-                            .multilineTextAlignment(.center)
-                            .padding(.horizontal, 14)
-                            .padding(.vertical, 10)
-                            .frame(maxWidth: .infinity)
-                            .background(
-                                RoundedRectangle(cornerRadius: 8)
-                                    .fill(Color(red: 1, green: 0.314, blue: 0.314).opacity(0.08))
-                                    .overlay(
-                                        RoundedRectangle(cornerRadius: 8)
-                                            .stroke(Color(red: 1, green: 0.314, blue: 0.314).opacity(0.15), lineWidth: 1)
-                                    )
-                            )
-                            .padding(.bottom, 14)
-                            .transition(.opacity.combined(with: .offset(y: -4)))
-                    }
-
-                    // ── Inputs ───────────────────────────────
-                    VStack(spacing: 12) {
-                        LuniferInputField(placeholder: "Email address", text: $email)
-                        LuniferInputField(placeholder: "Password", text: $password, isSecure: true)
-                    }
-                    .padding(.bottom, 16)
-
-                    // ── Primary button ───────────────────────
-                    Button { handleEmailSignin() } label: {
-                        ZStack {
-                            if loading {
-                                ProgressView().tint(.white)
-                            } else {
-                                Text(mode == .signIn ? "Sign In" : "Create Account")
-                                    .font(.custom("DM Sans", size: 15).weight(.medium))
-                                    .foregroundColor(.white)
-                            }
-                        }
-                        .frame(maxWidth: .infinity)
-                        .frame(height: 50)
-                        .background(
-                            RoundedRectangle(cornerRadius: 12)
-                                .fill(LinearGradient(
-                                    colors: [
-                                        Color(red: 0.471, green: 0.314, blue: 0.863),
-                                        Color(red: 0.314, green: 0.196, blue: 0.706),
-                                    ],
-                                    startPoint: .topLeading,
-                                    endPoint: .bottomTrailing
-                                ))
-                                .overlay(
-                                    RoundedRectangle(cornerRadius: 12)
-                                        .stroke(Color(red: 0.627, green: 0.471, blue: 1.0).opacity(0.6), lineWidth: 1.5)
-                                )
-                        )
-                        .opacity(canSubmit && !loading ? 1.0 : 0.4)
-                    }
-                    .disabled(!canSubmit || loading)
-                    .padding(.bottom, 20)
-
-                    // ── Divider ──────────────────────────────
-                    HStack(spacing: 12) {
-                        Rectangle().fill(Color.white.opacity(0.08)).frame(height: 1)
-                        Text("or")
-                            .font(.custom("DM Sans", size: 12))
-                            .foregroundColor(Color.white.opacity(0.25))
-                            .kerning(0.5)
-                        Rectangle().fill(Color.white.opacity(0.08)).frame(height: 1)
-                    }
-                    .padding(.bottom, 20)
-
-                    // ── Apple button ─────────────────────────
-                    // Required by App Store Review Guideline 4.8 whenever
-                    // any third-party login is offered. Visual style matches
-                    // the Google and Outlook buttons below.
-                    Button { handleAppleSignIn() } label: {
-                        HStack(spacing: 10) {
-                            AppleLogoView()
-                            Text("Continue with Apple")
-                                .font(.custom("DM Sans", size: 15))
-                                .foregroundColor(Color.white.opacity(0.8))
-                        }
-                        .frame(maxWidth: .infinity, alignment: .center)
-                        .frame(maxWidth: .infinity)
-                        .frame(height: 50)
-                        .background(
-                            RoundedRectangle(cornerRadius: 12)
-                                .fill(Color.white.opacity(0.06))
-                        )
-                    }
-                    .disabled(loading)
-                    .padding(.bottom, 12)
-
-                    // ── Google button ────────────────────────
-                    Button { handleGoogleSignIn() } label: {
-                        HStack(spacing: 10) {
-                            GoogleLogoView()
-                            Text("Continue with Google")
-                                .font(.custom("DM Sans", size: 15))
-                                .foregroundColor(Color.white.opacity(0.8))
-                        }
-                        .frame(maxWidth: .infinity, alignment: .center)
-                        .frame(maxWidth: .infinity)
-                        .frame(height: 50)
-                        .background(
-                            RoundedRectangle(cornerRadius: 12)
-                                .fill(Color.white.opacity(0.06))
-                        )
-                    }
-                    .disabled(loading)
-                    .padding(.bottom, 12)
-
-                    // ── Outlook button ───────────────────────
-                    Button { handleMicrosoftSignIn() } label: {
-                        HStack(spacing: 10) {
-                            MicrosoftLogoView()
-                            Text("Continue with Outlook")
-                                .font(.custom("DM Sans", size: 15))
-                                .foregroundColor(Color.white.opacity(0.8))
-                        }
-                        .frame(maxWidth: .infinity, alignment: .center)
-                        .frame(maxWidth: .infinity)
-                        .frame(height: 50)
-                        .background(
-                            RoundedRectangle(cornerRadius: 12)
-                                .fill(Color.white.opacity(0.06))
-                        )
-                    }
-                    .disabled(loading)
-                    .padding(.bottom, 24)
-
-                    // ── Toggle mode ──────────────────────────
-                    HStack(spacing: 4) {
-                        Text(mode == .signIn
-                             ? "Don't have an account?"
-                             : "Already have an account?")
-                            .font(.custom("DM Sans", size: 14))
-                            .foregroundColor(Color.white.opacity(0.3))
-
-                        Button {
-                            withAnimation(.easeInOut(duration: 0.2)) {
-                                mode = mode == .signIn ? .create : .signIn
-                                errorMessage = nil
-                            }
-                        } label: {
-                            Text(mode == .signIn ? "Create one" : "Sign in")
-                                .font(.custom("DM Sans", size: 14))
-                                .foregroundColor(Color(red: 0.627, green: 0.471, blue: 1.0).opacity(0.9))
-                        }
-                    }
-                }
-                .padding(.horizontal, 62)
-                .padding(.top, 115)
-                .padding(.bottom, 110)   // leave room for the pinned checkbox panel
-                .frame(maxWidth: .infinity)
-            }
-
-            // ── Pinned terms checkbox card ────────────────────
-            VStack {
-                Spacer()
-                HStack(alignment: .top, spacing: 10) {
-                    Button {
-                        withAnimation(.easeInOut(duration: 0.15)) { agreedToTerms.toggle() }
-                    } label: {
-                        ZStack {
-                            RoundedRectangle(cornerRadius: 5)
-                                .fill(agreedToTerms
-                                      ? Color(red: 0.627, green: 0.471, blue: 1.0)
-                                      : Color.white.opacity(0.06))
-                                .overlay(
-                                    RoundedRectangle(cornerRadius: 5)
-                                        .stroke(agreedToTerms
-                                                ? Color.clear
-                                                : Color.white.opacity(0.18),
-                                                lineWidth: 1.5)
-                                )
-                                .frame(width: 18, height: 18)
-                            if agreedToTerms {
-                                Image(systemName: "checkmark")
-                                    .font(.system(size: 10, weight: .bold))
-                                    .foregroundColor(.white)
-                            }
-                        }
-                    }
-                    .padding(.top, 1)
-                    .padding(.horizontal, 5)
-
-                    Text(termsAttributedString)
-                        .multilineTextAlignment(.leading)
-                        .fixedSize(horizontal: false, vertical: true)
-                }
-                .padding(.horizontal, 16)
-                .padding(.vertical, 16)
-                .background(
-                    RoundedRectangle(cornerRadius: 16)
-                        .fill(Color(red: 0.12, green: 0.08, blue: 0.20))
-                        .overlay(
-                            RoundedRectangle(cornerRadius: 16)
-                                .stroke(Color.white.opacity(0.08), lineWidth: 1)
-                        )
-                )
-                .padding(.horizontal, 29)
-                .padding(.bottom, 52)
-            }
-        }
-        .frame(maxWidth: .infinity, maxHeight: .infinity)
-        .ignoresSafeArea()
-        .animation(.easeInOut(duration: 0.2), value: errorMessage)
-    }
-
-    // ── MARK: Actions ────────────────────────────────────────
-
-    private func handleEmailSignin() {
-        guard canSubmit else { return }
+    func handleEmailSignin(
+        email: String,
+        password: String,
+        mode: SigninMode,
+        agreedToTerms: Bool,
+        onSignedIn: @escaping (_ isNewUser: Bool) async -> Void
+    ) {
+        guard !email.isEmpty && password.count >= 6 else { return }
         guard agreedToTerms else {
             withAnimation { errorMessage = "Please agree to the Terms of Service and Privacy Policy to continue." }
             return
@@ -368,6 +82,7 @@ struct LuniferSignin: View {
         Task { @MainActor in
             loading = true
             errorMessage = nil
+            resetMessage = nil
             do {
                 if mode == .create {
                     _ = try await Auth.auth().createUser(withEmail: email, password: password)
@@ -383,7 +98,29 @@ struct LuniferSignin: View {
         }
     }
 
-    // ── MARK: Apple sign-in ──────────────────────────────────
+    // ── Forgot password ──────────────────────────────────────
+
+    func handleForgotPassword(email: String) {
+        let trimmedEmail = email.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !trimmedEmail.isEmpty else {
+            withAnimation { errorMessage = "Enter your email address above, then tap Forgot password." }
+            return
+        }
+        Task { @MainActor in
+            loading = true
+            errorMessage = nil
+            resetMessage = nil
+            do {
+                try await Auth.auth().sendPasswordReset(withEmail: trimmedEmail)
+                withAnimation { resetMessage = "Reset link sent to \(trimmedEmail). Check your inbox." }
+            } catch {
+                withAnimation { errorMessage = friendlySigninError(error) }
+            }
+            loading = false
+        }
+    }
+
+    // ── Apple sign-in ────────────────────────────────────────
     // SETUP REQUIRED before this works:
     //   1. Xcode → Lunifer target → Signing & Capabilities → + Capability → "Sign in with Apple".
     //      (The Lunifer.entitlements file already contains the
@@ -400,18 +137,18 @@ struct LuniferSignin: View {
     //   • After Apple returns the identity token, exchange the *raw* nonce
     //     plus identity token for a Firebase OAuthCredential.
 
-    private func handleAppleSignIn() {
+    func handleAppleSignIn(
+        agreedToTerms: Bool,
+        onSignedIn: @escaping (_ isNewUser: Bool) async -> Void
+    ) {
         guard agreedToTerms else {
             withAnimation { errorMessage = "Please agree to the Terms of Service and Privacy Policy to continue." }
             return
         }
-
         Task { @MainActor in
             loading = true
             errorMessage = nil
 
-            // Generate and remember the raw nonce. The hashed version is
-            // what we send to Apple; the raw version is what Firebase needs.
             let rawNonce = AppleSignInNonce.makeRandomNonce()
             currentAppleNonce = rawNonce
 
@@ -420,14 +157,14 @@ struct LuniferSignin: View {
             request.nonce = AppleSignInNonce.sha256(rawNonce)
 
             let coordinator = AppleSignInCoordinator()
-            let controller = ASAuthorizationController(authorizationRequests: [request])
+            let controller  = ASAuthorizationController(authorizationRequests: [request])
             controller.delegate = coordinator
             controller.presentationContextProvider = coordinator
 
             do {
                 let credential = try await coordinator.perform(controller: controller)
 
-                guard let identityTokenData = credential.identityToken,
+                guard let identityTokenData   = credential.identityToken,
                       let identityTokenString = String(data: identityTokenData, encoding: .utf8) else {
                     errorMessage = "Something went wrong. Please try again."
                     currentAppleNonce = nil
@@ -474,13 +211,16 @@ struct LuniferSignin: View {
         }
     }
 
-    // ── MARK: Microsoft sign-in ──────────────────────────────
-    // Passes nil as the UIDelegate so Firebase uses ASWebAuthenticationSession
-    // (ephemeral, isolated) rather than SFSafariViewController. This avoids
-    // iOS ITP storage partitioning on firebaseapp.com which caused the
-    // "missing initial state / sessionStorage" error on older SDK versions.
+    // ── Microsoft sign-in ────────────────────────────────────
+    // Uses direct PKCE OAuth with Microsoft's endpoint via ASWebAuthenticationSession,
+    // bypassing Firebase's /__/auth/handler redirect page entirely. The old approach
+    // (OAuthProvider.getCredentialWith(nil)) routed through lunifer-ce086.firebaseapp.com
+    // which caused the recurring "missing initial state / sessionStorage" error on iOS.
 
-    private func handleMicrosoftSignIn() {
+    func handleMicrosoftSignIn(
+        agreedToTerms: Bool,
+        onSignedIn: @escaping (_ isNewUser: Bool) async -> Void
+    ) {
         guard agreedToTerms else {
             withAnimation { errorMessage = "Please agree to the Terms of Service and Privacy Policy to continue." }
             return
@@ -488,30 +228,116 @@ struct LuniferSignin: View {
         Task { @MainActor in
             loading = true
             errorMessage = nil
+            resetMessage = nil
 
-            let provider = OAuthProvider(providerID: "microsoft.com")
-            provider.scopes = ["email", "profile", "openid"]
-            provider.customParameters = ["prompt": "select_account"]
+            let clientID    = "55d084c8-c89d-4023-95c9-c20ac76a9a30"
+            let redirectURI = "msauth.Dream-AI.Lunifer://auth"
+
+            // PKCE — code verifier + SHA-256 challenge
+            var buffer = [UInt8](repeating: 0, count: 64)
+            _ = SecRandomCopyBytes(kSecRandomDefault, buffer.count, &buffer)
+            let verifier = Data(buffer).base64EncodedString()
+                .replacingOccurrences(of: "+", with: "-")
+                .replacingOccurrences(of: "/", with: "_")
+                .replacingOccurrences(of: "=", with: "")
+            let challenge = Data(SHA256.hash(data: Data(verifier.utf8))).base64EncodedString()
+                .replacingOccurrences(of: "+", with: "-")
+                .replacingOccurrences(of: "/", with: "_")
+                .replacingOccurrences(of: "=", with: "")
+
+            var comps = URLComponents(string: "https://login.microsoftonline.com/common/oauth2/v2.0/authorize")!
+            comps.queryItems = [
+                URLQueryItem(name: "client_id",             value: clientID),
+                URLQueryItem(name: "response_type",         value: "code"),
+                URLQueryItem(name: "redirect_uri",          value: redirectURI),
+                URLQueryItem(name: "scope",                 value: "openid profile email"),
+                URLQueryItem(name: "response_mode",         value: "query"),
+                URLQueryItem(name: "state",                 value: UUID().uuidString),
+                URLQueryItem(name: "code_challenge",        value: challenge),
+                URLQueryItem(name: "code_challenge_method", value: "S256"),
+                URLQueryItem(name: "prompt",                value: "select_account")
+            ]
+            guard let authURL = comps.url else {
+                errorMessage = "Something went wrong. Please try again."
+                loading = false
+                return
+            }
 
             do {
-                let credential = try await withCheckedThrowingContinuation { (continuation: CheckedContinuation<AuthCredential, Error>) in
-                    // Passing nil forces ASWebAuthenticationSession instead of
-                    // SFSafariViewController, sidestepping the ITP sessionStorage issue.
-                    provider.getCredentialWith(nil) { credential, error in
-                        if let error {
-                            continuation.resume(throwing: error)
-                        } else if let credential {
-                            continuation.resume(returning: credential)
+                let coordinator = MicrosoftSignInCoordinator()
+                let callbackURL: URL = try await withCheckedThrowingContinuation { continuation in
+                    let session = ASWebAuthenticationSession(
+                        url: authURL,
+                        callbackURLScheme: "msauth.Dream-AI.Lunifer"
+                    ) { url, error in
+                        if let asError = error as? ASWebAuthenticationSessionError,
+                           asError.code == .canceledLogin {
+                            continuation.resume(throwing: CancellationError())
+                        } else if let url = url {
+                            continuation.resume(returning: url)
                         } else {
-                            continuation.resume(throwing: NSError(
+                            continuation.resume(throwing: error ?? NSError(
                                 domain: "LuniferSignin", code: -1,
-                                userInfo: [NSLocalizedDescriptionKey: "No credential returned."]
-                            ))
+                                userInfo: [NSLocalizedDescriptionKey: "Microsoft sign-in failed."]))
                         }
                     }
+                    session.presentationContextProvider = coordinator
+                    session.prefersEphemeralWebBrowserSession = false
+                    msSignInSession     = session
+                    msSignInCoordinator = coordinator
+                    session.start()
                 }
+                msSignInSession     = nil
+                msSignInCoordinator = nil
+
+                guard let callbackComps = URLComponents(url: callbackURL, resolvingAgainstBaseURL: false),
+                      let code = callbackComps.queryItems?.first(where: { $0.name == "code" })?.value
+                else {
+                    errorMessage = "Something went wrong. Please try again."
+                    loading = false
+                    return
+                }
+
+                // Exchange auth code for tokens (PKCE — no client secret on device)
+                var tokenRequest = URLRequest(url: URL(string: "https://login.microsoftonline.com/common/oauth2/v2.0/token")!)
+                tokenRequest.httpMethod = "POST"
+                tokenRequest.setValue("application/x-www-form-urlencoded", forHTTPHeaderField: "Content-Type")
+                let body: [String: String] = [
+                    "client_id":     clientID,
+                    "grant_type":    "authorization_code",
+                    "code":          code,
+                    "redirect_uri":  redirectURI,
+                    "code_verifier": verifier,
+                    "scope":         "openid profile email"
+                ]
+                tokenRequest.httpBody = body
+                    .map { "\($0.key)=\($0.value.addingPercentEncoding(withAllowedCharacters: .urlQueryAllowed) ?? "")" }
+                    .joined(separator: "&")
+                    .data(using: .utf8)
+
+                let (data, _) = try await URLSession.shared.data(for: tokenRequest)
+
+                struct MSTokenResponse: Decodable {
+                    let access_token: String
+                    let id_token: String?
+                }
+                let tokens = try JSONDecoder().decode(MSTokenResponse.self, from: data)
+                guard let idToken = tokens.id_token else {
+                    errorMessage = "Something went wrong. Please try again."
+                    loading = false
+                    return
+                }
+
+                let credential = OAuthProvider.credential(
+                    providerID: AuthProviderID(rawValue: "microsoft.com"),
+                    idToken: idToken,
+                    rawNonce: "",
+                    accessToken: tokens.access_token
+                )
                 let authResult = try await Auth.auth().signIn(with: credential)
                 await onSignedIn(authResult.additionalUserInfo?.isNewUser ?? false)
+            } catch is CancellationError {
+                // User cancelled — no error message needed
             } catch {
                 errorMessage = friendlySigninError(error)
             }
@@ -519,7 +345,12 @@ struct LuniferSignin: View {
         }
     }
 
-    private func handleGoogleSignIn() {
+    // ── Google sign-in ───────────────────────────────────────
+
+    func handleGoogleSignIn(
+        agreedToTerms: Bool,
+        onSignedIn: @escaping (_ isNewUser: Bool) async -> Void
+    ) {
         guard agreedToTerms else {
             withAnimation { errorMessage = "Please agree to the Terms of Service and Privacy Policy to continue." }
             return
@@ -616,12 +447,11 @@ private final class AppleSignInCoordinator: NSObject,
     private var controller: ASAuthorizationController?
 
     /// Performs the authorization flow and resumes with the resulting
-    /// Apple ID credential, or throws if the user cancels or an error
-    /// occurs.
+    /// Apple ID credential, or throws if the user cancels or an error occurs.
     func perform(controller: ASAuthorizationController) async throws -> ASAuthorizationAppleIDCredential {
         try await withCheckedThrowingContinuation { continuation in
             self.continuation = continuation
-            self.controller = controller
+            self.controller   = controller
             controller.performRequests()
         }
     }
@@ -661,8 +491,7 @@ private final class AppleSignInCoordinator: NSObject,
            let window = windowScene.windows.first(where: { $0.isKeyWindow }) {
             return window
         }
-        // Fallback: any window that exists. ASAuthorization requires a non-nil
-        // anchor, so returning a placeholder is preferable to crashing.
+        // Fallback: any window that exists.
         return UIApplication.shared.connectedScenes
             .compactMap({ $0 as? UIWindowScene })
             .flatMap({ $0.windows })
@@ -670,8 +499,13 @@ private final class AppleSignInCoordinator: NSObject,
     }
 }
 
-// ── MARK: Preview ────────────────────────────────────────────
+// ── MARK: Microsoft Sign-In coordinator ──────────────────────
 
-#Preview {
-    LuniferSignin()
+private final class MicrosoftSignInCoordinator: NSObject, ASWebAuthenticationPresentationContextProviding {
+    func presentationAnchor(for session: ASWebAuthenticationSession) -> ASPresentationAnchor {
+        UIApplication.shared.connectedScenes
+            .compactMap({ $0 as? UIWindowScene })
+            .first(where: { $0.activationState == .foregroundActive })?
+            .windows.first(where: { $0.isKeyWindow }) ?? UIWindow()
+    }
 }

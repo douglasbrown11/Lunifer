@@ -45,7 +45,7 @@ struct ContentView: View {
                             surveyAnswers = saved
                             screen = .splash
                         } else if user == nil, screen != .intro {
-                            screen = .auth
+                            screen = .intro
                         }
                     }
                 }

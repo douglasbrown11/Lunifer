@@ -26,11 +26,7 @@ struct LuniferSettings: View {
     @State private var showReauthPasswordSheet = false
     @State private var reauthPasswordInput = ""
     @State private var reauthPasswordContinuation: CheckedContinuation<String, Error>?
-    @State private var showReauthExplanationAlert = false
-    @State private var reauthExplanationContinuation: CheckedContinuation<Void, Error>?
-    // Held alive for the duration of the Microsoft PKCE re-auth session
-    @State private var msReauthSession: ASWebAuthenticationSession? = nil
-    @State private var msReauthCoordinator: MicrosoftReauthCoordinator? = nil
+    @State private var showReauthPassword = false
 
     private var userEmail: String {
         guard ProcessInfo.processInfo.environment["XCODE_RUNNING_FOR_PREVIEWS"] != "1" else {
@@ -231,20 +227,41 @@ struct LuniferSettings: View {
                     .padding(.horizontal, 32)
                     .padding(.bottom, 24)
 
-                SecureField("Password", text: $reauthPasswordInput)
+                ZStack(alignment: .trailing) {
+                    Group {
+                        if showReauthPassword {
+                            TextField("Password", text: $reauthPasswordInput)
+                                .autocapitalization(.none)
+                                .autocorrectionDisabled()
+                        } else {
+                            SecureField("Password", text: $reauthPasswordInput)
+                        }
+                    }
                     .font(.custom("DM Sans", size: 15))
                     .foregroundColor(Color.white.opacity(0.9))
                     .tint(Color(red: 0.627, green: 0.471, blue: 1.0))
                     .padding(.horizontal, 18)
                     .padding(.vertical, 14)
-                    .background(
-                        RoundedRectangle(cornerRadius: 12)
-                            .fill(Color.white.opacity(0.04))
-                            .overlay(RoundedRectangle(cornerRadius: 12)
-                                .stroke(Color.white.opacity(0.08), lineWidth: 1.5))
-                    )
-                    .padding(.horizontal, 24)
-                    .padding(.bottom, 20)
+                    .padding(.trailing, 44)
+
+                    Button {
+                        showReauthPassword.toggle()
+                    } label: {
+                        Image(systemName: showReauthPassword ? "eye.slash" : "eye")
+                            .font(.system(size: 15, weight: .light))
+                            .foregroundColor(Color.white.opacity(0.35))
+                            .padding(.trailing, 14)
+                    }
+                    .buttonStyle(.plain)
+                }
+                .background(
+                    RoundedRectangle(cornerRadius: 12)
+                        .fill(Color.white.opacity(0.04))
+                        .overlay(RoundedRectangle(cornerRadius: 12)
+                            .stroke(Color.white.opacity(0.08), lineWidth: 1.5))
+                )
+                .padding(.horizontal, 24)
+                .padding(.bottom, 20)
 
                 Button {
                     let password = reauthPasswordInput
@@ -285,9 +302,11 @@ struct LuniferSettings: View {
     // ── MARK: Private helpers ──────────────────────────────────────
 
     // ── Account deletion ──────────────────────────────────────────
-    // Deletes Firestore data first (best-effort), then calls the server-side
-    // deleteAccount function via the Admin SDK. If the session has expired,
-    // re-authenticates using the user's original sign-in provider then retries.
+    // Deletes Firestore data first (best-effort), then deletes the Firebase
+    // Auth account. If the session is stale (requiresRecentLogin), the user
+    // is prompted to enter their password. If they signed in via Google,
+    // Apple, or Microsoft without a linked password, a clear message directs
+    // them to sign out and back in instead — no complex OAuth re-auth needed.
 
     private func performDeletion() async {
         guard let user = Auth.auth().currentUser else {
@@ -297,6 +316,24 @@ struct LuniferSettings: View {
         }
         isDeletingAccount = true
 
+        // ── Cancel all AlarmKit alarms ────────────────────────────
+        // Must happen before user.delete() so AlarmKit alarms don't fire
+        // on this device after the account no longer exists.
+        await LuniferAlarm.shared.cancelAlarm()
+        await LuniferAlarm.shared.cancelAllAddedAlarms()
+
+        // ── Disconnect wearables from Cloudflare KV ───────────────
+        // Fire backend disconnect calls while the Firebase ID token is still
+        // valid (before user.delete()). Each disconnect() spawns a background
+        // Task for the network request and immediately clears local state.
+        if AppPreferencesStore.shared.whoopConnected {
+            WhoopManager.shared.disconnect()
+        }
+        if AppPreferencesStore.shared.ouraConnected {
+            OuraManager.shared.disconnect()
+        }
+
+        // ── Firestore cleanup ─────────────────────────────────────
         let db      = Firestore.firestore()
         let userDoc = db.collection("users").document(user.uid)
         do {
@@ -315,8 +352,17 @@ struct LuniferSettings: View {
             isDeletingAccount = false
             dismiss()
         } catch let nsError as NSError where nsError.code == AuthErrorCode.requiresRecentLogin.rawValue {
+            // Session is stale — ask the user to re-enter their password.
             do {
-                try await reauthenticate(user: user)
+                let password = try await withCheckedThrowingContinuation { (cont: CheckedContinuation<String, Error>) in
+                    reauthPasswordContinuation = cont
+                    showReauthPasswordSheet = true
+                }
+                let credential = EmailAuthProvider.credential(
+                    withEmail: user.email ?? "",
+                    password: password
+                )
+                try await user.reauthenticate(with: credential)
                 try await user.delete()
                 clearLocalAccountData()
                 isDeletingAccount = false
@@ -325,7 +371,7 @@ struct LuniferSettings: View {
                 isDeletingAccount = false
             } catch {
                 isDeletingAccount = false
-                deleteErrorMessage = (error as NSError).localizedDescription
+                deleteErrorMessage = "Couldn't verify your credentials. If you signed in with Google, Apple, or Microsoft, please sign out and sign back in, then try deleting your account again."
                 showDeleteErrorAlert = true
             }
         } catch let nsError as NSError {
@@ -334,198 +380,6 @@ struct LuniferSettings: View {
             showDeleteErrorAlert = true
             print("❌ Account deletion failed: \(nsError.localizedDescription)")
         }
-    }
-
-    /// Re-authenticates using whichever provider the user originally signed
-    /// in with. Called automatically when Firebase rejects deletion due to
-    /// an expired session. Google/Apple/Microsoft re-auth happens via their
-    /// respective OAuth flows; email users are prompted for their password.
-    @MainActor
-    private func reauthenticate(user: FirebaseAuth.User) async throws {
-        let providerID = user.providerData.first?.providerID ?? ""
-
-        switch providerID {
-
-        case "google.com":
-            guard let windowScene = UIApplication.shared.connectedScenes
-                .compactMap({ $0 as? UIWindowScene })
-                .first(where: { $0.activationState == .foregroundActive }),
-                  let window = windowScene.windows.first(where: { $0.isKeyWindow }),
-                  let rootVC = window.rootViewController else {
-                throw NSError(domain: "LuniferAuth", code: -1,
-                              userInfo: [NSLocalizedDescriptionKey: "Unable to present sign in."])
-            }
-            var presentingVC = rootVC
-            while let presented = presentingVC.presentedViewController { presentingVC = presented }
-            let result = try await GIDSignIn.sharedInstance.signIn(withPresenting: presentingVC)
-            guard let idToken = result.user.idToken?.tokenString else {
-                throw NSError(domain: "LuniferAuth", code: -1,
-                              userInfo: [NSLocalizedDescriptionKey: "Google re-authentication failed."])
-            }
-            let googleCredential = GoogleAuthProvider.credential(
-                withIDToken: idToken,
-                accessToken: result.user.accessToken.tokenString
-            )
-            try await user.reauthenticate(with: googleCredential)
-
-        case "apple.com":
-            let rawNonce = SettingsAppleNonce.makeRandomNonce()
-            let request  = ASAuthorizationAppleIDProvider().createRequest()
-            request.requestedScopes = [.fullName, .email]
-            request.nonce = SettingsAppleNonce.sha256(rawNonce)
-            let coordinator = SettingsAppleCoordinator()
-            let controller  = ASAuthorizationController(authorizationRequests: [request])
-            controller.delegate = coordinator
-            controller.presentationContextProvider = coordinator
-            let appleCredential = try await coordinator.perform(controller: controller)
-            guard let tokenData   = appleCredential.identityToken,
-                  let tokenString = String(data: tokenData, encoding: .utf8) else {
-                throw NSError(domain: "LuniferAuth", code: -1,
-                              userInfo: [NSLocalizedDescriptionKey: "Apple re-authentication failed."])
-            }
-            let appleFirebaseCredential = OAuthProvider.appleCredential(
-                withIDToken: tokenString,
-                rawNonce: rawNonce,
-                fullName: appleCredential.fullName
-            )
-            try await user.reauthenticate(with: appleFirebaseCredential)
-
-        case "microsoft.com":
-            // Direct PKCE OAuth with Microsoft — bypasses Firebase's /__/auth/handler
-            // redirect page, which loses iOS sessionStorage and causes the
-            // "missing initial state" error that broke this flow previously.
-            let msCredential = try await msReauthenticate()
-            try await user.reauthenticate(with: msCredential)
-
-        default:
-            // Email/password — collect password via sheet then re-authenticate.
-            let password = try await withCheckedThrowingContinuation { (cont: CheckedContinuation<String, Error>) in
-                reauthPasswordContinuation = cont
-                showReauthPasswordSheet = true
-            }
-            let emailCredential = EmailAuthProvider.credential(
-                withEmail: user.email ?? "",
-                password: password
-            )
-            try await user.reauthenticate(with: emailCredential)
-        }
-    }
-
-    // ── Microsoft PKCE re-auth ────────────────────────────────────
-    // Presents Microsoft's OAuth endpoint directly via ASWebAuthenticationSession,
-    // exchanges the auth code for tokens using PKCE (no client secret on device),
-    // then wraps the result in a Firebase OAuthCredential for reauthenticate(with:).
-
-    @MainActor
-    private func msReauthenticate() async throws -> AuthCredential {
-        let clientID    = "55d084c8-c89d-4023-95c9-c20ac76a9a30"
-        let redirectURI = "msauth.Dream-AI.Lunifer://auth"
-
-        let verifier  = generateMSVerifier()
-        let challenge = generateMSChallenge(from: verifier)
-
-        var comps = URLComponents(string: "https://login.microsoftonline.com/common/oauth2/v2.0/authorize")!
-        comps.queryItems = [
-            URLQueryItem(name: "client_id",             value: clientID),
-            URLQueryItem(name: "response_type",         value: "code"),
-            URLQueryItem(name: "redirect_uri",          value: redirectURI),
-            URLQueryItem(name: "scope",                 value: "openid profile email"),
-            URLQueryItem(name: "response_mode",         value: "query"),
-            URLQueryItem(name: "state",                 value: UUID().uuidString),
-            URLQueryItem(name: "code_challenge",        value: challenge),
-            URLQueryItem(name: "code_challenge_method", value: "S256"),
-            URLQueryItem(name: "prompt",                value: "select_account")
-        ]
-        guard let authURL = comps.url else {
-            throw NSError(domain: "LuniferAuth", code: -1,
-                          userInfo: [NSLocalizedDescriptionKey: "Could not build Microsoft auth URL."])
-        }
-
-        let coordinator = MicrosoftReauthCoordinator()
-        let callbackURL: URL = try await withCheckedThrowingContinuation { continuation in
-            let session = ASWebAuthenticationSession(
-                url: authURL,
-                callbackURLScheme: "msauth.Dream-AI.Lunifer"
-            ) { url, error in
-                if let asError = error as? ASWebAuthenticationSessionError,
-                   asError.code == .canceledLogin {
-                    continuation.resume(throwing: CancellationError())
-                } else if let url = url {
-                    continuation.resume(returning: url)
-                } else {
-                    continuation.resume(throwing: error ?? NSError(
-                        domain: "LuniferAuth", code: -1,
-                        userInfo: [NSLocalizedDescriptionKey: "Microsoft sign-in failed."]))
-                }
-            }
-            session.presentationContextProvider = coordinator
-            session.prefersEphemeralWebBrowserSession = false
-            msReauthSession     = session
-            msReauthCoordinator = coordinator
-            session.start()
-        }
-        msReauthSession     = nil
-        msReauthCoordinator = nil
-
-        guard let callbackComps = URLComponents(url: callbackURL, resolvingAgainstBaseURL: false),
-              let code = callbackComps.queryItems?.first(where: { $0.name == "code" })?.value
-        else {
-            throw NSError(domain: "LuniferAuth", code: -1,
-                          userInfo: [NSLocalizedDescriptionKey: "Microsoft auth code not received."])
-        }
-
-        // Exchange auth code for tokens via PKCE — no client secret required on device.
-        var tokenRequest = URLRequest(url: URL(string: "https://login.microsoftonline.com/common/oauth2/v2.0/token")!)
-        tokenRequest.httpMethod = "POST"
-        tokenRequest.setValue("application/x-www-form-urlencoded", forHTTPHeaderField: "Content-Type")
-        let body: [String: String] = [
-            "client_id":     clientID,
-            "grant_type":    "authorization_code",
-            "code":          code,
-            "redirect_uri":  redirectURI,
-            "code_verifier": verifier,
-            "scope":         "openid profile email"
-        ]
-        tokenRequest.httpBody = body
-            .map { "\($0.key)=\($0.value.addingPercentEncoding(withAllowedCharacters: .urlQueryAllowed) ?? "")" }
-            .joined(separator: "&")
-            .data(using: .utf8)
-
-        let (data, _) = try await URLSession.shared.data(for: tokenRequest)
-
-        struct MSTokenResponse: Decodable {
-            let access_token: String
-            let id_token: String?
-        }
-        let tokens = try JSONDecoder().decode(MSTokenResponse.self, from: data)
-        guard let idToken = tokens.id_token else {
-            throw NSError(domain: "LuniferAuth", code: -1,
-                          userInfo: [NSLocalizedDescriptionKey: "Microsoft did not return an ID token."])
-        }
-
-        return OAuthProvider.credential(
-            withProviderID: "microsoft.com",
-            idToken: idToken,
-            rawNonce: nil,
-            accessToken: tokens.access_token
-        )
-    }
-
-    private func generateMSVerifier() -> String {
-        var buffer = [UInt8](repeating: 0, count: 64)
-        _ = SecRandomCopyBytes(kSecRandomDefault, buffer.count, &buffer)
-        return Data(buffer).base64EncodedString()
-            .replacingOccurrences(of: "+", with: "-")
-            .replacingOccurrences(of: "/", with: "_")
-            .replacingOccurrences(of: "=", with: "")
-    }
-
-    private func generateMSChallenge(from verifier: String) -> String {
-        let digest = SHA256.hash(data: Data(verifier.utf8))
-        return Data(digest).base64EncodedString()
-            .replacingOccurrences(of: "+", with: "-")
-            .replacingOccurrences(of: "/", with: "_")
-            .replacingOccurrences(of: "=", with: "")
     }
 
     private func clearLocalAccountData() {
@@ -1918,80 +1772,6 @@ struct AboutSettingsView: View {
             }
         }
         .toolbar(.hidden, for: .navigationBar)
-    }
-}
-
-// ── MARK: Microsoft re-auth coordinator ──────────────────────
-
-private final class MicrosoftReauthCoordinator: NSObject, ASWebAuthenticationPresentationContextProviding {
-    func presentationAnchor(for session: ASWebAuthenticationSession) -> ASPresentationAnchor {
-        UIApplication.shared.connectedScenes
-            .compactMap({ $0 as? UIWindowScene })
-            .first(where: { $0.activationState == .foregroundActive })?
-            .windows.first(where: { $0.isKeyWindow }) ?? UIWindow()
-    }
-}
-
-// ── MARK: Apple re-auth helpers ───────────────────────────────
-
-private enum SettingsAppleNonce {
-    static func makeRandomNonce(length: Int = 32) -> String {
-        let charset: [Character] = Array("0123456789ABCDEFGHIJKLMNOPQRSTUVXYZabcdefghijklmnopqrstuvwxyz-._")
-        var result = ""
-        var remaining = length
-        while remaining > 0 {
-            var randoms = [UInt8](repeating: 0, count: 16)
-            _ = SecRandomCopyBytes(kSecRandomDefault, randoms.count, &randoms)
-            for random in randoms where remaining > 0 {
-                if random < charset.count { result.append(charset[Int(random)]); remaining -= 1 }
-            }
-        }
-        return result
-    }
-
-    static func sha256(_ input: String) -> String {
-        let hashed = SHA256.hash(data: Data(input.utf8))
-        return hashed.map { String(format: "%02x", $0) }.joined()
-    }
-}
-
-private final class SettingsAppleCoordinator: NSObject,
-                                              ASAuthorizationControllerDelegate,
-                                              ASAuthorizationControllerPresentationContextProviding {
-    private var continuation: CheckedContinuation<ASAuthorizationAppleIDCredential, Error>?
-    private var controller: ASAuthorizationController?
-
-    func perform(controller: ASAuthorizationController) async throws -> ASAuthorizationAppleIDCredential {
-        try await withCheckedThrowingContinuation { cont in
-            self.continuation = cont
-            self.controller   = controller
-            controller.performRequests()
-        }
-    }
-
-    func authorizationController(controller: ASAuthorizationController,
-                                 didCompleteWithAuthorization authorization: ASAuthorization) {
-        defer { self.controller = nil }
-        guard let credential = authorization.credential as? ASAuthorizationAppleIDCredential else {
-            continuation?.resume(throwing: NSError(domain: "LuniferAuth.Apple", code: -1,
-                                                   userInfo: [NSLocalizedDescriptionKey: "Unexpected credential type."]))
-            continuation = nil; return
-        }
-        continuation?.resume(returning: credential)
-        continuation = nil
-    }
-
-    func authorizationController(controller: ASAuthorizationController, didCompleteWithError error: Error) {
-        defer { self.controller = nil }
-        continuation?.resume(throwing: error)
-        continuation = nil
-    }
-
-    func presentationAnchor(for controller: ASAuthorizationController) -> ASPresentationAnchor {
-        UIApplication.shared.connectedScenes
-            .compactMap({ $0 as? UIWindowScene })
-            .first(where: { $0.activationState == .foregroundActive })?
-            .windows.first(where: { $0.isKeyWindow }) ?? UIWindow()
     }
 }
 
