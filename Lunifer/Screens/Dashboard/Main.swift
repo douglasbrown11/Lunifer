@@ -453,6 +453,8 @@ struct LuniferMain: View {
             resolvedAlarmDate = await LuniferAlarm.shared.resolveAlarmDate(answers: answers, targetDay: tomorrow)
 
             await SleepTracker.shared.startTracking()
+            // Pull Apple Watch sleep from HealthKit (authoritative nights) if connected.
+            HealthKitManager.shared.refreshIfNeeded()
             BatteryAlarmNotification.shared.startMonitoring()
             LuniferAlarm.shared.startAdaptiveRescheduling()
             await WakeNotification.shared.schedule(wakeDate: calculatedAlarmDate, answers: answers)

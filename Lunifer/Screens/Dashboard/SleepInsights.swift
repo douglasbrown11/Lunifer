@@ -121,7 +121,8 @@ struct SleepInsights: View {
                         .font(.libreFranklin(size: 44))
                         .foregroundColor(Color.white.opacity(0.95))
 
-                    // "recommended to you via [logo]" — or plain text if no wearable
+                    // "recommended to you via [logo]" — only shown when a wearable
+                    // is the source. No plain-text caption when there's no wearable.
                     if let recommendation = wearableRecommendation {
                         HStack(spacing: 6) {
                             Text("recommended to you via")
@@ -134,10 +135,6 @@ struct SleepInsights: View {
                                 .frame(height: 13)
                         }
                         .transition(.opacity)
-                    } else {
-                        Text("recommended for you")
-                            .font(.custom("DM Sans", size: 13))
-                            .foregroundColor(Color.white.opacity(0.4))
                     }
                 }
                 .frame(maxWidth: .infinity)
@@ -227,6 +224,7 @@ struct SleepInsights: View {
             guard !isRunningPreview else { return }
             WhoopManager.shared.refreshIfNeeded()
             OuraManager.shared.refreshIfNeeded()
+            HealthKitManager.shared.refreshIfNeeded()
         }
         .onChange(of: selectedRange) { _, _ in
             syncSelectedPoint(preferLatest: true)

@@ -28,6 +28,9 @@ struct LuniferSettings: View {
     @State private var reauthPasswordContinuation: CheckedContinuation<String, Error>?
     @State private var showReauthExplanationAlert = false
     @State private var reauthExplanationContinuation: CheckedContinuation<Void, Error>?
+    // Held alive for the duration of the Microsoft PKCE re-auth session
+    @State private var msReauthSession: ASWebAuthenticationSession? = nil
+    @State private var msReauthCoordinator: MicrosoftReauthCoordinator? = nil
 
     private var userEmail: String {
         guard ProcessInfo.processInfo.environment["XCODE_RUNNING_FOR_PREVIEWS"] != "1" else {
@@ -388,17 +391,10 @@ struct LuniferSettings: View {
             try await user.reauthenticate(with: appleFirebaseCredential)
 
         case "microsoft.com":
-            let msProvider = OAuthProvider(providerID: "microsoft.com")
-            msProvider.scopes = ["email", "profile", "openid"]
-            msProvider.customParameters = ["prompt": "select_account"]
-            let msCredential = try await withCheckedThrowingContinuation { (cont: CheckedContinuation<AuthCredential, Error>) in
-                msProvider.getCredentialWith(nil) { credential, error in
-                    if let error           { cont.resume(throwing: error) }
-                    else if let credential { cont.resume(returning: credential) }
-                    else { cont.resume(throwing: NSError(domain: "LuniferAuth", code: -1,
-                                                         userInfo: [NSLocalizedDescriptionKey: "No credential returned."])) }
-                }
-            }
+            // Direct PKCE OAuth with Microsoft — bypasses Firebase's /__/auth/handler
+            // redirect page, which loses iOS sessionStorage and causes the
+            // "missing initial state" error that broke this flow previously.
+            let msCredential = try await msReauthenticate()
             try await user.reauthenticate(with: msCredential)
 
         default:
@@ -413,6 +409,123 @@ struct LuniferSettings: View {
             )
             try await user.reauthenticate(with: emailCredential)
         }
+    }
+
+    // ── Microsoft PKCE re-auth ────────────────────────────────────
+    // Presents Microsoft's OAuth endpoint directly via ASWebAuthenticationSession,
+    // exchanges the auth code for tokens using PKCE (no client secret on device),
+    // then wraps the result in a Firebase OAuthCredential for reauthenticate(with:).
+
+    @MainActor
+    private func msReauthenticate() async throws -> AuthCredential {
+        let clientID    = "55d084c8-c89d-4023-95c9-c20ac76a9a30"
+        let redirectURI = "msauth.Dream-AI.Lunifer://auth"
+
+        let verifier  = generateMSVerifier()
+        let challenge = generateMSChallenge(from: verifier)
+
+        var comps = URLComponents(string: "https://login.microsoftonline.com/common/oauth2/v2.0/authorize")!
+        comps.queryItems = [
+            URLQueryItem(name: "client_id",             value: clientID),
+            URLQueryItem(name: "response_type",         value: "code"),
+            URLQueryItem(name: "redirect_uri",          value: redirectURI),
+            URLQueryItem(name: "scope",                 value: "openid profile email"),
+            URLQueryItem(name: "response_mode",         value: "query"),
+            URLQueryItem(name: "state",                 value: UUID().uuidString),
+            URLQueryItem(name: "code_challenge",        value: challenge),
+            URLQueryItem(name: "code_challenge_method", value: "S256"),
+            URLQueryItem(name: "prompt",                value: "select_account")
+        ]
+        guard let authURL = comps.url else {
+            throw NSError(domain: "LuniferAuth", code: -1,
+                          userInfo: [NSLocalizedDescriptionKey: "Could not build Microsoft auth URL."])
+        }
+
+        let coordinator = MicrosoftReauthCoordinator()
+        let callbackURL: URL = try await withCheckedThrowingContinuation { continuation in
+            let session = ASWebAuthenticationSession(
+                url: authURL,
+                callbackURLScheme: "msauth.Dream-AI.Lunifer"
+            ) { url, error in
+                if let asError = error as? ASWebAuthenticationSessionError,
+                   asError.code == .canceledLogin {
+                    continuation.resume(throwing: CancellationError())
+                } else if let url = url {
+                    continuation.resume(returning: url)
+                } else {
+                    continuation.resume(throwing: error ?? NSError(
+                        domain: "LuniferAuth", code: -1,
+                        userInfo: [NSLocalizedDescriptionKey: "Microsoft sign-in failed."]))
+                }
+            }
+            session.presentationContextProvider = coordinator
+            session.prefersEphemeralWebBrowserSession = false
+            msReauthSession     = session
+            msReauthCoordinator = coordinator
+            session.start()
+        }
+        msReauthSession     = nil
+        msReauthCoordinator = nil
+
+        guard let callbackComps = URLComponents(url: callbackURL, resolvingAgainstBaseURL: false),
+              let code = callbackComps.queryItems?.first(where: { $0.name == "code" })?.value
+        else {
+            throw NSError(domain: "LuniferAuth", code: -1,
+                          userInfo: [NSLocalizedDescriptionKey: "Microsoft auth code not received."])
+        }
+
+        // Exchange auth code for tokens via PKCE — no client secret required on device.
+        var tokenRequest = URLRequest(url: URL(string: "https://login.microsoftonline.com/common/oauth2/v2.0/token")!)
+        tokenRequest.httpMethod = "POST"
+        tokenRequest.setValue("application/x-www-form-urlencoded", forHTTPHeaderField: "Content-Type")
+        let body: [String: String] = [
+            "client_id":     clientID,
+            "grant_type":    "authorization_code",
+            "code":          code,
+            "redirect_uri":  redirectURI,
+            "code_verifier": verifier,
+            "scope":         "openid profile email"
+        ]
+        tokenRequest.httpBody = body
+            .map { "\($0.key)=\($0.value.addingPercentEncoding(withAllowedCharacters: .urlQueryAllowed) ?? "")" }
+            .joined(separator: "&")
+            .data(using: .utf8)
+
+        let (data, _) = try await URLSession.shared.data(for: tokenRequest)
+
+        struct MSTokenResponse: Decodable {
+            let access_token: String
+            let id_token: String?
+        }
+        let tokens = try JSONDecoder().decode(MSTokenResponse.self, from: data)
+        guard let idToken = tokens.id_token else {
+            throw NSError(domain: "LuniferAuth", code: -1,
+                          userInfo: [NSLocalizedDescriptionKey: "Microsoft did not return an ID token."])
+        }
+
+        return OAuthProvider.credential(
+            withProviderID: "microsoft.com",
+            idToken: idToken,
+            rawNonce: nil,
+            accessToken: tokens.access_token
+        )
+    }
+
+    private func generateMSVerifier() -> String {
+        var buffer = [UInt8](repeating: 0, count: 64)
+        _ = SecRandomCopyBytes(kSecRandomDefault, buffer.count, &buffer)
+        return Data(buffer).base64EncodedString()
+            .replacingOccurrences(of: "+", with: "-")
+            .replacingOccurrences(of: "/", with: "_")
+            .replacingOccurrences(of: "=", with: "")
+    }
+
+    private func generateMSChallenge(from verifier: String) -> String {
+        let digest = SHA256.hash(data: Data(verifier.utf8))
+        return Data(digest).base64EncodedString()
+            .replacingOccurrences(of: "+", with: "-")
+            .replacingOccurrences(of: "/", with: "_")
+            .replacingOccurrences(of: "=", with: "")
     }
 
     private func clearLocalAccountData() {
@@ -909,7 +1022,9 @@ struct SleepAndWearablesSettingsView: View {
 
     @ObservedObject private var whoopManager = WhoopManager.shared
     @ObservedObject private var ouraManager  = OuraManager.shared
+    @ObservedObject private var healthKitManager = HealthKitManager.shared
 
+    @AppStorage("healthKitConnected") private var healthKitConnected: Bool = false
     @AppStorage(AppPreferencesStore.Keys.hasWearable)               private var hasWearable: Bool      = false
     @AppStorage(AppPreferencesStore.Keys.whoopConnected)            private var whoopConnected: Bool   = false
     @AppStorage(AppPreferencesStore.Keys.whoopRecommendedSleepHours) private var whoopSleepHours: Double = 0
@@ -1076,6 +1191,71 @@ struct SleepAndWearablesSettingsView: View {
                                     }
                                 )
                             }
+                        }
+
+                        // ── Sleep tracking source (Apple Watch / Health) ──
+                        // Apple Watch is a measured-sleep data source, not a
+                        // recommendation source, so it sits separately from the
+                        // WHOOP/Oura recommendation wearables above and has no
+                        // one-wearable exclusivity.
+                        SettingsSection(title: "Sleep Tracking") {
+                            HStack(spacing: 12) {
+                                Image(systemName: "applewatch")
+                                    .font(.system(size: 20))
+                                    .foregroundColor(Color.white.opacity(0.85))
+                                VStack(alignment: .leading, spacing: 4) {
+                                    Text("Apple Watch")
+                                        .font(.custom("DM Sans", size: 14))
+                                        .foregroundColor(Color.white.opacity(0.85))
+                                    Text("Use Apple Health sleep data for more accurate insights")
+                                        .font(.custom("DM Sans", size: 12))
+                                        .foregroundColor(Color.white.opacity(0.35))
+                                        .fixedSize(horizontal: false, vertical: true)
+                                }
+                                Spacer()
+                                if healthKitManager.isLoading {
+                                    ProgressView()
+                                        .tint(Color(red: 0.627, green: 0.471, blue: 1.0))
+                                        .scaleEffect(0.8)
+                                } else if healthKitConnected {
+                                    Button {
+                                        HealthKitManager.shared.disconnect()
+                                    } label: {
+                                        Text("Disconnect")
+                                            .font(.custom("DM Sans", size: 13))
+                                            .foregroundColor(Color.red.opacity(0.7))
+                                    }
+                                } else {
+                                    Button {
+                                        Task { await HealthKitManager.shared.connect() }
+                                    } label: {
+                                        Text("Connect")
+                                            .font(.custom("DM Sans", size: 13))
+                                            .foregroundColor(Color(red: 0.627, green: 0.471, blue: 1.0))
+                                            .padding(.horizontal, 16)
+                                            .padding(.vertical, 8)
+                                            .background(
+                                                Capsule()
+                                                    .fill(Color(red: 0.627, green: 0.471, blue: 1.0).opacity(0.12))
+                                                    .overlay(
+                                                        Capsule()
+                                                            .stroke(Color(red: 0.627, green: 0.471, blue: 1.0).opacity(0.3), lineWidth: 1)
+                                                    )
+                                            )
+                                    }
+                                    .buttonStyle(.plain)
+                                }
+                            }
+                            .padding(.horizontal, 16)
+                            .padding(.vertical, 14)
+                            .background(
+                                RoundedRectangle(cornerRadius: 12)
+                                    .fill(Color.white.opacity(0.04))
+                                    .overlay(
+                                        RoundedRectangle(cornerRadius: 12)
+                                            .stroke(Color.white.opacity(0.08), lineWidth: 1)
+                                    )
+                            )
                         }
                     }
                     .padding(.horizontal, 24)
@@ -1738,6 +1918,17 @@ struct AboutSettingsView: View {
             }
         }
         .toolbar(.hidden, for: .navigationBar)
+    }
+}
+
+// ── MARK: Microsoft re-auth coordinator ──────────────────────
+
+private final class MicrosoftReauthCoordinator: NSObject, ASWebAuthenticationPresentationContextProviding {
+    func presentationAnchor(for session: ASWebAuthenticationSession) -> ASPresentationAnchor {
+        UIApplication.shared.connectedScenes
+            .compactMap({ $0 as? UIWindowScene })
+            .first(where: { $0.activationState == .foregroundActive })?
+            .windows.first(where: { $0.isKeyWindow }) ?? UIWindow()
     }
 }
 
