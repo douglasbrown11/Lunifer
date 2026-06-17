@@ -8,21 +8,45 @@ final class SleepHistoryStore {
     private let defaults = UserDefaults.standard
     private let storageKey = "lunifer_sleep_history"
 
-    func recordNight(date: Date, duration: Double, onset: Date?, wake: Date?) {
+    /// Source of a recorded night. Wearable-measured nights (Apple Watch, WHOOP,
+    /// Oura) outrank the on-device CoreMotion estimate so the backup tracker never
+    /// clobbers accurate wearable data for the same night.
+    enum SleepSource: String {
+        case motion    // on-device CoreMotion estimate (backup)
+        case wearable  // Apple Watch / WHOOP / Oura measured (authoritative)
+
+        var priority: Int { self == .wearable ? 1 : 0 }
+    }
+
+    func recordNight(date: Date, duration: Double, onset: Date?, wake: Date?, source: SleepSource = .motion) {
         var entries = loadRawEntries()
         let referenceDate = wake ?? date
+
+        let existingIndex = entries.firstIndex(where: { entry in
+            guard let entryDate = entryReferenceDate(entry) else { return false }
+            return Calendar.current.isDate(entryDate, inSameDayAs: referenceDate)
+        })
+
+        // Per-night precedence: a lower-priority source (motion) must not overwrite
+        // a night already recorded by a higher-priority source (a wearable). This is
+        // what lets the CoreMotion tracker keep running as a nightly backup without
+        // degrading accurate wearable nights when the wearable IS worn.
+        if let idx = existingIndex {
+            let existingPriority = (entries[idx]["sourcePriority"] as? Int) ?? 0
+            if source.priority < existingPriority { return }
+        }
+
         let newEntry: [String: Any] = [
             "date": referenceDate.timeIntervalSince1970,
             "duration": duration,
             "onset": onset?.timeIntervalSince1970 ?? 0,
-            "wake": wake?.timeIntervalSince1970 ?? 0
+            "wake": wake?.timeIntervalSince1970 ?? 0,
+            "source": source.rawValue,
+            "sourcePriority": source.priority
         ]
 
-        if let existingIndex = entries.firstIndex(where: { entry in
-            guard let entryDate = entryReferenceDate(entry) else { return false }
-            return Calendar.current.isDate(entryDate, inSameDayAs: referenceDate)
-        }) {
-            entries[existingIndex] = newEntry
+        if let idx = existingIndex {
+            entries[idx] = newEntry
         } else {
             entries.append(newEntry)
         }
@@ -40,7 +64,8 @@ final class SleepHistoryStore {
 
         var data: [String: Any] = [
             "date": referenceDate,
-            "durationHours": duration
+            "durationHours": duration,
+            "source": source.rawValue
         ]
         if let onset { data["sleepOnset"] = onset }
         if let wake { data["wakeTime"] = wake }
