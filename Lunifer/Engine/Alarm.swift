@@ -94,10 +94,6 @@ class LuniferAlarm: ObservableObject {
     private var originalScheduledWakeTime: Date? = nil
     private var adaptiveTimer: Timer? = nil
 
-    /// True once the alarm has been adjusted for the user's actual sleep
-    /// onset. Prevents repeated adjustments on subsequent timer ticks.
-    private var sleepOnsetAdjusted: Bool = false
-
     /// Maximum number of hours the alarm can be pushed later than the original time.
     private let maxAdaptivePushHours: Double = 3.0
 
@@ -170,7 +166,6 @@ class LuniferAlarm: ObservableObject {
 
         // Reset adaptive state so this new schedule becomes the reference point.
         originalScheduledWakeTime = nil
-        sleepOnsetAdjusted = false
 
         // Step 1: Make sure we have permission first
         // If we don't, ask for it. If user still says no, stop here.
@@ -965,99 +960,53 @@ class LuniferAlarm: ObservableObject {
             return
         }
 
-        var newWakeTime: Date? = nil
+        // ── UNIFIED SLEEP-ONSET MECHANISM ───────────────────
+        // Replaces the old two-path (A/B) logic with a single rule:
+        //
+        //   proposedWakeTime = (estimatedSleepOnset ?? now) + sleepHours
+        //
+        // Before sleep onset is known, `now` acts as a running proxy so
+        // the alarm is always pushed far enough ahead if the user is still
+        // awake past bedtime. Once onset is detected by the sleep tracker,
+        // the calculation anchors to the actual onset time instead, giving
+        // the same precision as the old Path A without needing a separate
+        // branch or a one-shot flag.
+        //
+        // The guard below means nothing happens before bedtime — the
+        // proposed time is already earlier than the current alarm so the
+        // minimum-change threshold filters it out automatically.
 
-        if SleepTracker.shared.isAsleep {
-            // ── PATH A: User fell asleep ─────────────────────
-            // Adjust the alarm once based on when they actually
-            // fell asleep compared to the expected bedtime.
-            //
-            // Example — late:
-            //   Expected bedtime 11:30 PM, alarm 7:30 AM
-            //   Fell asleep at 11:45 PM (+15 min)
-            //   → New alarm 7:45 AM (preserves full sleep)
-            //
-            // Example — early:
-            //   Expected bedtime 11:30 PM, alarm 7:30 AM
-            //   Fell asleep at 11:00 PM (−30 min)
-            //   → New alarm 7:00 AM (wake up earlier, still full sleep)
+        // Only act after bedtime has passed — no point adjusting early.
+        guard now > expectedBedtime else { return }
 
-            guard !sleepOnsetAdjusted else { return }
+        // Use actual sleep onset when available; fall back to now as a proxy.
+        let referenceTime = SleepTracker.shared.estimatedSleepOnset ?? now
+        let proposed = referenceTime.addingTimeInterval(sleepHours * 3600)
 
-            // estimatedSleepOnset becomes available after ~15 min
-            // of consecutive sleep predictions. If it's not set yet
-            // we'll catch it on the next 5-minute tick.
-            guard let onset = SleepTracker.shared.estimatedSleepOnset else { return }
-
-            // Delta: positive = slept later than expected, negative = earlier
-            let delta = onset.timeIntervalSince(expectedBedtime)
-            // Apply delta to the ORIGINAL alarm, not the current one —
-            // Path B may have already pushed currentAlarm forward while
-            // the user was still awake, so using currentAlarm here would
-            // double-count the late-sleep offset.
-            let baseAlarm = originalScheduledWakeTime ?? currentAlarm
-            let proposed = baseAlarm.addingTimeInterval(delta)
-
-            // On the first adjustment, snapshot the original alarm
-            if originalScheduledWakeTime == nil {
-                originalScheduledWakeTime = currentAlarm
-            }
-
-            let adjusted = clamped(proposed)
-
-            // Only reschedule if the shift is meaningful (≥ 2 minutes)
-            guard abs(adjusted.timeIntervalSince(currentAlarm)) >= 2 * 60 else {
-                sleepOnsetAdjusted = true
-                return
-            }
-
-            newWakeTime = adjusted
-            // Flag is set BEFORE the schedule call; it gets saved/restored
-            // below because scheduleAlarm() resets adaptive state.
-            sleepOnsetAdjusted = true
-
-        } else {
-            // ── PATH B: User is still awake past bedtime ─────
-            // Push the alarm later so they still get a full night
-            // of sleep from the moment they eventually fall asleep.
-
-            // Only act after bedtime has passed
-            guard now > expectedBedtime else { return }
-
-            // Minimum wake time if the user fell asleep right now
-            let minimumWakeTime = now.addingTimeInterval(sleepHours * 3600)
-
-            // Current alarm already gives enough sleep — nothing to do
-            guard minimumWakeTime > currentAlarm else { return }
-
-            // On the first push, snapshot the original alarm
-            if originalScheduledWakeTime == nil {
-                originalScheduledWakeTime = currentAlarm
-            }
-
-            let adjusted = clamped(minimumWakeTime)
-
-            // Skip if the change is less than 5 minutes
-            guard adjusted.timeIntervalSince(currentAlarm) >= 5 * 60 else { return }
-
-            newWakeTime = adjusted
+        // Snapshot the original alarm on the first adjustment of the night.
+        if originalScheduledWakeTime == nil {
+            originalScheduledWakeTime = currentAlarm
         }
 
-        guard let newTime = newWakeTime else { return }
+        let adjusted = clamped(proposed)
+
+        // Skip if the change is less than 2 minutes — avoids micro-reschedules
+        // on repeated timer ticks once the alarm has already settled.
+        guard abs(adjusted.timeIntervalSince(currentAlarm)) >= 2 * 60 else { return }
+
+        let newTime = adjusted
 
         let fmt = DateFormatter()
         fmt.dateFormat = "h:mm a"
         let arrow = newTime > currentAlarm ? "→" : "←"
         print("⏰ Adaptive: \(fmt.string(from: currentAlarm)) \(arrow) \(fmt.string(from: newTime))")
 
-        // Preserve adaptive state across the internal reschedule —
-        // scheduleAlarm() resets these, so save and restore them.
+        // Preserve originalScheduledWakeTime across the internal reschedule —
+        // scheduleAlarm() resets it, so save and restore it.
         let savedOriginal = originalScheduledWakeTime!
-        let savedOnsetFlag = sleepOnsetAdjusted
         await scheduleAlarm(for: newTime)
         AdaptiveAlarmStore.shared.updatePendingFinalAlarm(to: newTime)
         originalScheduledWakeTime = savedOriginal
-        sleepOnsetAdjusted = savedOnsetFlag
     }
 }
 
