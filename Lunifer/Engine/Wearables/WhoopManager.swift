@@ -240,7 +240,8 @@ final class WhoopManager: NSObject, ObservableObject, ASWebAuthenticationPresent
                 date: session.wakeTime ?? session.date,
                 duration: session.durationHours,
                 onset: session.sleepOnset,
-                wake: session.wakeTime
+                wake: session.wakeTime,
+                source: .wearable
             )
         }
     }

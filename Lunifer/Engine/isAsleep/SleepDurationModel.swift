@@ -119,8 +119,11 @@ final class SleepHistoryManager {
     private let store = SleepHistoryStore.shared
 
     /// Records a completed night of sleep locally and syncs to Firestore.
-    func recordNight(date: Date, duration: Double, onset: Date?, wake: Date?) {
-        store.recordNight(date: date, duration: duration, onset: onset, wake: wake)
+    /// `source` controls per-night precedence — wearable nights outrank the
+    /// on-device CoreMotion estimate (see `SleepHistoryStore.SleepSource`).
+    func recordNight(date: Date, duration: Double, onset: Date?, wake: Date?,
+                     source: SleepHistoryStore.SleepSource = .motion) {
+        store.recordNight(date: date, duration: duration, onset: onset, wake: wake, source: source)
     }
 
     /// Returns sleep history entries from the last `days` calendar days, most recent first.

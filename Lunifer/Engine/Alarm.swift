@@ -215,11 +215,16 @@ class LuniferAlarm: ObservableObject {
         // .fixed(date) means "fire at this exact moment"
         // (as opposed to .relative which fires after a countdown)
         do {
+            let alarmID = UUID()
             let _ = try await manager.schedule(
-                id: UUID(),             // A unique ID for this alarm — UUID generates a random one
+                id: alarmID,            // A unique ID for this alarm — UUID generates a random one
                 configuration: .alarm(
                     schedule: .fixed(date),   // Fire at this exact time
-                    attributes: attributes    // Using the design + data we set up above
+                    attributes: attributes,   // Using the design + data we set up above
+                    // App Intent the system runs when this alarm is stopped — from
+                    // the lock screen, Dynamic Island, or in-app — so the next wake
+                    // day is scheduled no matter how the alarm is dismissed.
+                    stopIntent: LuniferStopAlarmIntent(alarmID: alarmID.uuidString)
                 )
             )
 
@@ -764,6 +769,24 @@ class LuniferAlarm: ObservableObject {
             if let answers = SurveyAnswers.loadFromDefaults() {
                 await scheduleNextWakeAlarm(answers: answers)
             }
+        }
+    }
+
+    /// Runs after the main alarm is stopped via the system alert UI (lock screen
+    /// or Dynamic Island), invoked by `LuniferStopAlarmIntent`. The system has
+    /// already stopped the alarm, so this records the dismissal and schedules the
+    /// next wake day — the same tail as the in-app Stop path in `stopAlarm()`.
+    /// This is what keeps the alarm chain running when the user never opens the app.
+    func rescheduleAfterSystemStop() async {
+        AlarmBehaviourLogger.shared.logDismiss(at: Date())
+        DebugAlarmEventStore.shared.log(type: "dismissed")
+        alertingAlarm = nil
+        scheduledWakeTime = nil
+        // The manual override only applied to the alarm that just fired.
+        UserDefaults.standard.set(false, forKey: "overrideActive")
+        UserDefaults.standard.removeObject(forKey: "overrideTimestamp")
+        if let answers = SurveyAnswers.loadFromDefaults() {
+            await scheduleNextWakeAlarm(answers: answers)
         }
     }
 
