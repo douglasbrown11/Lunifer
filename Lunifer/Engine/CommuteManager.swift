@@ -1,7 +1,6 @@
 import Foundation
 import Combine
 import BackgroundTasks
-import MapKit
 import CoreLocation
 
 // ─────────────────────────────────────────────────────────────
@@ -248,14 +247,11 @@ final class CommuteManager: ObservableObject {
             return surveyDuration(from: answers)
         }
 
-        let origin = MKMapItem(placemark: MKPlacemark(coordinate: originCoord))
-
         // Step 1: Calendar event location
         if let eventLocation = CalendarManager.shared.firstEventTomorrow?.location,
            !eventLocation.trimmingCharacters(in: .whitespaces).isEmpty {
-            if let coord = await geocode(eventLocation) {
-                let destination = MKMapItem(placemark: MKPlacemark(coordinate: coord))
-                if let minutes = await routeMinutes(from: origin, to: destination, mode: answers.commuteMode) {
+            if let destCoord = await geocode(eventLocation) {
+                if let minutes = await routeMinutes(from: originCoord, to: destCoord, mode: answers.commuteMode) {
                     print("🚗 Live commute (calendar): \(minutes) min to \(eventLocation)")
                     return minutes
                 }
@@ -278,13 +274,11 @@ final class CommuteManager: ObservableObject {
               !eventLocation.trimmingCharacters(in: .whitespaces).isEmpty else {
             return nil   // No calendar event location to route to
         }
-        guard let coord = await geocode(eventLocation) else {
+        guard let destCoord = await geocode(eventLocation) else {
             return nil   // Geocoding failed
         }
-        let origin      = MKMapItem(placemark: MKPlacemark(coordinate: originCoord))
-        let destination = MKMapItem(placemark: MKPlacemark(coordinate: coord))
-        guard let minutes = await routeMinutes(from: origin, to: destination, mode: answers.commuteMode) else {
-            return nil   // MKDirections request failed
+        guard let minutes = await routeMinutes(from: originCoord, to: destCoord, mode: answers.commuteMode) else {
+            return nil   // ORS request failed
         }
         print("🚗 Live commute (routable check): \(minutes) min to \(eventLocation)")
         return minutes
@@ -300,35 +294,48 @@ final class CommuteManager: ObservableObject {
         }
     }
 
-    /// Issues a single MKDirections request and returns the expected travel time
-    /// in minutes for the fastest route, or nil if the request fails.
-    private static func routeMinutes(from origin: MKMapItem,
-                                     to destination: MKMapItem,
-                                     mode: String) async -> Int? {
-        let request = MKDirections.Request()
-        request.source        = origin
-        request.destination   = destination
-        request.transportType = mkTransportType(for: mode)
-        request.departureDate = Date()
-        do {
-            let response = try await MKDirections(request: request).calculate()
-            return response.routes.first.map { Int($0.expectedTravelTime / 60) }
-        } catch {
-            print("🚗 MKDirections error: \(error.localizedDescription)")
-            return nil
+    // ── OpenRouteService routing ──────────────────────────────
+    // ORS supports driving, walking, cycling, and public transit —
+    // all four modes Lunifer needs. Free tier: 2,000 requests/day.
+
+    private static let orsAPIKey = "eyJvcmciOiI1YjNjZTM1OTc4NTExMTAwMDFjZjYyNDgiLCJpZCI6IjQ4MDcxZTA3YWFiODQ2YThhN2VlNDY0NDdmNDVkYWQ3IiwiaCI6Im11cm11cjY0In0="
+
+    /// Maps a Lunifer commute mode string to an ORS routing profile.
+    private static func orsProfile(for commuteMode: String) -> String {
+        switch commuteMode {
+        case "transit": return "public-transport"
+        case "walk":    return "foot-walking"
+        case "bike":    return "cycling-regular"
+        default:        return "driving-car"
         }
     }
 
-    /// Maps a Lunifer commute mode string to the closest MKDirectionsTransportType.
-    /// Note: MKDirections does not have a dedicated cycling type; "bike" falls back
-    /// to walking, which is the closest available approximation.
-    private static func mkTransportType(for commuteMode: String) -> MKDirectionsTransportType {
-        switch commuteMode {
-        case "transit": return .transit
-        case "walk":    return .walking
-        case "bike":    return .walking   // no cycling type in MKDirections
-        default:        return .automobile
+    /// Requests a route from ORS and returns travel time in minutes, or nil on failure.
+    private static func routeMinutes(from origin: CLLocationCoordinate2D,
+                                     to destination: CLLocationCoordinate2D,
+                                     mode: String) async -> Int? {
+        let profile = orsProfile(for: mode)
+        let urlString = "https://api.openrouteservice.org/v2/directions/\(profile)"
+            + "?api_key=\(orsAPIKey)"
+            + "&start=\(origin.longitude),\(origin.latitude)"
+            + "&end=\(destination.longitude),\(destination.latitude)"
+
+        guard let url = URL(string: urlString) else { return nil }
+
+        do {
+            let (data, _) = try await URLSession.shared.data(from: url)
+            if let json = try JSONSerialization.jsonObject(with: data) as? [String: Any],
+               let features = json["features"] as? [[String: Any]],
+               let first = features.first,
+               let properties = first["properties"] as? [String: Any],
+               let summary = properties["summary"] as? [String: Any],
+               let duration = summary["duration"] as? Double {
+                return Int(duration / 60.0)
+            }
+        } catch {
+            print("🚗 ORS routing error: \(error.localizedDescription)")
         }
+        return nil
     }
 
     // ── Internal — background ─────────────────────────────────
