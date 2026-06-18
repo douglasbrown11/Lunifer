@@ -4,6 +4,7 @@ import FirebaseAuth
 import GoogleSignIn
 import AuthenticationServices
 import CryptoKit
+import Combine
 
 // ── MARK: Types ──────────────────────────────────────────────
 
@@ -67,7 +68,7 @@ final class SigninBackend: ObservableObject {
 
     // ── Email / password ─────────────────────────────────────
 
-    func handleEmailSignin(
+    func EmailSignin(
         email: String,
         password: String,
         mode: SigninMode,
@@ -312,8 +313,7 @@ final class SigninBackend: ObservableObject {
                 ]
                 tokenRequest.httpBody = body
                     .map { "\($0.key)=\($0.value.addingPercentEncoding(withAllowedCharacters: .urlQueryAllowed) ?? "")" }
-                    .joined(separator: "&")
-                    .data(using: .utf8)
+                    .joined(separator: "&")$                    .data(using: .utf8)
 
                 let (data, _) = try await URLSession.shared.data(for: tokenRequest)
 
@@ -329,7 +329,7 @@ final class SigninBackend: ObservableObject {
                 }
 
                 let credential = OAuthProvider.credential(
-                    providerID: AuthProviderID(rawValue: "microsoft.com"),
+                    providerID: .microsoft,
                     idToken: idToken,
                     rawNonce: "",
                     accessToken: tokens.access_token
