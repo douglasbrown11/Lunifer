@@ -2,7 +2,6 @@ import Foundation
 import UIKit
 import Combine
 import CoreMotion
-import UserNotifications
 
 // ─────────────────────────────────────────────────────────────
 // SleepFeatureCollector (Background-Safe)
@@ -31,7 +30,6 @@ import UserNotifications
 //   timeSinceLastInteraction       persisted timestamps + lifecycle
 //   timeOfDay                      system clock
 //   unlockCountLast30Min           persisted interaction log
-//   isSleepFocusActive             UNNotificationSettings
 //   dayOfWeek                      system clock
 //   historicalAvgSleepOnset        rolling average (UserDefaults)
 
@@ -45,7 +43,6 @@ final class SleepFeatureCollector: ObservableObject {
     @Published private(set) var timeSinceLastInteractionMinutes: Double = 0
     @Published private(set) var timeOfDay: Double = 0
     @Published private(set) var unlockCountLast30Min: Int = 0
-    @Published private(set) var isSleepFocusActive: Bool = false
     @Published private(set) var dayOfWeek: Int = 1
     @Published var historicalAvgSleepOnsetWeekday: Double? = nil
     @Published var historicalAvgSleepOnsetWeekend: Double? = nil
@@ -99,7 +96,6 @@ final class SleepFeatureCollector: ObservableObject {
             timeSinceLastInteractionMinutes: timeSinceLastInteractionMinutes,
             timeOfDay: timeOfDay,
             unlockCountLast30Min: unlockCountLast30Min,
-            isSleepFocusActive: isSleepFocusActive,
             dayOfWeek: dayOfWeek,
             historicalAvgSleepOnset: onset
         )
@@ -194,7 +190,6 @@ final class SleepFeatureCollector: ObservableObject {
             timeSinceLastInteractionMinutes: timeSinceInteraction,
             timeOfDay: Double(hour) + Double(minute) / 60.0,
             unlockCountLast30Min: recentInteractions.count,
-            isSleepFocusActive: false, // can't determine retroactively
             dayOfWeek: cal.component(.weekday, from: date),
             historicalAvgSleepOnset: onset
         )
@@ -282,19 +277,6 @@ final class SleepFeatureCollector: ObservableObject {
     }
 
     // ─────────────────────────────────────────────────────────
-    // MARK: - Focus mode detection
-    // ─────────────────────────────────────────────────────────
-
-    private func checkSleepFocusStatus() {
-        UNUserNotificationCenter.current().getNotificationSettings { [weak self] settings in
-            Task { @MainActor [weak self] in
-                let silenced = settings.alertSetting == .disabled
-                self?.isSleepFocusActive = silenced
-            }
-        }
-    }
-
-    // ─────────────────────────────────────────────────────────
     // MARK: - Derived features refresh
     // ─────────────────────────────────────────────────────────
 
@@ -324,9 +306,6 @@ final class SleepFeatureCollector: ObservableObject {
         let log = loadInteractionLog()
         let window = now.addingTimeInterval(-30 * 60)
         unlockCountLast30Min = log.filter { $0 >= window }.count
-
-        // Focus mode
-        checkSleepFocusStatus()
     }
 
     // ─────────────────────────────────────────────────────────
@@ -406,7 +385,6 @@ struct SleepFeatures {
     let timeSinceLastInteractionMinutes: Double
     let timeOfDay: Double
     let unlockCountLast30Min: Int
-    let isSleepFocusActive: Bool
     let dayOfWeek: Int
     let historicalAvgSleepOnset: Double?
 }

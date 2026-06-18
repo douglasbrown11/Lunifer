@@ -12,8 +12,8 @@ import Foundation
 // which demonstrated that phone screen-off patterns alone can
 // estimate sleep onset within ~24 minutes on average.
 //
-// We extend iSenseSleep by adding motion, Focus mode, and
-// historical priors. The model works as follows:
+// We extend iSenseSleep by adding motion and historical priors.
+// The model works as follows:
 //
 //   1. Each feature contributes a score between 0 and 1
 //   2. Each score is multiplied by a weight (importance)
@@ -31,7 +31,7 @@ import Foundation
 //   - Phone inactivity is the #1 signal (iSenseSleep)
 //   - Motion is #2 (actigraphy research)
 //   - Time of day provides a strong prior
-//   - Focus mode and unlock cadence are supporting signals
+//   - Unlock cadence is a supporting signal
 
 struct SleepPredictionModel {
 
@@ -47,7 +47,6 @@ struct SleepPredictionModel {
         var motionStationary: Double   = 0.25   // Second strongest (actigraphy)
         var timeOfDay: Double          = 0.20   // Strong prior
         var unlockCadence: Double      = 0.10   // Supporting signal
-        var sleepFocus: Double         = 0.08   // Intent signal
         var historicalPrior: Double    = 0.07   // Learned pattern
     }
 
@@ -120,11 +119,7 @@ struct SleepPredictionModel {
         //    Linear interpolation between.
         let unlockScore = max(1.0 - Double(features.unlockCountLast30Min) / 5.0, 0)
 
-        // 5. Sleep Focus score
-        //    Binary: 1.0 if Focus mode is silencing notifications, 0.0 otherwise.
-        let focusScore: Double = features.isSleepFocusActive ? 1.0 : 0.0
-
-        // 6. Historical prior score
+        // 5. Historical prior score
         //    If we know the user usually falls asleep around 11 PM,
         //    and it's currently 11:30 PM, this score is high.
         //    Uses a Gaussian (bell curve) centred on their average onset.
@@ -140,7 +135,6 @@ struct SleepPredictionModel {
             motionScore    * weights.motionStationary +
             timeScore      * weights.timeOfDay +
             unlockScore    * weights.unlockCadence +
-            focusScore     * weights.sleepFocus +
             historyScore   * weights.historicalPrior
 
         // ── Apply sigmoid to get probability ─────────────────
@@ -161,7 +155,6 @@ struct SleepPredictionModel {
                 motion: motionScore,
                 timeOfDay: timeScore,
                 unlockCadence: unlockScore,
-                sleepFocus: focusScore,
                 historicalPrior: historyScore
             ),
             rawScore: rawScore,
@@ -245,6 +238,5 @@ struct FeatureScores {
     let motion: Double
     let timeOfDay: Double
     let unlockCadence: Double
-    let sleepFocus: Double
     let historicalPrior: Double
 }

@@ -44,6 +44,7 @@ struct ContentView: View {
                         if user != nil, surveyCompleted, let saved = SurveyAnswers.loadFromDefaults() {
                             surveyAnswers = saved
                             screen = .splash
+                            await AdaptiveAlarmStore.shared.loadFromFirestore()
                         } else if user == nil, screen != .intro {
                             screen = .intro
                         }
@@ -93,6 +94,7 @@ struct ContentView: View {
                 surveyAnswers.saveToDefaults()
                 surveyCompleted = true
                 screen = .splash
+                await AdaptiveAlarmStore.shared.loadFromFirestore()
             } else {
                 surveyCompleted = false
                 screen = .survey
