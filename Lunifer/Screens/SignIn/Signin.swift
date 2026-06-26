@@ -313,7 +313,7 @@ final class SigninBackend: ObservableObject {
                 ]
                 tokenRequest.httpBody = body
                     .map { "\($0.key)=\($0.value.addingPercentEncoding(withAllowedCharacters: .urlQueryAllowed) ?? "")" }
-                    .joined(separator: "&")$                    .data(using: .utf8)
+                    .joined(separator: "&").data(using: .utf8)
 
                 let (data, _) = try await URLSession.shared.data(for: tokenRequest)
 

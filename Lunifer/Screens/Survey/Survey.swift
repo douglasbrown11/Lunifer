@@ -192,6 +192,65 @@ private struct LoopingMinutePicker: UIViewRepresentable {
     }
 }
 
+// ── MARK: Hours picker ───────────────────────────────────────
+// UIViewRepresentable wrapper for a plain UIPickerView scoped to a
+// caller-supplied range. Using UIPickerView for both wheels (hours and
+// minutes) puts them on the same gesture system and prevents UIKit from
+// routing swipes on the hours wheel to the adjacent LoopingMinutePicker.
+
+private struct HoursPicker: UIViewRepresentable {
+    @Binding var selection: Int
+    let range: ClosedRange<Int>
+
+    func makeUIView(context: Context) -> UIPickerView {
+        let picker = UIPickerView()
+        picker.dataSource = context.coordinator
+        picker.delegate   = context.coordinator
+        picker.backgroundColor = .clear
+        picker.selectRow(selection - range.lowerBound, inComponent: 0, animated: false)
+        return picker
+    }
+
+    func updateUIView(_ uiView: UIPickerView, context: Context) {
+        let expectedRow = selection - range.lowerBound
+        if uiView.selectedRow(inComponent: 0) != expectedRow {
+            uiView.selectRow(expectedRow, inComponent: 0, animated: true)
+        }
+    }
+
+    func makeCoordinator() -> Coordinator { Coordinator(self) }
+
+    final class Coordinator: NSObject, UIPickerViewDataSource, UIPickerViewDelegate {
+        var parent: HoursPicker
+        init(_ p: HoursPicker) { parent = p }
+
+        func numberOfComponents(in pickerView: UIPickerView) -> Int { 1 }
+
+        func pickerView(_ pickerView: UIPickerView,
+                        numberOfRowsInComponent component: Int) -> Int {
+            parent.range.count
+        }
+
+        func pickerView(_ pickerView: UIPickerView,
+                        viewForRow row: Int,
+                        forComponent component: Int,
+                        reusing view: UIView?) -> UIView {
+            let label = (view as? UILabel) ?? UILabel()
+            label.text          = String(format: "%02d", row + parent.range.lowerBound)
+            label.textColor     = .white
+            label.textAlignment = .center
+            label.font          = .systemFont(ofSize: 20, weight: .regular)
+            return label
+        }
+
+        func pickerView(_ pickerView: UIPickerView,
+                        didSelectRow row: Int,
+                        inComponent component: Int) {
+            parent.selection = row + parent.range.lowerBound
+        }
+    }
+}
+
 // ── MARK: Time picker ────────────────────────────────────────
 
 struct TimeButton: View {
@@ -286,15 +345,9 @@ struct TimeScalePicker: View {
                             .font(.custom("DM Sans", size: 11))
                             .foregroundColor(Color.white.opacity(0.3))
                             .kerning(1)
-                        Picker("", selection: $value.hours) {
-                            ForEach(Array(hourRange), id: \.self) { h in
-                                Text(String(format: "%02d", h)).tag(h)
-                            }
-                        }
-                        .pickerStyle(.wheel)
-                        .frame(width: 80, height: 120)
-                        .clipped()
-                        .colorScheme(.dark)
+                        HoursPicker(selection: $value.hours, range: hourRange)
+                            .frame(width: 80, height: 120)
+                            .clipped()
                     }
 
                     // Colon separator
@@ -764,7 +817,7 @@ struct LuniferSurvey: View {
         // Step 4 — Sleep
         private var stepSleep: some View {
             VStack(alignment: .center, spacing: 0) {
-                Text("How many hours do you need to feel well rested?")
+                Text("How much sleep do you need?")
                     .font(.custom("Cormorant Garamond", size: 22))
                     .fixedSize(horizontal: false, vertical: true)
                     .multilineTextAlignment(.center)
@@ -778,7 +831,7 @@ struct LuniferSurvey: View {
                 // Hidden when a wearable is selected and data is fetched
                 if (!whoopSelected && !ouraSelected) || whoopError != nil || ouraError != nil {
                     TimeScalePicker(value: $answers.sleep,
-                                    autoLabel: "I'm not sure — let Lunifer learn this",
+                                    autoLabel: "Let Lunifer figure this out",
                                     hourRange: 0...12)
                     .padding(.bottom, 24)
                     .padding(.horizontal, 40)
@@ -804,18 +857,6 @@ struct LuniferSurvey: View {
         // ── Wearable cards for sleep step (rendered below nav buttons) ──
         @ViewBuilder
         private var sleepWearableCards: some View {
-            // ── "or" divider ────────────────────────────────────
-            HStack(spacing: 12) {
-                Rectangle().fill(Color.white.opacity(0.08)).frame(height: 1)
-                Text("or let your wearable decide")
-                    .font(.custom("DM Sans", size: 12))
-                    .foregroundColor(Color.white.opacity(0.25))
-                    .fixedSize()
-                Rectangle().fill(Color.white.opacity(0.08)).frame(height: 1)
-            }
-            .padding(.top, 8)
-            .padding(.bottom, 12)
-
             // ── WHOOP card ──────────────────────────────────────
             OptionCard(isSelected: whoopSelected) {
                 if !whoopSelected {

@@ -400,7 +400,11 @@ class LuniferAlarm: ObservableObject {
                 id: alarmKitID,
                 configuration: .alarm(
                     schedule: .fixed(date),
-                    attributes: attributes
+                    attributes: attributes,
+                    // Attach a stop intent so one-shot delete and repeating-reschedule
+                    // logic runs even when the user dismisses from the lock screen or
+                    // Dynamic Island without opening the app.
+                    stopIntent: LuniferAddedAlarmStopIntent(logicalAlarmID: alarmID.uuidString)
                 )
             )
             addedAlarmIDs[alarmID] = alarmKitID
@@ -408,6 +412,25 @@ class LuniferAlarm: ObservableObject {
             print("✅ Added alarm set for \(date.formatted(date: .omitted, time: .shortened))")
         } catch {
             print("❌ Failed to schedule added alarm: \(error.localizedDescription)")
+        }
+    }
+
+    /// Called by `LuniferAddedAlarmStopIntent` when the user dismisses an added
+    /// alarm from the lock screen or Dynamic Island. Mirrors the added-alarm branch
+    /// of `stopAlarm()` so the same one-shot delete / repeating-reschedule logic
+    /// runs regardless of how the alarm was stopped.
+    func handleAddedAlarmSystemStop(logicalID: UUID) async {
+        let days = persistedRepeatDays(for: logicalID)
+        if days.isEmpty {
+            // One-shot: remove from storage, clean up the UUID map, refresh dashboard.
+            removeAddedAlarmFromStorage(id: logicalID)
+            addedAlarmIDs.removeValue(forKey: logicalID)
+            persistAddedAlarmIDs()
+            NotificationCenter.default.post(name: .luniferAddedAlarmModified, object: nil)
+        } else {
+            // Repeating: advance to the next qualifying weekday and reschedule.
+            rescheduleRepeatingAddedAlarm(logicalID: logicalID)
+            NotificationCenter.default.post(name: .luniferAddedAlarmModified, object: nil)
         }
     }
 
