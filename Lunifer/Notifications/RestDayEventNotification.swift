@@ -15,8 +15,6 @@ import UserNotifications
 //
 // Timing: fires at 7:00 PM the same evening, or immediately
 // (1-second trigger) if the app is opened after 7:00 PM.
-//
-// Deduplication: only one notification is sent per calendar day.
 // The last send date is stored under
 // AppPreferencesStore.Keys.restDayNotificationSentDate.
 //
@@ -149,12 +147,12 @@ final class RestDayEventNotification {
     static func registerCategory() {
         let wakeAction = UNNotificationAction(
             identifier: wakeupActionID,
-            title:      "Wake me up",
+            title:      "Yes",
             options:    [.foreground]   // brings app to foreground so alarm is scheduled
         )
         let dismissAction = UNNotificationAction(
             identifier: dismissActionID,
-            title:      "Not needed",
+            title:      "No",
             options:    [.destructive]
         )
         let category = UNNotificationCategory(

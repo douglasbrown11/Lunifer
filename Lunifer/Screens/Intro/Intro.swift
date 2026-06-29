@@ -1,20 +1,5 @@
 import SwiftUI
 
-// ── MARK: Data ──────────────────────────────────────────────
-
-struct Feature {
-    let icon: String
-    let name: String
-    let desc: String
-}
-
-let features: [Feature] = [
-    Feature(icon: "moon.zzz",       name: "Optimal sleep",   desc: "Learns exactly how much sleep you need to feel your best"),
-    Feature(icon: "moon.stars",     name: "Bedtime adaptive", desc: "Went to bed late? Lunifer quietly adjusts based on your preferences"),
-    Feature(icon: "car",            name: "Commute aware",    desc: "Factors in your drive time and live traffic conditions"),
-]
-
-
 // ── MARK: Primary Button ────────────────────────────────────
 
 struct LuniferButton: View {
@@ -165,88 +150,13 @@ struct ProblemScreen: View {
 }
 
 
-// ── MARK: Screen 2 — How It Works ───────────────────────────
-
-struct HowItWorksScreen: View {
-    let onFinish: () -> Void
-
-    var body: some View {
-        VStack(spacing: 0) {
-
-            // Spacer pushes the content down from the top
-            Spacer()
-
-            Text("Lunifer learns") ///Title
-                .font(.custom("Cormorant Garamond", size: 26))
-                .italic()
-                .fontWeight(.light)
-                .foregroundColor(Color(red: 0.878, green: 0.847, blue: 1.0))
-                .multilineTextAlignment(.center)
-                .frame(maxWidth: .infinity, alignment: .center)
-                .padding(.bottom, 16)
-
-            VStack(spacing: 14) {
-                ForEach(features, id: \.name) { feature in
-                    HStack(alignment: .top, spacing: 16) {
-                        // Icon box
-                        ZStack {
-                            RoundedRectangle(cornerRadius: 12)
-                                .fill(Color(red: 0.392, green: 0.275, blue: 0.627).opacity(0.2))
-                                .overlay(
-                                    RoundedRectangle(cornerRadius: 12)
-                                        .stroke(Color(red: 0.510, green: 0.392, blue: 0.745).opacity(0.2), lineWidth: 1)
-                                )
-                                .frame(width: 36, height: 36)
-
-                            Image(systemName: feature.icon)
-                                .font(.system(size: 16))
-                                .foregroundColor(Color(red: 0.706, green: 0.588, blue: 0.902))
-                        }
-
-                        // Text
-                        VStack(alignment: .leading, spacing: 3) {
-                            Text(feature.name)
-                                .font(.custom("DM Sans", size: 13))
-                                .foregroundColor(Color(red: 0.863, green: 0.824, blue: 1.0).opacity(0.8))
-
-                            Text(feature.desc)
-                                .font(.custom("DM Sans", size: 12))
-                                .fontWeight(.light)
-                                .foregroundColor(Color(red: 0.627, green: 0.549, blue: 0.784).opacity(0.4))
-                                .lineSpacing(4)
-                                // fixedSize lets description text wrap to as many
-                                // lines as it needs without being cut off
-                                .fixedSize(horizontal: false, vertical: true)
-                        }
-
-                        // Spacer inside the HStack pushes the icon + text to the left
-                        Spacer()
-                    }
-                }
-            }
-            .frame(maxWidth: .infinity)
-            .padding(.bottom, 16)
-            .padding(.horizontal, 40)
-
-            Spacer()
-
-            LuniferButton(title: "Set up Lunifer", action: onFinish)
-                .padding(.bottom, 52)
-        }
-        // 24pt left and right margin applied to everything in this screen
-        .padding(.horizontal, 24)
-        .frame(maxWidth: .infinity, maxHeight: .infinity)
-    }
-}
-
-
 // ── MARK: Root Intro View ───────────────────────────────────
 
 struct LuniferIntro: View {
     var onFinish: () -> Void = {}
 
     @State private var screen: Int = 0
-    private let totalScreens = 3
+    private let totalScreens = 2
 
     var body: some View {
         // ZStack layers the background, screen content, and progress dots
@@ -267,14 +177,7 @@ struct LuniferIntro: View {
                         ))
                 }
                 if screen == 1 {
-                    ProblemScreen(onNext: next)
-                        .transition(.asymmetric(
-                            insertion: .opacity.combined(with: .offset(y: 20)),
-                            removal: .opacity.combined(with: .offset(y: -20))
-                        ))
-                }
-                if screen == 2 {
-                    HowItWorksScreen(onFinish: onFinish)
+                    ProblemScreen(onNext: onFinish)
                         .transition(.asymmetric(
                             insertion: .opacity.combined(with: .offset(y: 20)),
                             removal: .opacity.combined(with: .offset(y: -20))
