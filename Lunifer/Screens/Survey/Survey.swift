@@ -771,9 +771,35 @@ struct LuniferSurvey: View {
                             .frame(width: 22, alignment: .center)
                     }
                 }
-                .padding(.bottom, 24)
+                .padding(.bottom, 16)
                 .padding(.horizontal, 50)
+
+                if answers.calendar == "none" {
+                    VStack(alignment: .leading, spacing: 8) {
+                        Text("Are you sure you don't want to allow access to your calendar?")
+                            .font(.custom("DM Sans", size: 13))
+                            .foregroundColor(Color.white.opacity(0.7))
+                            .fixedSize(horizontal: false, vertical: true)
+                            .lineSpacing(4)
+
+                        HStack(alignment: .top, spacing: 10) {
+                            Image(systemName: "info.circle.fill")
+                                .foregroundColor(Color(red: 0.75, green: 0.65, blue: 1.0).opacity(0.75))
+                                .font(.system(size: 13))
+                                .padding(.top, 1)
+                            Text("Lunifer works best when it can read your schedule — connecting a calendar lets it set your alarm around your actual day.")
+                                .font(.custom("DM Sans", size: 13))
+                                .foregroundColor(Color.white.opacity(0.5))
+                                .fixedSize(horizontal: false, vertical: true)
+                                .lineSpacing(4)
+                        }
+                    }
+                    .padding(.horizontal, 50)
+                    .padding(.bottom, 8)
+                    .transition(.opacity.combined(with: .move(edge: .top)))
+                }
             }
+            .animation(.easeInOut(duration: 0.2), value: answers.calendar)
         }
         
         @ViewBuilder

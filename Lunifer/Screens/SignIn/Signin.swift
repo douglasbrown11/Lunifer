@@ -68,7 +68,7 @@ final class SigninBackend: ObservableObject {
 
     // ── Email / password ─────────────────────────────────────
 
-    func EmailSignin(
+    func handleEmailSignin(
         email: String,
         password: String,
         mode: SigninMode,
@@ -329,9 +329,8 @@ final class SigninBackend: ObservableObject {
                 }
 
                 let credential = OAuthProvider.credential(
-                    providerID: .microsoft,
+                    providerID: .custom("microsoft.com"),
                     idToken: idToken,
-                    rawNonce: "",
                     accessToken: tokens.access_token
                 )
                 let authResult = try await Auth.auth().signIn(with: credential)

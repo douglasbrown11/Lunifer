@@ -27,6 +27,8 @@ struct LuniferSettings: View {
     @State private var reauthPasswordInput = ""
     @State private var reauthPasswordContinuation: CheckedContinuation<String, Error>?
     @State private var showReauthPassword = false
+    @State private var reauthResetMessage: String? = nil
+    @FocusState private var reauthFieldFocused: Bool
 
     private var userEmail: String {
         guard ProcessInfo.processInfo.environment["XCODE_RUNNING_FOR_PREVIEWS"] != "1" else {
@@ -233,8 +235,10 @@ struct LuniferSettings: View {
                             TextField("Password", text: $reauthPasswordInput)
                                 .autocapitalization(.none)
                                 .autocorrectionDisabled()
+                                .focused($reauthFieldFocused)
                         } else {
                             SecureField("Password", text: $reauthPasswordInput)
+                                .focused($reauthFieldFocused)
                         }
                     }
                     .font(.custom("DM Sans", size: 15))
@@ -260,12 +264,52 @@ struct LuniferSettings: View {
                         .overlay(RoundedRectangle(cornerRadius: 12)
                             .stroke(Color.white.opacity(0.08), lineWidth: 1.5))
                 )
+                .contentShape(Rectangle())
+                .onTapGesture { reauthFieldFocused = true }
                 .padding(.horizontal, 24)
-                .padding(.bottom, 20)
+                .padding(.bottom, 8)
+
+                // ── Forgot password ───────────────────────
+                HStack {
+                    Spacer()
+                    Button {
+                        guard let email = Auth.auth().currentUser?.email else { return }
+                        Task {
+                            do {
+                                try await Auth.auth().sendPasswordReset(withEmail: email)
+                                withAnimation {
+                                    reauthResetMessage = "Reset link sent to \(email). Check your inbox."
+                                }
+                            } catch {
+                                withAnimation {
+                                    reauthResetMessage = "Couldn't send reset email. Please try again."
+                                }
+                            }
+                        }
+                    } label: {
+                        Text("Forgot password?")
+                            .font(.custom("DM Sans", size: 13))
+                            .foregroundColor(Color(red: 0.627, green: 0.471, blue: 1.0).opacity(0.75))
+                    }
+                }
+                .padding(.horizontal, 24)
+                .padding(.bottom, 8)
+
+                // ── Reset confirmation / error ─────────────
+                if let msg = reauthResetMessage {
+                    Text(msg)
+                        .font(.custom("DM Sans", size: 12))
+                        .foregroundColor(Color(red: 0.627, green: 0.471, blue: 1.0).opacity(0.85))
+                        .multilineTextAlignment(.center)
+                        .padding(.horizontal, 24)
+                        .padding(.bottom, 8)
+                        .transition(.opacity)
+                }
 
                 Button {
                     let password = reauthPasswordInput
                     reauthPasswordInput = ""
+                    reauthResetMessage = nil
                     showReauthPasswordSheet = false
                     reauthPasswordContinuation?.resume(returning: password)
                     reauthPasswordContinuation = nil
@@ -283,6 +327,7 @@ struct LuniferSettings: View {
 
                 Button("Cancel") {
                     reauthPasswordInput = ""
+                    reauthResetMessage = nil
                     showReauthPasswordSheet = false
                     reauthPasswordContinuation?.resume(throwing: CancellationError())
                     reauthPasswordContinuation = nil
@@ -292,7 +337,7 @@ struct LuniferSettings: View {
                 .padding(.bottom, 32)
             }
             .frame(maxWidth: .infinity)
-            .presentationDetents([.fraction(0.48)])
+            .presentationDetents([.fraction(0.56)])
             .presentationDragIndicator(.hidden)
             .presentationBackground(Color(red: 0.07, green: 0.04, blue: 0.15))
             .interactiveDismissDisabled(true)
