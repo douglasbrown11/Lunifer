@@ -424,6 +424,8 @@ struct LuniferSurvey: View {
         @State private var ouraLoading: Bool = false
         @State private var ouraRecommendedHours: Double? = nil
         @State private var ouraError: String? = nil
+        // Calendar nudge
+        @State private var showCalendarNudge = false
         
         private var showCommute: Bool {
             answers.lifestyle == "student" || answers.lifestyle == "commuter"
@@ -529,6 +531,91 @@ struct LuniferSurvey: View {
                         .padding(.horizontal, 24)
                         .padding(.vertical, 20)
                         .frame(maxWidth: .infinity)
+                }
+
+                // ── Calendar nudge notification pop-up ───────────────
+                if showCalendarNudge {
+                    Color.black.opacity(0.45)
+                        .ignoresSafeArea()
+                        .transition(.opacity)
+
+                    VStack(spacing: 0) {
+                        // Header row: icon + app name + timestamp
+                        HStack(spacing: 8) {
+                            ZStack {
+                                RoundedRectangle(cornerRadius: 7)
+                                    .fill(Color(red: 0.30, green: 0.20, blue: 0.55))
+                                    .frame(width: 28, height: 28)
+                                Image(systemName: "moon.stars.fill")
+                                    .foregroundColor(.white)
+                                    .font(.system(size: 13))
+                            }
+                            Text("Lunifer")
+                                .font(.system(size: 12, weight: .semibold))
+                                .foregroundColor(Color(.secondaryLabel))
+                            Spacer()
+                            Text("now")
+                                .font(.system(size: 12))
+                                .foregroundColor(Color(.secondaryLabel))
+                        }
+                        .padding(.horizontal, 16)
+                        .padding(.top, 14)
+                        .padding(.bottom, 10)
+
+                        // Body
+                        VStack(alignment: .leading, spacing: 4) {
+                            Text("Are you sure you don't want to allow access to your calendar?")
+                                .font(.system(size: 14, weight: .semibold))
+                                .foregroundColor(Color(.label))
+                                .fixedSize(horizontal: false, vertical: true)
+                            Text("Lunifer works best when it can read your schedule — connecting a calendar lets it set your alarm around your actual day.")
+                                .font(.system(size: 13))
+                                .foregroundColor(Color(.secondaryLabel))
+                                .fixedSize(horizontal: false, vertical: true)
+                                .lineSpacing(3)
+                                .padding(.top, 2)
+                        }
+                        .frame(maxWidth: .infinity, alignment: .leading)
+                        .padding(.horizontal, 16)
+                        .padding(.bottom, 16)
+
+                        Divider()
+
+                        // Action buttons
+                        HStack(spacing: 0) {
+                            Button {
+                                showCalendarNudge = false
+                                advance()
+                            } label: {
+                                Text("Yes, Continue")
+                                    .font(.system(size: 16))
+                                    .foregroundColor(Color(.systemBlue))
+                                    .frame(maxWidth: .infinity)
+                                    .frame(height: 44)
+                            }
+
+                            Divider().frame(height: 44)
+
+                            Button {
+                                withAnimation(.spring(response: 0.3, dampingFraction: 0.8)) {
+                                    showCalendarNudge = false
+                                    answers.calendar = nil
+                                }
+                            } label: {
+                                Text("No")
+                                    .font(.system(size: 16, weight: .semibold))
+                                    .foregroundColor(Color(.systemBlue))
+                                    .frame(maxWidth: .infinity)
+                                    .frame(height: 44)
+                            }
+                        }
+                    }
+                    .background(Color(.systemGray6))
+                    .clipShape(RoundedRectangle(cornerRadius: 20))
+                    .shadow(color: .black.opacity(0.25), radius: 24, x: 0, y: 8)
+                    .frame(maxWidth: 320)
+                    .padding(.horizontal, 20)
+                    .transition(.scale(scale: 0.9).combined(with: .opacity))
                 }
             }
             .frame(maxWidth: .infinity, maxHeight: .infinity)
@@ -771,35 +858,9 @@ struct LuniferSurvey: View {
                             .frame(width: 22, alignment: .center)
                     }
                 }
-                .padding(.bottom, 16)
+                .padding(.bottom, 24)
                 .padding(.horizontal, 50)
-
-                if answers.calendar == "none" {
-                    VStack(alignment: .leading, spacing: 8) {
-                        Text("Are you sure you don't want to allow access to your calendar?")
-                            .font(.custom("DM Sans", size: 13))
-                            .foregroundColor(Color.white.opacity(0.7))
-                            .fixedSize(horizontal: false, vertical: true)
-                            .lineSpacing(4)
-
-                        HStack(alignment: .top, spacing: 10) {
-                            Image(systemName: "info.circle.fill")
-                                .foregroundColor(Color(red: 0.75, green: 0.65, blue: 1.0).opacity(0.75))
-                                .font(.system(size: 13))
-                                .padding(.top, 1)
-                            Text("Lunifer works best when it can read your schedule — connecting a calendar lets it set your alarm around your actual day.")
-                                .font(.custom("DM Sans", size: 13))
-                                .foregroundColor(Color.white.opacity(0.5))
-                                .fixedSize(horizontal: false, vertical: true)
-                                .lineSpacing(4)
-                        }
-                    }
-                    .padding(.horizontal, 50)
-                    .padding(.bottom, 8)
-                    .transition(.opacity.combined(with: .move(edge: .top)))
-                }
             }
-            .animation(.easeInOut(duration: 0.2), value: answers.calendar)
         }
         
         @ViewBuilder
@@ -807,9 +868,15 @@ struct LuniferSurvey: View {
             let iconView = icon()
             OptionCard(isSelected: answers.calendar == id) {
                 answers.calendar = id
-                // When the user picks Apple Calendar, request EventKit access immediately.
-                if id != "none" && calendarManager.authorizationStatus == .notDetermined {
-                    Task { await calendarManager.requestAccess() }
+                if id == "none" {
+                    withAnimation(.spring(response: 0.35, dampingFraction: 0.8)) {
+                        showCalendarNudge = true
+                    }
+                } else {
+                    showCalendarNudge = false
+                    if calendarManager.authorizationStatus == .notDetermined {
+                        Task { await calendarManager.requestAccess() }
+                    }
                 }
             } content: {
                 HStack(spacing: 12) {
