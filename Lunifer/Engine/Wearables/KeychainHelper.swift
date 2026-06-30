@@ -89,5 +89,10 @@ extension KeychainHelper {
         static let whoopRefreshToken = "whoop_refresh_token"
         static let ouraAccessToken   = "oura_access_token"
         static let ouraRefreshToken  = "oura_refresh_token"
+        // Microsoft (Outlook) calendar — Graph API tokens for reading the
+        // user's calendar when it isn't synced into the iOS system calendar.
+        static let msCalendarAccessToken  = "ms_calendar_access_token"
+        static let msCalendarRefreshToken = "ms_calendar_refresh_token"
+        static let msCalendarTokenExpiry  = "ms_calendar_token_expiry"
     }
 }

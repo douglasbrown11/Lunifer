@@ -527,7 +527,7 @@ class LuniferAlarm: ObservableObject {
         // Step 1: Live calendar event on the target day
         await CalendarManager.shared.fetchEvents()
         let firstEvent = CalendarManager.shared.events(for: day)
-            .filter { !$0.isAllDay }
+            .filter { !$0.isAllDay && !$0.isDeclinedByUser }
             .sorted { $0.startDate < $1.startDate }
             .first
         if let event = firstEvent {

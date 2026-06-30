@@ -281,7 +281,7 @@ struct LuniferMain: View {
         guard answers.wakeDays.contains(weekdayID(for: Date())) else { return false }
         // Only show while the user is between waking up and their first event starting.
         // If there is no calendar event today, the card (and nudge) are not shown.
-        guard let firstEvent = CalendarManager.shared.todayEvents.first else { return false }
+        guard let firstEvent = CalendarManager.shared.firstEventToday else { return false }
         let now = Date()
         return now >= calculatedAlarmDate && now < firstEvent.startDate
     }
