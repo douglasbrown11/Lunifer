@@ -307,6 +307,102 @@ struct MoonView: View {
 }
 
 
+// ── MARK: Calendar Choice ───────────────────────────────────
+// Shown after the intro and before sign-in. The user's selection
+// determines which sign-in method(s) are offered on the next screen.
+
+struct CalendarChoiceScreen: View {
+    let onSelect: (String) -> Void
+
+    var body: some View {
+        ZStack {
+            LuniferBackground()
+
+            VStack(spacing: 0) {
+                Spacer()
+
+                Text("Which calendar do you use?")
+                    .font(.custom("Cormorant Garamond", size: 30))
+                    .italic()
+                    .fontWeight(.light)
+                    .foregroundColor(Color(red: 0.878, green: 0.847, blue: 1.0))
+                    .multilineTextAlignment(.center)
+                    .padding(.horizontal, 40)
+                    .padding(.bottom, 10)
+
+                Text("Lunifer uses your calendar to set smarter alarms around your actual day.")
+                    .font(.custom("DM Sans", size: 13))
+                    .fontWeight(.light)
+                    .foregroundColor(Color(red: 0.706, green: 0.627, blue: 0.863).opacity(0.5))
+                    .multilineTextAlignment(.center)
+                    .lineSpacing(5)
+                    .padding(.horizontal, 42)
+                    .padding(.bottom, 48)
+
+                VStack(spacing: 10) {
+                    CalendarChoiceRow(icon: AnyView(AppleCalendarIcon()), label: "Apple Calendar") {
+                        onSelect("apple")
+                    }
+                    CalendarChoiceRow(icon: AnyView(GoogleCalendarIcon()), label: "Google Calendar") {
+                        onSelect("google")
+                    }
+                    CalendarChoiceRow(icon: AnyView(OutlookIcon()), label: "Outlook") {
+                        onSelect("outlook")
+                    }
+                    CalendarChoiceRow(
+                        icon: AnyView(
+                            Image(systemName: "minus.circle")
+                                .font(.system(size: 16))
+                                .foregroundColor(Color.white.opacity(0.35))
+                                .frame(width: 22, height: 22)
+                        ),
+                        label: "I don't use one"
+                    ) {
+                        onSelect("none")
+                    }
+                }
+                .padding(.horizontal, 24)
+
+                Spacer()
+            }
+        }
+        .frame(maxWidth: .infinity, maxHeight: .infinity)
+    }
+}
+
+private struct CalendarChoiceRow: View {
+    let icon: AnyView
+    let label: String
+    let action: () -> Void
+
+    var body: some View {
+        Button(action: action) {
+            HStack(spacing: 14) {
+                icon
+                    .frame(width: 24, height: 24)
+                Text(label)
+                    .font(.custom("DM Sans", size: 15))
+                    .foregroundColor(Color.white.opacity(0.85))
+                Spacer()
+                Image(systemName: "chevron.right")
+                    .font(.system(size: 12, weight: .medium))
+                    .foregroundColor(Color.white.opacity(0.2))
+            }
+            .padding(.horizontal, 20)
+            .padding(.vertical, 18)
+            .background(
+                RoundedRectangle(cornerRadius: 14)
+                    .fill(Color.white.opacity(0.04))
+                    .overlay(
+                        RoundedRectangle(cornerRadius: 14)
+                            .stroke(Color.white.opacity(0.08), lineWidth: 1)
+                    )
+            )
+        }
+        .buttonStyle(.plain)
+    }
+}
+
 // ── MARK: Preview ───────────────────────────────────────────
 
 #Preview("Lunifer Intro", traits: .portrait) {

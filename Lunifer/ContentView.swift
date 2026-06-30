@@ -2,12 +2,13 @@ import SwiftUI
 import FirebaseAuth
 
 enum AppScreen {
-    case intro, auth, survey, splash, dashboard
+    case intro, calendarChoice, auth, survey, splash, dashboard
 }
 
 struct ContentView: View {
     @State private var screen: AppScreen = .intro
     @State private var surveyAnswers = SurveyAnswers()
+    @State private var preSelectedCalendar: String = ""
     @StateObject private var alarm = LuniferAlarm.shared
     @AppStorage("surveyCompleted") private var surveyCompleted = false
     @State private var authStateHandle: AuthStateDidChangeListenerHandle?
@@ -16,13 +17,19 @@ struct ContentView: View {
         ZStack {
             switch screen {
             case .intro:
-                LuniferIntro(onFinish: { screen = .auth })
+                LuniferIntro(onFinish: { screen = .calendarChoice })
+            case .calendarChoice:
+                CalendarChoiceScreen(onSelect: { calendar in
+                    preSelectedCalendar = calendar
+                    screen = .auth
+                })
+                .transition(.opacity)
             case .auth:
-                LuniferSignin(onSignedIn: { isNewUser in
+                LuniferSignin(calendarChoice: preSelectedCalendar, onSignedIn: { isNewUser in
                     await handleSignedIn(isNewUser: isNewUser)
                 })
             case .survey:
-                LuniferSurvey(onFinish: { answers in
+                LuniferSurvey(preSelectedCalendar: preSelectedCalendar, onFinish: { answers in
                     surveyAnswers = answers
                     screen = .dashboard
                 })

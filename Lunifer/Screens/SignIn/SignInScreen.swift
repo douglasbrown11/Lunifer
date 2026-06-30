@@ -116,7 +116,27 @@ struct LuniferInputField: View {
 // ── MARK: LuniferSignin ──────────────────────────────────────
 
 struct LuniferSignin: View {
+    var calendarChoice: String = ""
     var onSignedIn: (_ isNewUser: Bool) async -> Void = { _ in }
+
+    // Which sign-in options to show, derived from the pre-auth calendar choice.
+    // Google/Outlook selections lock the user to their corresponding SSO provider.
+    // Apple shows Apple + email. No-calendar or empty shows everything.
+    private var showEmailSection: Bool {
+        calendarChoice != "google" && calendarChoice != "outlook"
+    }
+    private var showAppleButton: Bool {
+        calendarChoice == "apple" || calendarChoice == "none" || calendarChoice.isEmpty
+    }
+    private var showGoogleButton: Bool {
+        calendarChoice == "google" || calendarChoice == "none" || calendarChoice.isEmpty
+    }
+    private var showOutlookButton: Bool {
+        calendarChoice == "outlook" || calendarChoice == "none" || calendarChoice.isEmpty
+    }
+    private var showOrDivider: Bool {
+        showEmailSection && (showAppleButton || showGoogleButton || showOutlookButton)
+    }
 
     // Backend owns auth state and all action logic
     @StateObject private var backend = SigninBackend()
@@ -202,144 +222,155 @@ struct LuniferSignin: View {
                             .transition(.opacity.combined(with: .offset(y: -4)))
                     }
 
-                    // ── Inputs ───────────────────────────────
-                    VStack(spacing: 12) {
-                        LuniferInputField(placeholder: "Email address", text: $email)
-                        LuniferInputField(placeholder: "Password", text: $password, isSecure: true)
-                    }
-                    .padding(.bottom, mode == .signIn ? 8 : 16)
-
-                    // ── Forgot password (sign-in mode only) ──
-                    if mode == .signIn {
-                        HStack {
-                            Spacer()
-                            Button {
-                                backend.handleForgotPassword(email: email)
-                            } label: {
-                                Text("Forgot password?")
-                                    .font(.custom("DM Sans", size: 13))
-                                    .foregroundColor(Color(red: 0.627, green: 0.471, blue: 1.0).opacity(0.75))
-                            }
-                            .disabled(backend.loading)
+                    // ── Email section (hidden for Google/Outlook-only flows) ──
+                    if showEmailSection {
+                        VStack(spacing: 12) {
+                            LuniferInputField(placeholder: "Email address", text: $email)
+                            LuniferInputField(placeholder: "Password", text: $password, isSecure: true)
                         }
-                        .padding(.bottom, 16)
-                    }
+                        .padding(.bottom, mode == .signIn ? 8 : 16)
 
-                    // ── Primary button ───────────────────────
-                    Button {
-                        backend.handleEmailSignin(
-                            email: email,
-                            password: password,
-                            mode: mode,
-                            agreedToTerms: agreedToTerms,
-                            onSignedIn: onSignedIn
-                        )
-                    } label: {
-                        ZStack {
-                            if backend.loading {
-                                ProgressView().tint(.white)
-                            } else {
-                                Text(mode == .signIn ? "Sign In" : "Create Account")
-                                    .font(.custom("DM Sans", size: 15).weight(.medium))
-                                    .foregroundColor(.white)
+                        // ── Forgot password (sign-in mode only) ──
+                        if mode == .signIn {
+                            HStack {
+                                Spacer()
+                                Button {
+                                    backend.handleForgotPassword(email: email)
+                                } label: {
+                                    Text("Forgot password?")
+                                        .font(.custom("DM Sans", size: 13))
+                                        .foregroundColor(Color(red: 0.627, green: 0.471, blue: 1.0).opacity(0.75))
+                                }
+                                .disabled(backend.loading)
                             }
+                            .padding(.bottom, 16)
                         }
-                        .frame(maxWidth: .infinity)
-                        .frame(height: 50)
-                        .background(
-                            RoundedRectangle(cornerRadius: 12)
-                                .fill(LinearGradient(
-                                    colors: [
-                                        Color(red: 0.471, green: 0.314, blue: 0.863),
-                                        Color(red: 0.314, green: 0.196, blue: 0.706),
-                                    ],
-                                    startPoint: .topLeading,
-                                    endPoint: .bottomTrailing
-                                ))
-                                .overlay(
-                                    RoundedRectangle(cornerRadius: 12)
-                                        .stroke(Color(red: 0.627, green: 0.471, blue: 1.0).opacity(0.6), lineWidth: 1.5)
-                                )
-                        )
-                        .opacity(canSubmit && !backend.loading ? 1.0 : 0.4)
-                    }
-                    .disabled(!canSubmit || backend.loading)
-                    .padding(.bottom, 20)
 
-                    // ── Divider ──────────────────────────────
-                    HStack(spacing: 12) {
-                        Rectangle().fill(Color.white.opacity(0.08)).frame(height: 1)
-                        Text("or")
-                            .font(.custom("DM Sans", size: 12))
-                            .foregroundColor(Color.white.opacity(0.25))
-                            .kerning(0.5)
-                        Rectangle().fill(Color.white.opacity(0.08)).frame(height: 1)
+                        // ── Primary button ───────────────────────
+                        Button {
+                            backend.handleEmailSignin(
+                                email: email,
+                                password: password,
+                                mode: mode,
+                                agreedToTerms: agreedToTerms,
+                                onSignedIn: onSignedIn
+                            )
+                        } label: {
+                            ZStack {
+                                if backend.loading {
+                                    ProgressView().tint(.white)
+                                } else {
+                                    Text(mode == .signIn ? "Sign In" : "Create Account")
+                                        .font(.custom("DM Sans", size: 15).weight(.medium))
+                                        .foregroundColor(.white)
+                                }
+                            }
+                            .frame(maxWidth: .infinity)
+                            .frame(height: 50)
+                            .background(
+                                RoundedRectangle(cornerRadius: 12)
+                                    .fill(LinearGradient(
+                                        colors: [
+                                            Color(red: 0.471, green: 0.314, blue: 0.863),
+                                            Color(red: 0.314, green: 0.196, blue: 0.706),
+                                        ],
+                                        startPoint: .topLeading,
+                                        endPoint: .bottomTrailing
+                                    ))
+                                    .overlay(
+                                        RoundedRectangle(cornerRadius: 12)
+                                            .stroke(Color(red: 0.627, green: 0.471, blue: 1.0).opacity(0.6), lineWidth: 1.5)
+                                    )
+                            )
+                            .opacity(canSubmit && !backend.loading ? 1.0 : 0.4)
+                        }
+                        .disabled(!canSubmit || backend.loading)
+                        .padding(.bottom, 20)
                     }
-                    .padding(.bottom, 20)
+
+                    // ── Divider (only when email + SSO both visible) ──
+                    if showOrDivider {
+                        HStack(spacing: 12) {
+                            Rectangle().fill(Color.white.opacity(0.08)).frame(height: 1)
+                            Text("or")
+                                .font(.custom("DM Sans", size: 12))
+                                .foregroundColor(Color.white.opacity(0.25))
+                                .kerning(0.5)
+                            Rectangle().fill(Color.white.opacity(0.08)).frame(height: 1)
+                        }
+                        .padding(.bottom, 20)
+                    }
 
                     // ── Apple button ─────────────────────────
                     // Required by App Store Review Guideline 4.8 whenever
                     // any third-party login is offered.
-                    Button {
-                        backend.handleAppleSignIn(agreedToTerms: agreedToTerms, onSignedIn: onSignedIn)
-                    } label: {
-                        HStack(spacing: 10) {
-                            AppleLogoView()
-                            Text("Continue with Apple")
-                                .font(.custom("DM Sans", size: 15))
-                                .foregroundColor(Color.white.opacity(0.8))
+                    if showAppleButton {
+                        Button {
+                            backend.handleAppleSignIn(agreedToTerms: agreedToTerms, onSignedIn: onSignedIn)
+                        } label: {
+                            HStack(spacing: 10) {
+                                AppleLogoView()
+                                Text("Continue with Apple")
+                                    .font(.custom("DM Sans", size: 15))
+                                    .foregroundColor(Color.white.opacity(0.8))
+                            }
+                            .frame(maxWidth: .infinity, alignment: .center)
+                            .frame(height: 50)
+                            .background(
+                                RoundedRectangle(cornerRadius: 12)
+                                    .fill(Color.white.opacity(0.06))
+                            )
                         }
-                        .frame(maxWidth: .infinity, alignment: .center)
-                        .frame(height: 50)
-                        .background(
-                            RoundedRectangle(cornerRadius: 12)
-                                .fill(Color.white.opacity(0.06))
-                        )
+                        .disabled(backend.loading)
+                        .padding(.bottom, 12)
                     }
-                    .disabled(backend.loading)
-                    .padding(.bottom, 12)
 
                     // ── Google button ────────────────────────
-                    Button {
-                        backend.handleGoogleSignIn(agreedToTerms: agreedToTerms, onSignedIn: onSignedIn)
-                    } label: {
-                        HStack(spacing: 10) {
-                            GoogleLogoView()
-                            Text("Continue with Google")
-                                .font(.custom("DM Sans", size: 15))
-                                .foregroundColor(Color.white.opacity(0.8))
+                    if showGoogleButton {
+                        Button {
+                            backend.handleGoogleSignIn(agreedToTerms: agreedToTerms, onSignedIn: onSignedIn)
+                        } label: {
+                            HStack(spacing: 10) {
+                                GoogleLogoView()
+                                Text("Continue with Google")
+                                    .font(.custom("DM Sans", size: 15))
+                                    .foregroundColor(Color.white.opacity(0.8))
+                            }
+                            .frame(maxWidth: .infinity, alignment: .center)
+                            .frame(height: 50)
+                            .background(
+                                RoundedRectangle(cornerRadius: 12)
+                                    .fill(Color.white.opacity(0.06))
+                            )
                         }
-                        .frame(maxWidth: .infinity, alignment: .center)
-                        .frame(height: 50)
-                        .background(
-                            RoundedRectangle(cornerRadius: 12)
-                                .fill(Color.white.opacity(0.06))
-                        )
+                        .disabled(backend.loading)
+                        .padding(.bottom, 12)
                     }
-                    .disabled(backend.loading)
-                    .padding(.bottom, 12)
 
                     // ── Outlook button ───────────────────────
-                    Button {
-                        backend.handleMicrosoftSignIn(agreedToTerms: agreedToTerms, onSignedIn: onSignedIn)
-                    } label: {
-                        HStack(spacing: 10) {
-                            MicrosoftLogoView()
-                            Text("Continue with Outlook")
-                                .font(.custom("DM Sans", size: 15))
-                                .foregroundColor(Color.white.opacity(0.8))
+                    if showOutlookButton {
+                        Button {
+                            backend.handleMicrosoftSignIn(agreedToTerms: agreedToTerms, onSignedIn: onSignedIn)
+                        } label: {
+                            HStack(spacing: 10) {
+                                MicrosoftLogoView()
+                                Text("Continue with Outlook")
+                                    .font(.custom("DM Sans", size: 15))
+                                    .foregroundColor(Color.white.opacity(0.8))
+                            }
+                            .frame(maxWidth: .infinity, alignment: .center)
+                            .frame(height: 50)
+                            .background(
+                                RoundedRectangle(cornerRadius: 12)
+                                    .fill(Color.white.opacity(0.06))
+                            )
                         }
-                        .frame(maxWidth: .infinity, alignment: .center)
-                        .frame(height: 50)
-                        .background(
-                            RoundedRectangle(cornerRadius: 12)
-                                .fill(Color.white.opacity(0.06))
-                        )
+                        .disabled(backend.loading)
+                        .padding(.bottom, 24)
                     }
-                    .disabled(backend.loading)
-                    .padding(.bottom, 24)
 
-                    // ── Toggle mode ──────────────────────────
+                    // ── Toggle mode (only meaningful when email sign-in is available) ──
+                    if showEmailSection {
                     HStack(spacing: 4) {
                         Text(mode == .signIn
                              ? "Don't have an account?"
@@ -359,6 +390,7 @@ struct LuniferSignin: View {
                                 .foregroundColor(Color(red: 0.627, green: 0.471, blue: 1.0).opacity(0.9))
                         }
                     }
+                    } // end if showEmailSection (mode toggle)
                 }
                 .padding(.horizontal, 62)
                 .padding(.top, 115)
