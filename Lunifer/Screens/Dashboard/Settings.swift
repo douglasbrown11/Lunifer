@@ -799,16 +799,29 @@ struct AboutYouSettingsView: View {
                                 ("none", "None")
                             ], id: \.0) { id, title in
                                 Button {
-                                    let previousCalendar = answers.calendar
                                     answers.calendar = id
-                                    // When switching away from "none", request calendar access
-                                    if id != "none" && previousCalendar == "none" {
+                                    // Trigger consent for the chosen provider. Apple uses
+                                    // EventKit; Google/Outlook read their web APIs directly,
+                                    // so they work even when the account isn't synced into
+                                    // the iOS system calendar.
+                                    switch id {
+                                    case "apple":
                                         let status = CalendarManager.shared.authorizationStatus
                                         if status == .denied {
                                             showCalendarDeniedAlert = true
                                         } else if status != .authorized {
                                             Task { await CalendarManager.shared.requestAccess() }
                                         }
+                                    case "google":
+                                        if !GoogleCalendarService.shared.isConnected() {
+                                            Task { await GoogleCalendarService.shared.connect() }
+                                        }
+                                    case "outlook":
+                                        if !MicrosoftCalendarService.shared.isConnected() {
+                                            Task { await MicrosoftCalendarService.shared.connect() }
+                                        }
+                                    default:
+                                        break
                                     }
                                 } label: {
                                     HStack {

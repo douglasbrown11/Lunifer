@@ -11,6 +11,10 @@ final class AccountDataManager {
         AdaptiveAlarmStore.shared.clearLocalData()
         MorningRoutineEstimator.clearStoredData()
         HealthKitManager.clearStoredData()
+        // Clear Outlook (Microsoft Graph) calendar tokens so they don't leak to
+        // the next account on this device. Google calendar access rides on the
+        // GIDSignIn session, which is cleared on sign-out separately.
+        MicrosoftCalendarService.clearStoredData()
         AppPreferencesStore.shared.resetBatteryMonitoringState()
         AppPreferencesStore.shared.resetAlarmOverride()
         // Clear added-alarm storage so orphaned alarm cards don't appear on the next login

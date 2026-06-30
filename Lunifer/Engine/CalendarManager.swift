@@ -17,6 +17,13 @@ struct CalendarEvent: Identifiable {
     let location: String?
     let notes: String?
 
+    /// True only when the current user has explicitly DECLINED this event's
+    /// invitation. Accepted, tentative, and not-yet-answered invites are all
+    /// treated as "attending" (isDeclinedByUser == false) so they still drive
+    /// the alarm calculation. Personal events with no attendees are never
+    /// declined. Used to exclude declined meetings from the alarm baseline.
+    let isDeclinedByUser: Bool
+
     /// Duration of the event in seconds.
     var duration: TimeInterval { endDate.timeIntervalSince(startDate) }
 
@@ -30,6 +37,36 @@ enum CalendarAuthorizationStatus: Equatable {
     case notDetermined
     case authorized
     case denied
+}
+
+// MARK: - CalendarProvider
+
+/// Which calendar back-end supplies events, derived from `SurveyAnswers.calendar`.
+/// `apple` reads the iOS system calendar via EventKit; `google` / `microsoft`
+/// read the provider's web API directly, so they work even when the account is
+/// not synced into the iOS system calendar. `none` means the user has no calendar.
+enum CalendarProvider {
+    case apple, google, microsoft, none
+
+    init(answer: String?) {
+        switch answer {
+        case "google":  self = .google
+        case "outlook": self = .microsoft
+        case "none":    self = .none
+        default:        self = .apple   // nil or "apple"
+        }
+    }
+}
+
+// MARK: - CalendarEventSource
+
+/// A back-end that can return Lunifer `CalendarEvent`s for a date range.
+/// Implemented by `GoogleCalendarService` and `MicrosoftCalendarService`;
+/// EventKit is handled inline by `CalendarManager`.
+@MainActor
+protocol CalendarEventSource {
+    func isConnected() -> Bool
+    func events(from start: Date, to end: Date) async -> [CalendarEvent]
 }
 
 // MARK: - CalendarManager
@@ -110,24 +147,43 @@ final class CalendarManager: ObservableObject {
 
     // MARK: Fetching
 
-    /// Fetches today's and the next 7 days of events from the system calendar store.
-    ///
-    /// Safe to call multiple times; no-ops when not authorized.
+    /// Fetches today's and the next 7 days of events from whichever back-end
+    /// matches the user's chosen provider (`SurveyAnswers.calendar`):
+    ///   • apple     → EventKit (iOS system calendar)
+    ///   • google    → Google Calendar API
+    ///   • microsoft → Microsoft Graph (Outlook)
+    ///   • none      → no events
+    /// Reading Google/Outlook over their APIs means events appear even when the
+    /// account is NOT synced into the iOS system calendar. Safe to call repeatedly.
     func fetchEvents() async {
+        let provider = CalendarProvider(answer: SurveyAnswersStore.shared.loadFromDefaults()?.calendar)
+
+        let cal = Calendar.current
+        let todayStart = cal.startOfDay(for: Date())
+        guard let todayEnd = cal.date(byAdding: .day, value: 1, to: todayStart),
+              let upcomingEnd = cal.date(byAdding: .day, value: 7, to: todayStart) else {
+            return
+        }
+
+        switch provider {
+        case .apple:
+            await fetchFromEventKit(todayStart: todayStart, todayEnd: todayEnd, upcomingEnd: upcomingEnd)
+        case .google:
+            await fetchFromService(GoogleCalendarService.shared, todayEnd: todayEnd, upcomingEnd: upcomingEnd)
+        case .microsoft:
+            await fetchFromService(MicrosoftCalendarService.shared, todayEnd: todayEnd, upcomingEnd: upcomingEnd)
+        case .none:
+            todayEvents = []
+            upcomingEvents = []
+        }
+    }
+
+    /// EventKit path (Apple system calendar). No-ops when not authorized.
+    private func fetchFromEventKit(todayStart: Date, todayEnd: Date, upcomingEnd: Date) async {
         guard authorizationStatus == .authorized else { return }
 
         isLoading = true
         errorMessage = nil
-
-        let cal = Calendar.current
-        let now = Date()
-
-        let todayStart = cal.startOfDay(for: now)
-        guard let todayEnd = cal.date(byAdding: .day, value: 1, to: todayStart),
-              let upcomingEnd = cal.date(byAdding: .day, value: 7, to: todayStart) else {
-            isLoading = false
-            return
-        }
 
         todayEvents = fetchEKEvents(from: todayStart, to: todayEnd)
             .map(mapToCalendarEvent)
@@ -136,6 +192,33 @@ final class CalendarManager: ObservableObject {
         // Upcoming: tomorrow → 7 days from today
         upcomingEvents = fetchEKEvents(from: todayEnd, to: upcomingEnd)
             .map(mapToCalendarEvent)
+            .sorted { $0.startDate < $1.startDate }
+
+        isLoading = false
+    }
+
+    /// Web-API path (Google / Microsoft). Pulls the full today→+7d window in one
+    /// request, then splits it into today vs. upcoming to match the EventKit shape.
+    private func fetchFromService(_ source: CalendarEventSource, todayEnd: Date, upcomingEnd: Date) async {
+        guard source.isConnected() else {
+            // Not connected yet (user hasn't granted calendar access) — clear so
+            // downstream logic falls back to historical pattern / 8 AM.
+            todayEvents = []
+            upcomingEvents = []
+            return
+        }
+
+        isLoading = true
+        errorMessage = nil
+
+        let todayStart = Calendar.current.startOfDay(for: Date())
+        let all = await source.events(from: todayStart, to: upcomingEnd)
+
+        todayEvents = all
+            .filter { $0.startDate >= todayStart && $0.startDate < todayEnd }
+            .sorted { $0.startDate < $1.startDate }
+        upcomingEvents = all
+            .filter { $0.startDate >= todayEnd && $0.startDate < upcomingEnd }
             .sorted { $0.startDate < $1.startDate }
 
         isLoading = false
@@ -169,7 +252,19 @@ final class CalendarManager: ObservableObject {
               let dayEnd   = cal.date(byAdding: .day, value: 1, to: tomorrow) else { return nil }
 
         return (todayEvents + upcomingEvents)
-            .filter { !$0.isAllDay && $0.startDate >= tomorrow && $0.startDate < dayEnd }
+            .filter { !$0.isAllDay && !$0.isDeclinedByUser && $0.startDate >= tomorrow && $0.startDate < dayEnd }
+            .sorted { $0.startDate < $1.startDate }
+            .first
+    }
+
+    /// The earliest non-all-day, non-declined event today, or nil if none.
+    /// Mirrors `firstEventTomorrow`'s filtering so the commute card anchors to
+    /// an event the user is actually attending — not a declined meeting or an
+    /// all-day entry. Use this (not `todayEvents.first`) wherever "today's first
+    /// real event" is needed.
+    var firstEventToday: CalendarEvent? {
+        todayEvents
+            .filter { !$0.isAllDay && !$0.isDeclinedByUser }
             .sorted { $0.startDate < $1.startDate }
             .first
     }
@@ -203,6 +298,9 @@ final class CalendarManager: ObservableObject {
 
         for event in fetchEKEvents(from: sixWeeksAgo, to: yesterday) {
             guard !event.isAllDay else { continue }
+            // Skip meetings the user declined — they shouldn't shape the
+            // historical "typical first event" pattern either.
+            guard !Self.isDeclinedByCurrentUser(event) else { continue }
             guard cal.component(.weekday, from: event.startDate) == weekday else { continue }
 
             // Key by calendar date so we group events on the same day together.
@@ -251,7 +349,21 @@ final class CalendarManager: ObservableObject {
             calendarTitle: event.calendar.title,
             calendarColor: color,
             location: event.location,
-            notes: event.notes
+            notes: event.notes,
+            isDeclinedByUser: Self.isDeclinedByCurrentUser(event)
         )
+    }
+
+    /// Returns true only when the current user is an attendee on `event` AND
+    /// their participation status is `.declined`. Returns false for personal
+    /// events (no attendees) and for any invite the user has accepted, marked
+    /// tentative, or not yet responded to — an un-answered invite counts as
+    /// "attending" so it still feeds the alarm calculation.
+    nonisolated static func isDeclinedByCurrentUser(_ event: EKEvent) -> Bool {
+        guard let attendees = event.attendees else { return false }
+        for participant in attendees where participant.isCurrentUser {
+            return participant.participantStatus == .declined
+        }
+        return false
     }
 }

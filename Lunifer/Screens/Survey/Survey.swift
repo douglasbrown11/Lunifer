@@ -388,8 +388,20 @@ struct TimeScalePicker: View {
 // ── MARK: LuniferSurvey ──────────────────────────────────────
 
 struct LuniferSurvey: View {
+        var preSelectedCalendar: String = ""
         var onFinish: ((SurveyAnswers) -> Void)? = nil
         @AppStorage("surveyCompleted") private var surveyCompleted = false
+
+        /// True when the user already chose their calendar on the pre-auth screen,
+        /// so step 3 (calendar) can be skipped entirely in the survey.
+        private var skipCalendarStep: Bool { !preSelectedCalendar.isEmpty }
+
+        /// Maps the raw step index to a visual index for the progress dots,
+        /// accounting for the skipped calendar step when applicable.
+        private var visualStep: Int {
+            guard skipCalendarStep, step > 3 else { return step }
+            return step - 1
+        }
 
         @EnvironmentObject private var calendarManager: CalendarManager
         @Environment(\.openURL) private var openURL
@@ -435,12 +447,13 @@ struct LuniferSurvey: View {
             answers.lifestyle != "not_working"
         }
         private var totalSteps: Int {
-            var count = 5  // age, lifestyle, wakeDays, calendar, sleep — always shown
+            // Calendar step (step 3) is skipped when pre-selected before sign-in
+            var count = skipCalendarStep ? 4 : 5
             if showRoutine { count += 1 }
             if showCommute { count += 1 }
             return count
         }
-        private var isLastStep: Bool { step == totalSteps - 1 }
+        private var isLastStep: Bool { visualStep == totalSteps - 1 }
         
         private var canNext: Bool {
             switch step {
@@ -465,7 +478,7 @@ struct LuniferSurvey: View {
                 ScrollView {
                         VStack(spacing: 0) {
                             
-                            SurveyStepDots(total: totalSteps, current: step)
+                            SurveyStepDots(total: totalSteps, current: visualStep)
                                 .padding(.bottom, 16)
                             
                             // ── Step content ─────────────────────
@@ -619,6 +632,30 @@ struct LuniferSurvey: View {
                 }
             }
             .frame(maxWidth: .infinity, maxHeight: .infinity)
+        // ── Pre-selected calendar (chosen before sign-in) ─────────
+        // If the user picked a calendar on the CalendarChoiceScreen,
+        // set answers.calendar immediately and trigger the service
+        // connection that the calendar step would have triggered.
+        .onAppear {
+            guard skipCalendarStep else { return }
+            answers.calendar = preSelectedCalendar
+            switch preSelectedCalendar {
+            case "apple":
+                if calendarManager.authorizationStatus == .notDetermined {
+                    Task { await calendarManager.requestAccess() }
+                }
+            case "google":
+                if !GoogleCalendarService.shared.isConnected() {
+                    Task { await GoogleCalendarService.shared.connect() }
+                }
+            case "outlook":
+                if !MicrosoftCalendarService.shared.isConnected() {
+                    Task { await MicrosoftCalendarService.shared.connect() }
+                }
+            default:
+                break
+            }
+        }
         // ── Location permission explanation alert ─────────────────
         // Shown when the user chose something other than "Always Allow"
         // after the system location prompt at the end of onboarding.
@@ -874,8 +911,24 @@ struct LuniferSurvey: View {
                     }
                 } else {
                     showCalendarNudge = false
-                    if calendarManager.authorizationStatus == .notDetermined {
-                        Task { await calendarManager.requestAccess() }
+                    // Trigger consent for the chosen provider. Apple uses EventKit;
+                    // Google/Outlook read their web APIs directly so they work even
+                    // when the account isn't synced into the iOS system calendar.
+                    switch id {
+                    case "apple":
+                        if calendarManager.authorizationStatus == .notDetermined {
+                            Task { await calendarManager.requestAccess() }
+                        }
+                    case "google":
+                        if !GoogleCalendarService.shared.isConnected() {
+                            Task { await GoogleCalendarService.shared.connect() }
+                        }
+                    case "outlook":
+                        if !MicrosoftCalendarService.shared.isConnected() {
+                            Task { await MicrosoftCalendarService.shared.connect() }
+                        }
+                    default:
+                        break
                     }
                 }
             } content: {
@@ -1203,11 +1256,23 @@ struct LuniferSurvey: View {
                     m.stopActivityUpdates()
                 }
             }
-            step += 1
+            // Skip the calendar step when it was pre-selected before sign-in
+            if skipCalendarStep && step == 2 {
+                step = 4
+            } else {
+                step += 1
+            }
         }
-        
+
         private func goBack() {
-            if step > 0 { step -= 1 }
+            if step > 0 {
+                // Skip back over the calendar step when it was pre-selected
+                if skipCalendarStep && step == 4 {
+                    step = 2
+                } else {
+                    step -= 1
+                }
+            }
         }
 
         private func toggleWakeDay(_ day: String) {

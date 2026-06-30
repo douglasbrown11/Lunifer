@@ -40,7 +40,7 @@ struct CommuteStatusCard: View {
     /// location string on today's first calendar event.
     /// When false, a nudge is shown encouraging the user to add event locations.
     private var hasRoutingDestination: Bool {
-        if let loc = CalendarManager.shared.todayEvents.first?.location,
+        if let loc = CalendarManager.shared.firstEventToday?.location,
            !loc.trimmingCharacters(in: .whitespaces).isEmpty {
             return true
         }
