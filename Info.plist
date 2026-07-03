@@ -52,12 +52,14 @@
 	<string>1</string>
 	<key>GIDClientID</key>
 	<string>7167900619-kt1j2i37t8cvkuo9afdnvhro643f05th.apps.googleusercontent.com</string>
+	<key>ITSAppUsesNonExemptEncryption</key>
+	<false/>
 	<key>LSRequiresIPhoneOS</key>
 	<true/>
 	<key>NSAlarmKitUsageDescription</key>
 	<string>Lunifer sets a wake-up alarm for you automatically each night based on your schedule.</string>
 	<key>NSCalendarsFullAccessUsageDescription</key>
-	<string>Lunifer uses your calendar to detect early meetings, late events, and days off so it can automatically adjust your wake-up time.</string>
+	<string>Lunifer uses your calendar to dX$etect early meetings, late events, and days off so it can automatically adjust your wake-up time.</string>
 	<key>NSHealthShareUsageDescription</key>
 	<string>Lunifer reads your sleep data from Apple Health (recorded by your Apple Watch) to give you more accurate sleep insights and a better-timed alarm.</string>
 	<key>NSLocationAlwaysAndWhenInUseUsageDescription</key>
@@ -86,8 +88,6 @@
 	</array>
 	<key>UILaunchScreen</key>
 	<dict/>
-	<key>ITSAppUsesNonExemptEncryption</key>
-	<false/>
 	<key>UISupportedInterfaceOrientations</key>
 	<array>
 		<string>UIInterfaceOrientationPortrait</string>

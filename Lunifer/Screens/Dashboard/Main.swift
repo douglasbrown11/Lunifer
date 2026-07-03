@@ -79,6 +79,8 @@ struct LuniferMain: View {
     @State private var currentPage: Int = 1
     @State private var alarmExpanded = false
     @State private var overrideTime = Date()
+    /// Staged time while the dropdown is open — only committed on confirm tap.
+    @State private var pendingOverrideTime: Date = Date()
     @AppStorage("overrideActive") private var overrideActive: Bool = false
     @AppStorage("overrideTimestamp") private var overrideTimestamp: Double = 0
     @AppStorage("luniferEnabled") private var luniferEnabled: Bool = true
@@ -217,12 +219,15 @@ struct LuniferMain: View {
 
     private var wakeUpTime: String {
         let f = DateFormatter(); f.dateFormat = "h:mm"
-        return f.string(from: overrideActive ? overrideTime : resolvedAlarmDate)
+        // While the dropdown is open, show the staged pending time as a live preview.
+        let date = alarmExpanded ? pendingOverrideTime : (overrideActive ? overrideTime : resolvedAlarmDate)
+        return f.string(from: date)
     }
 
     private var wakeUpPeriod: String {
         let f = DateFormatter(); f.dateFormat = "a"
-        return f.string(from: overrideActive ? overrideTime : resolvedAlarmDate)
+        let date = alarmExpanded ? pendingOverrideTime : (overrideActive ? overrideTime : resolvedAlarmDate)
+        return f.string(from: date)
     }
 
     // Alarm-date resolution now lives on LuniferAlarm (Engine/Alarm.swift) so it
@@ -457,7 +462,10 @@ struct LuniferMain: View {
             HealthKitManager.shared.refreshIfNeeded()
             BatteryAlarmNotification.shared.startMonitoring()
             LuniferAlarm.shared.startAdaptiveRescheduling()
-            await WakeNotification.shared.schedule(wakeDate: calculatedAlarmDate, answers: answers)
+            // Use the override time for the notification when a manual override is active,
+            // so the notification matches what the dashboard actually displays.
+            let wakeForNotification = overrideActive ? overrideTime : calculatedAlarmDate
+            await WakeNotification.shared.schedule(wakeDate: wakeForNotification, answers: answers)
             await BirthdayNotification.shared.schedule(answers: answers)
             // Request alarm authorization — waits for the user to respond
             await LuniferAlarm.shared.requestAuthorization()
@@ -675,11 +683,14 @@ struct LuniferMain: View {
             // the alarm time never moves when the user opens or closes the menu.
             GeometryReader { geo in
                 VStack(spacing: 0) {
-                    // Fixed spacer: positions alarm block center at geo.height/2 − 72,
-                    // matching the original centred layout with a 40pt upward shift.
-                    // 85 ≈ half the collapsed alarm-header height (label + dividers + time row + bedtime row).
+                    // When collapsed: centres the alarm header vertically.
+                    // When expanded: slides header near the top so the full dropdown
+                    // (picker + confirm button) is immediately visible below it.
                     Spacer()
-                        .frame(height: max(0, geo.size.height / 2 - 72 - 85))
+                        .frame(height: alarmExpanded
+                               ? max(0, geo.size.height * 0.08)
+                               : max(0, geo.size.height / 2 - 72 - 85))
+                        .animation(.easeInOut(duration: 0.3), value: alarmExpanded)
 
                     // ── Alarm header — never moves ────────────
                     VStack(spacing: 12) {
@@ -724,13 +735,9 @@ struct LuniferMain: View {
                         .onTapGesture {
                             withAnimation(.easeInOut(duration: 0.3)) {
                                 if !alarmExpanded {
-                                    // Seed the picker to the calculated time so it starts
-                                    // in the right place, but do NOT activate override here.
-                                    // Override only activates when the user actually moves
-                                    // the picker to a different time (see onChange below).
-                                    if !overrideActive {
-                                        overrideTime = calculatedAlarmDate
-                                    }
+                                    // Seed the staging picker from the current committed time
+                                    // so the user starts from where the alarm actually is.
+                                    pendingOverrideTime = overrideActive ? overrideTime : calculatedAlarmDate
                                 }
                                 alarmExpanded.toggle()
                             }
@@ -760,33 +767,6 @@ struct LuniferMain: View {
                         }
                     }
                     .padding(.horizontal, 32)
-                    .onChange(of: overrideTime) { _, newTime in
-                        if overrideActive {
-                            // Already in override — reschedule whenever the picker moves.
-                            overrideTimestamp = newTime.timeIntervalSince1970
-                            Task {
-                                AdaptiveAlarmStore.shared.clearPendingDecision()
-                                await LuniferAlarm.shared.scheduleAlarm(for: newTime)
-                                await WakeNotification.shared.schedule(wakeDate: newTime, answers: answers)
-                            }
-                        } else {
-                            // Not yet in override. The picker fires onChange when it is
-                            // first seeded to calculatedAlarmDate (on dropdown open) —
-                            // that should not activate override. Only activate when the
-                            // user has meaningfully scrolled away from the calculated time
-                            // (more than 60 seconds difference accounts for sub-minute
-                            // precision in calculatedAlarmDate vs. the picker's minute snap).
-                            let diffSeconds = abs(newTime.timeIntervalSince(calculatedAlarmDate))
-                            guard diffSeconds > 60 else { return }
-                            overrideActive = true
-                            overrideTimestamp = newTime.timeIntervalSince1970
-                            Task {
-                                AdaptiveAlarmStore.shared.clearPendingDecision()
-                                await LuniferAlarm.shared.scheduleAlarm(for: newTime)
-                                await WakeNotification.shared.schedule(wakeDate: newTime, answers: answers)
-                            }
-                        }
-                    }
 
                     // ── Dropdown content (below alarm header, scrollable) ──
                     if alarmExpanded {
@@ -797,7 +777,7 @@ struct LuniferMain: View {
                                     .foregroundColor(Color.white.opacity(0.85))
                                     .frame(maxWidth: .infinity, alignment: .center)
 
-                                DatePicker("", selection: $overrideTime, displayedComponents: .hourAndMinute)
+                                DatePicker("", selection: $pendingOverrideTime, displayedComponents: .hourAndMinute)
                                     .datePickerStyle(.wheel)
                                     .labelsHidden()
                                     .colorScheme(.dark)
@@ -866,6 +846,83 @@ struct LuniferMain: View {
                                                 .stroke(Color.white.opacity(0.08), lineWidth: 1)
                                         )
                                 )
+
+
+                                // ── Reset to Lunifer's time ─────────────
+                                // Only shown when a manual override is active.
+                                if overrideActive {
+                                    Button {
+                                        overrideActive = false
+                                        overrideTimestamp = 0
+                                        Task {
+                                            await LuniferAlarm.shared.scheduleAlarm(
+                                                for: calculatedAlarmDate,
+                                                eventTitle: CalendarManager.shared.firstEventTomorrow?.title ?? "your first event",
+                                                routineMinutes: answers.routine.auto ? 60 : answers.routine.hours * 60 + answers.routine.minutes,
+                                                commuteMinutes: (answers.lifestyle == "student" || answers.lifestyle == "commuter")
+                                                    ? (answers.commute.auto ? (CommuteManager.shared.currentDurationMinutes > 0 ? CommuteManager.shared.currentDurationMinutes : 30) : answers.commute.hours * 60 + answers.commute.minutes)
+                                                    : 0
+                                            )
+                                            await WakeNotification.shared.schedule(wakeDate: calculatedAlarmDate, answers: answers)
+                                        }
+                                        withAnimation(.easeInOut(duration: 0.3)) {
+                                            alarmExpanded = false
+                                        }
+                                    } label: {
+                                        Text("Reset to Lunifer's time")
+                                            .font(.custom("DM Sans", size: 13))
+                                            .foregroundColor(Color.white.opacity(0.4))
+                                            .frame(maxWidth: .infinity)
+                                            .padding(.vertical, 10)
+                                            .background(
+                                                RoundedRectangle(cornerRadius: 10)
+                                                    .fill(Color.white.opacity(0.04))
+                                                    .overlay(
+                                                        RoundedRectangle(cornerRadius: 10)
+                                                            .stroke(Color.white.opacity(0.08), lineWidth: 1)
+                                                    )
+                                            )
+                                    }
+                                    .buttonStyle(.plain)
+                                }
+
+                                // ── Confirm button ──────────────────────
+                                Button {
+                                    let diffSeconds = abs(pendingOverrideTime.timeIntervalSince(calculatedAlarmDate))
+                                    if diffSeconds > 60 {
+                                        // User chose a different time — commit the override.
+                                        overrideActive = true
+                                        overrideTimestamp = pendingOverrideTime.timeIntervalSince1970
+                                        overrideTime = pendingOverrideTime
+                                        Task {
+                                            AdaptiveAlarmStore.shared.clearPendingDecision()
+                                            await LuniferAlarm.shared.scheduleAlarm(for: pendingOverrideTime)
+                                            await WakeNotification.shared.schedule(wakeDate: pendingOverrideTime, answers: answers)
+                                        }
+                                    } else {
+                                        // Picker is back near Lunifer's calculated time — clear any override.
+                                        overrideActive = false
+                                        overrideTimestamp = 0
+                                    }
+                                    withAnimation(.easeInOut(duration: 0.3)) {
+                                        alarmExpanded = false
+                                    }
+                                } label: {
+                                    Text("Confirm")
+                                        .font(.custom("DM Sans", size: 14))
+                                        .foregroundColor(Color.white.opacity(0.6))
+                                        .padding(.horizontal, 24)
+                                        .padding(.vertical, 12)
+                                        .frame(maxWidth: .infinity)
+                                        .background(
+                                            Capsule()
+                                                .fill(Color(red: 0.392, green: 0.275, blue: 0.627).opacity(0.2))
+                                                .overlay(Capsule().stroke(
+                                                    Color(red: 0.627, green: 0.471, blue: 0.863).opacity(0.3),
+                                                    lineWidth: 1))
+                                        )
+                                }
+                                .buttonStyle(.plain)
                             }
                             .padding(.vertical, 12)
                             .padding(.horizontal, 52)
