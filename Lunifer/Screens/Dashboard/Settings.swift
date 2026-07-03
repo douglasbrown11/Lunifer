@@ -97,6 +97,12 @@ struct LuniferSettings: View {
                                 settingsNavRow(title: "About")
                             }
 
+                            NavigationLink {
+                                FeedbackSettingsView()
+                            } label: {
+                                settingsNavRow(title: "Submit Feedback")
+                            }
+
                             // ── Account ───────────────────────
                             SettingsSection(title: "Account") {
                                 VStack(spacing: 0) {
@@ -1830,6 +1836,292 @@ struct AboutSettingsView: View {
             }
         }
         .toolbar(.hidden, for: .navigationBar)
+    }
+}
+
+// ── MARK: Feedback ────────────────────────────────────────────
+
+struct FeedbackSettingsView: View {
+    @Environment(\.dismiss) private var dismiss
+    @State private var feedbackText = ""
+    @State private var selectedCategory: String? = nil
+    @State private var categoryExpanded = false
+    @FocusState private var otherFieldFocused: Bool
+    @State private var isSending = false
+
+    private let categories = ["Bug Report", "Feature Request", "Alarm Issue", "UI / Design", "Notifications", "Wearable Integration", "Other"]
+    @State private var otherCategoryText = ""
+    @State private var showConfirmation = false
+    @FocusState private var editorFocused: Bool
+
+    private var trimmed: String { feedbackText.trimmingCharacters(in: .whitespacesAndNewlines) }
+    private var canSend: Bool { trimmed.count >= 40 && !isSending }
+
+    var body: some View {
+        ZStack(alignment: .top) {
+            Color.luniferBg.ignoresSafeArea()
+
+            VStack(spacing: 0) {
+                // ── Header ────────────────────────────────
+                HStack {
+                    Button { dismiss() } label: {
+                        Image(systemName: "chevron.left")
+                            .font(.system(size: 16, weight: .light))
+                            .foregroundColor(Color.white.opacity(0.75))
+                            .frame(width: 36, height: 36)
+                    }
+                    Spacer()
+                    Text("Feedback")
+                        .font(.custom("Cormorant Garamond", size: 28).weight(.light))
+                        .foregroundColor(Color.white.opacity(0.9))
+                    Spacer()
+                    Color.clear.frame(width: 36, height: 36)
+                }
+                .padding(.horizontal, 24)
+                .padding(.top, 24)
+                .padding(.bottom, 20)
+
+                ScrollView(showsIndicators: false) {
+                    VStack(alignment: .leading, spacing: 16) {
+                        Text("Submit Feedback for the Lunifer team")
+                            .font(.custom("DM Sans", size: 15))
+                            .foregroundColor(Color.white.opacity(0.55))
+                            .padding(.horizontal, 24)
+
+                        // ── Category picker ───────────────
+                        VStack(alignment: .leading, spacing: 0) {
+                            // Trigger row
+                            HStack(spacing: 8) {
+                                if selectedCategory == "Other" {
+                                    TextField("", text: $otherCategoryText)
+                                        .focused($otherFieldFocused)
+                                        .font(.custom("DM Sans", size: 15))
+                                        .foregroundColor(Color.white.opacity(0.85))
+                                        .tint(.white)
+                                        .frame(maxWidth: .infinity)
+                                        .onSubmit {
+                                            withAnimation(.easeInOut(duration: 0.2)) {
+                                                categoryExpanded = false
+                                            }
+                                        }
+                                } else {
+                                    Text(selectedCategory ?? "Select a category")
+                                        .font(.custom("DM Sans", size: 15))
+                                        .foregroundColor(selectedCategory != nil
+                                            ? Color.white.opacity(0.85)
+                                            : Color.white.opacity(0.35))
+                                        .frame(maxWidth: .infinity, alignment: .leading)
+                                }
+                                Button {
+                                    withAnimation(.easeInOut(duration: 0.2)) {
+                                        if selectedCategory == "Other" {
+                                            selectedCategory = nil
+                                            otherCategoryText = ""
+                                            otherFieldFocused = false
+                                            categoryExpanded = false
+                                        } else {
+                                            categoryExpanded.toggle()
+                                        }
+                                    }
+                                } label: {
+                                    Image(systemName: selectedCategory == "Other" ? "xmark" : "chevron.down")
+                                        .font(.system(size: 12, weight: .light))
+                                        .foregroundColor(Color.white.opacity(0.35))
+                                        .rotationEffect(.degrees(categoryExpanded && selectedCategory != "Other" ? 180 : 0))
+                                        .animation(.easeInOut(duration: 0.2), value: categoryExpanded)
+                                        .frame(width: 24, height: 24)
+                                }
+                            }
+                            .padding(.horizontal, 16)
+                            .padding(.vertical, 14)
+                            .frame(maxWidth: .infinity)
+                            .background(
+                                RoundedRectangle(cornerRadius: 12)
+                                    .fill(Color.white.opacity(0.04))
+                                    .overlay(
+                                        RoundedRectangle(cornerRadius: 12)
+                                            .stroke(Color.white.opacity(0.08), lineWidth: 1)
+                                    )
+                            )
+                            .contentShape(Rectangle())
+                            .onTapGesture {
+                                if selectedCategory == "Other" {
+                                    otherFieldFocused = true
+                                } else {
+                                    withAnimation(.easeInOut(duration: 0.2)) {
+                                        categoryExpanded.toggle()
+                                    }
+                                }
+                            }
+
+                            if categoryExpanded {
+                                VStack(spacing: 0) {
+                                    ForEach(categories, id: \.self) { cat in
+                                        Button {
+                                            if cat == "Other" {
+                                                selectedCategory = "Other"
+                                                otherCategoryText = ""
+                                                DispatchQueue.main.asyncAfter(deadline: .now() + 0.05) {
+                                                    otherFieldFocused = true
+                                                }
+                                            } else {
+                                                withAnimation(.easeInOut(duration: 0.15)) {
+                                                    selectedCategory = cat
+                                                    categoryExpanded = false
+                                                }
+                                            }
+                                        } label: {
+                                            HStack {
+                                                Text(cat)
+                                                    .font(.custom("DM Sans", size: 15))
+                                                    .foregroundColor(selectedCategory == cat
+                                                        ? Color.white.opacity(0.9)
+                                                        : Color.white.opacity(0.6))
+                                                Spacer()
+                                                if selectedCategory == cat {
+                                                    Image(systemName: "checkmark")
+                                                        .font(.system(size: 12, weight: .medium))
+                                                        .foregroundColor(Color.white.opacity(0.6))
+                                                }
+                                            }
+                                            .frame(maxWidth: .infinity)
+                                            .padding(.horizontal, 16)
+                                            .padding(.vertical, 13)
+                                            .background(selectedCategory == cat
+                                                ? Color.white.opacity(0.06)
+                                                : Color.clear)
+                                            .contentShape(Rectangle())
+                                        }
+                                        .buttonStyle(.plain)
+
+                                        if cat != categories.last {
+                                            Divider()
+                                                .background(Color.white.opacity(0.06))
+                                                .padding(.leading, 16)
+                                        }
+                                    }
+                                }
+                                .background(
+                                    RoundedRectangle(cornerRadius: 12)
+                                        .fill(Color.white.opacity(0.05))
+                                        .overlay(
+                                            RoundedRectangle(cornerRadius: 12)
+                                                .stroke(Color.white.opacity(0.08), lineWidth: 1)
+                                        )
+                                )
+                                .padding(.top, 4)
+                            }
+                        }
+                        .padding(.horizontal, 24)
+
+                        ZStack(alignment: .bottomTrailing) {
+                            TextEditor(text: $feedbackText)
+                                .focused($editorFocused)
+                                .font(.custom("DM Sans", size: 15))
+                                .foregroundColor(Color.white.opacity(0.85))
+                                .scrollContentBackground(.hidden)
+                                .background(Color.clear)
+                                .frame(minHeight: 160)
+                                .padding(16)
+                                .padding(.bottom, 20)
+
+                            Text("\(trimmed.count)")
+                                .font(.custom("DM Sans", size: 11))
+                                .foregroundColor(trimmed.count >= 40
+                                    ? Color.white.opacity(0.3)
+                                    : Color.white.opacity(0.2))
+                                .padding(.trailing, 12)
+                                .padding(.bottom, 8)
+                        }
+                        .background(
+                            RoundedRectangle(cornerRadius: 12)
+                                .fill(Color.white.opacity(0.04))
+                                .overlay(
+                                    RoundedRectangle(cornerRadius: 12)
+                                        .stroke(
+                                            editorFocused
+                                                ? Color.white.opacity(0.2)
+                                                : Color.white.opacity(0.08),
+                                            lineWidth: 1
+                                        )
+                                )
+                        )
+                        .padding(.horizontal, 24)
+
+                        Text("40 characters minimum")
+                            .font(.custom("DM Sans", size: 12))
+                            .foregroundColor(Color.white.opacity(0.25))
+                            .padding(.horizontal, 24)
+
+                        Button {
+                            Task { await sendFeedback() }
+                        } label: {
+                            ZStack {
+                                if isSending {
+                                    ProgressView().tint(.white)
+                                } else {
+                                    Text("Send")
+                                        .font(.custom("DM Sans", size: 15).weight(.medium))
+                                        .foregroundColor(canSend
+                                            ? Color.white.opacity(0.9)
+                                            : Color.white.opacity(0.25))
+                                }
+                            }
+                            .frame(maxWidth: .infinity)
+                            .padding(.vertical, 14)
+                            .background(
+                                RoundedRectangle(cornerRadius: 12)
+                                    .fill(Color.white.opacity(canSend ? 0.09 : 0.04))
+                                    .overlay(
+                                        RoundedRectangle(cornerRadius: 12)
+                                            .stroke(Color.white.opacity(0.08), lineWidth: 1)
+                                    )
+                            )
+                        }
+                        .disabled(!canSend)
+                        .padding(.horizontal, 24)
+                    }
+                    .padding(.bottom, 40)
+                }
+            }
+        }
+        .toolbar(.hidden, for: .navigationBar)
+        .alert("Thanks for your feedback!", isPresented: $showConfirmation) {
+            Button("Done", role: .cancel) { dismiss() }
+        } message: {
+            Text("We appreciate you taking the time to share your thoughts.")
+        }
+        .onTapGesture { editorFocused = false }
+    }
+
+    private func sendFeedback() async {
+        guard trimmed.count >= 40 else { return }
+
+        isSending = true
+
+        guard let uid = Auth.auth().currentUser?.uid else {
+            isSending = false
+            return
+        }
+
+        var entry: [String: Any] = [
+            "uid": uid,
+            "text": trimmed,
+            "submittedAt": FieldValue.serverTimestamp()
+        ]
+        if let cat = selectedCategory {
+            let customOther = otherCategoryText.trimmingCharacters(in: .whitespacesAndNewlines)
+            entry["category"] = (cat == "Other" && !customOther.isEmpty) ? "Other: \(customOther)" : cat
+        }
+
+        do {
+            try await Firestore.firestore().collection("feedback").addDocument(data: entry)
+            isSending = false
+            showConfirmation = true
+        } catch {
+            print("❌ Feedback submission failed: \(error.localizedDescription)")
+            isSending = false
+        }
     }
 }
 

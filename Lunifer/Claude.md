@@ -30,7 +30,7 @@ Try to avoid mechanisms that asks the user to manually provide data — this inc
 - Sign-in screen (`LuniferSignin`) uses `calendarChoice` to restrict buttons: Google Calendar → Google SSO only; Outlook → Outlook SSO only; Apple Calendar → Apple SSO + email; None → all options.
 - Survey step 3 (calendar) is skipped when `preSelectedCalendar` is non-empty. `skipCalendarStep` controls this; `advance()`/`goBack()` jump over step 3, `totalSteps` decrements by 1, and `SurveyStepDots` uses a `visualStep` mapping. `answers.calendar` and the relevant calendar service connection are triggered via `.onAppear` instead.
 - Returning signed-in users with `surveyCompleted == true` and saved local survey answers reopen through the splash screen, then animate into the dashboard
-- The explicit sign-in path (`handleSignedIn(isNewUser: false)`) reloads Firestore and currently goes straight to `.dashboard` on success rather than showing the splash screen
+- The explicit sign-in path (`handleSignedIn(isNewUser: false)`) reloads Firestore and, on success with saved answers, sets `screen = .splash` (`ContentView.swift`), i.e. it shows the splash screen and then animates into the dashboard — same as the returning-user path. It only routes to `.survey` when no saved Firestore profile exists.
 - `LuniferAlarm.shared.startMonitoring()` starts from `ContentView`
 - `LuniferAlarmScreen` is presented with `fullScreenCover` whenever an alarm is actively alerting
 - `App.swift` configures Firebase, registers the background sleep-analysis and commute-refresh tasks, purges corrupt legacy sleep-history entries, registers the rest-day notification category, and assigns the app-wide notification delegate on launch
@@ -73,11 +73,12 @@ Try to avoid mechanisms that asks the user to manually provide data — this inc
 - `Notifications/BirthdayNotification.swift`: yearly birthday notification — fires at 10 AM local time on the user's birthday with title "Happy Birthday {firstName}!". First name derived from `Auth.auth().currentUser?.displayName`. Birthday parsed from `answers.age` ("yyyy-MM-dd" format only; plain integer legacy ages are silently skipped). Scheduled on dashboard load and rescheduled automatically whenever the user changes their age in About You settings.
 - `Screens/Intro/Intro.swift`: onboarding intro flow
 - `Screens/Intro/IntroObjects.swift`: shared intro UI components
-- `Screens/SignIn/Signin.swift`: email/password + Google + Microsoft sign-in UI (`LuniferSignin` struct)
-- `Screens/SignIn/SigninObjects.swift`: shared sign-in UI components (FloatingMoon, GoogleLogoView, MicrosoftLogoView)
+- `Screens/SignIn/SignInScreen.swift`: the sign-in UI — `LuniferSignin` struct plus shared UI components (`FloatingMoon`, `GoogleLogoView`, `MicrosoftLogoView`, `AppleLogoView`, `LuniferInputField`). (There is NO `SigninObjects.swift` file.)
+- `Screens/SignIn/Signin.swift`: auth logic only — `SigninBackend` (`@MainActor ObservableObject`) with email/password, Google, Microsoft (PKCE), and Apple sign-in handlers, plus `SigninMode`, the Apple/Microsoft coordinators, and `friendlySigninError(_:)`. No top-level view lives here.
 - `Screens/Survey/Survey.swift`: survey flow UI plus `SurveyAnswers` and `TimeValue`
 - `Screens/Survey/SurveyObjects.swift`: shared survey UI pieces and icons
-- `Screens/Dashboard/Main.swift`: dashboard, rest view, sound picker, added alarm flow
+- `Screens/Dashboard/Main.swift`: dashboard, rest view, sound picker, added alarm flow. Also defines `LuniferDebugView` (a "Debug" sheet opened from a bottom-left button on the alarm page) that surfaces the pending adaptive decision, bandit stats, commute, sleep-tracker state, recent outcomes, and recent alarm events for inspection.
+- Debug event logging: `DebugAlarmEventStore` / `DebugAlarmEvent` (defined in `Engine/Alarm.swift`) keep the last 30 alarm lifecycle events (`fired` / `snoozed` / `dismissed` / `woke_before`) in UserDefaults (`luniferDebugAlarmEvents`) purely for the debug panel — entirely separate from `AdaptiveAlarmStore`; debug logging never touches the training pipeline.
 - `Screens/Dashboard/SleepInsights.swift`: recommended sleep card and 7-day sleep chart
 - `Screens/Dashboard/Settings.swift`: settings root, About You, Wake Days, Notifications, Sleep & Wearables, sign out, delete account
 - `Screens/Dashboard/CommuteDashboard.swift`: `CommuteStatusCard` (live duration or no-location nudge) and `LuniferCommuteDashboard` preview host
@@ -89,7 +90,8 @@ Try to avoid mechanisms that asks the user to manually provide data — this inc
 - `Privacy Policy & ToS/index.html`: minimal Firebase Hosting landing page for policy links
 - Website: `https://lunifer-website.vercel.app/`
 - `Database/cloudflare-worker/`: Cloudflare Worker backend for WHOOP/Oura token exchange, refresh, and sleep fetch
-- `Database/functions/`: currently just Firebase Functions scaffold leftovers (`.gitignore` + lockfile), with no active app logic wired from the iOS app
+- `functions/` (repo root): **active** Firebase Functions codebase wired via `firebase.json` (`source: "functions"`, codebase `default`). `functions/index.js` defines `deleteUserData`, a `beforeUserDeleted` blocking trigger (firebase-functions v2 identity) that server-side deletes the user's `sleepHistory`, `alarmInferences`, and `private` subcollections plus the root `users/{uid}` document when a Firebase Auth account is deleted. This complements the in-app deletion cleanup in `Settings.swift`.
+- `Database/functions/`: separate scaffold leftovers (`.gitignore` + lockfile only), NOT the deployed functions codebase — the live one is the repo-root `functions/` above.
 - `Lunifer.xcodeproj/`: build settings, schemes, and SwiftPM package resolution
 - `tests/`: placeholder unit/UI test targets with minimal starter coverage
 
@@ -111,7 +113,7 @@ Current survey step order in `Survey.swift`:
 4. Calendar
 5. Sleep duration / WHOOP sleep recommendation
 6. Morning routine duration, skipped for `not_working` — manual entry only; the "let Lunifer figure this out" auto toggle has been removed (Lunifer does not learn routine duration)
-7. Commute transport mode (drive/transit/walk/bike), only for `student` or `commuter` — duration is NOT asked; CommuteManager provides live MKDirections routing with 30-min fallback
+7. Commute transport mode (drive/transit/walk/bike), only for `student` or `commuter` — duration is NOT asked; CommuteManager provides live OpenRouteService (ORS) routing with 30-min fallback
 
 Notes:
 - `wakeDays` defaults to `["mon", "tue", "wed", "thu", "fri"]`
@@ -162,7 +164,7 @@ Commute buffer:
 `Main.swift` currently:
 - Uses a horizontal `TabView` with two pages: `SleepInsights` on the left and the main dashboard/rest page on the right
 - Shows tomorrow's calculated alarm time
-- Supports manual override with a wheel-style `DatePicker`
+- Supports manual override with a wheel-style `DatePicker` in an expandable dropdown; the alarm header animates upward when the dropdown opens so the full picker + confirm button are immediately visible
 - Includes a `Sound` row inside the expanded alarm UI and shows the selected sound name
 - Opens `LuniferSettings` from the gear button
 - Supports an additional manually added alarm from the top-left add-alarm control
@@ -177,7 +179,7 @@ Commute buffer:
   - rest-day early-event notification checks via `RestDayEventNotification.shared.scheduleIfNeeded(...)`
 - Stores enable / disable state with `@AppStorage("luniferEnabled")`
 - Stores selected sound with `@AppStorage("selectedAlarmSound")`, defaulting to `"DeafultAlarm.wav"`
-- Persists manual override state with `overrideActive` / `overrideTimestamp`
+- Persists manual override state with `overrideActive` / `overrideTimestamp` / `overrideTime`; picker changes stage into `pendingOverrideTime` and are only committed to `overrideTime` + AlarmKit when the user taps the "Confirm alarm time" button — closing the dropdown without confirming discards changes; `WakeNotification` on launch uses `overrideTime` when override is active (not `calculatedAlarmDate`) so the notification is always consistent with the displayed alarm
 - Persists added alarms as JSON in `UserDefaults` key `addedAlarms`
 
 Alarm scheduling:
@@ -342,7 +344,7 @@ Not currently present:
 - **Self-perpetuation:** the main alarm reschedules the next wake day whenever it is dismissed, via two paths that both call `scheduleNextWakeAlarm(answers:)` (which finds the next wake day via `nextWakeDay(after:answers:)`, resolves + schedules that day's alarm, and re-arms the wake reminder; rest days are skipped because it targets the next *wake* day, which may be several days out):
   - **System stop (primary):** the main alarm is scheduled with a `stopIntent: LuniferStopAlarmIntent` (App Intent / `LiveActivityIntent`, in `Engine/AlarmStopIntent.swift`). AlarmKit runs this whenever the user stops the alarm from the lock screen / Dynamic Island / system alert — even if the app was never opened (it's launched in the background). Its `perform()` calls `LuniferAlarm.rescheduleAfterSystemStop()`, which logs the dismissal, clears any override, and reschedules.
   - **In-app stop:** the Stop button in `LuniferAlarmScreen` calls `LuniferAlarm.stopAlarm()`, which cancels the alarm and (for the main alarm) clears override + reschedules inline.
-  - The two paths are mutually exclusive per dismissal. Added-alarm dismissals do not reschedule the main alarm; added alarms are NOT given a `stopIntent`, so stopping an added alarm from the system UI does not run its in-app repeat/delete logic (pre-existing gap — that logic only runs via the in-app Stop path).
+  - The two paths are mutually exclusive per dismissal. Added-alarm dismissals do not reschedule the main alarm. Added alarms ARE given their own `stopIntent: LuniferAddedAlarmStopIntent` (defined in `Engine/AlarmStopIntent.swift`), scheduled in `LuniferAlarm.scheduleAddedAlarm(...)`. When an added alarm is stopped from the lock screen / Dynamic Island, the intent's `perform()` calls `LuniferAlarm.handleAddedAlarmSystemStop(logicalID:)`, which runs the same one-shot delete / repeating-reschedule logic as the in-app Stop path — so added alarms no longer leave zombie cards or fail to advance when dismissed outside the app.
   - Still unverified on device: the exact auto-ring/auto-dismiss timeout, and whether `stopIntent` fires on an *auto*-dismiss vs. only an explicit user stop. An evening silent-push backstop is still recommended for the genuinely-app-never-runs / auto-dismiss cases.
 
 ## Design / UI Notes
@@ -576,9 +578,9 @@ Both managers use `https://lunifer-whoop.dougiebrown516.workers.dev` as `Backend
 - Destination uses a two-step priority chain — no extra survey input required:
   1. **Calendar event location** — if `CalendarManager.shared.firstEventTomorrow?.location` is non-empty, geocode it with `CLGeocoder` and route to that address. Handles variable destinations automatically.
   2. **Survey/default fallback** — the stored commute duration, used when no destination or origin coordinates are available.
-- Transport type mapped from `answers.commuteMode`: `"drive"` → `.automobile`, `"transit"` → `.transit`, `"walk"` / `"bike"` → `.walking` (MKDirections has no cycling type)
+- Routing is performed via the **OpenRouteService (ORS) HTTP API** (`https://api.openrouteservice.org/v2/directions/{profile}`) over `URLSession`, NOT MKDirections. A hardcoded ORS API key lives in `CommuteManager.swift` (`orsAPIKey`, ~line 301). Transport type mapped from `answers.commuteMode` to an ORS profile via `orsProfile(for:)`: `"drive"` → `driving-car`, `"transit"` → `public-transport`, `"walk"` → `foot-walking`, `"bike"` → `cycling-regular` (ORS supports cycling directly). Travel time is read from `features[0].properties.summary.duration`. NOTE: several doc comments inside `CommuteManager.swift` still say "MKDirections" — those are stale; the implementation is ORS.
 - Delta detection, leave-reminder notification, and persistence all operate on the returned duration automatically, with a delta alert threshold of ±5 minutes
-- `CommuteManager` imports `MapKit` and `CoreLocation`
+- `CommuteManager` imports `Foundation`, `Combine`, `BackgroundTasks`, and `CoreLocation` (it does NOT import `MapKit`); routing is done over `URLSession` against ORS and addresses are geocoded with `CLGeocoder`
 - `CalendarEvent.location` (`String?`) was already present in the model and mapped from `EKEvent.location` — no changes to `CalendarManager` were needed
 
 Routing and arrival target:
@@ -589,7 +591,7 @@ Routing and arrival target:
 ## Known Gaps
 - `Engine/MorningRoutine/MorningRoutineEstimator.swift` is wired for data collection and lifestyle on/off, but **no UI surfaces its recommendation yet**. The remaining work is a dashboard/settings prompt that calls `recommendation(currentRoutineMinutes:)`, shows the suggested median when non-nil, and on accept writes the value into `answers.routine` (then calls `acknowledgeAcceptedRecommendation()`), or on decline calls `dismissRecommendation(suggestedMinutes:)`.
 - `SurveyAnswers` and `TimeValue` still live inside `Survey.swift` instead of a dedicated model file
-- `AlarmBehaviourLogger` stores `scheduledWakeTime` locally when an alarm is scheduled, then writes `dismissed` and `woke_before_alarm` inference documents to Firestore and enriches training rows with adaptive reward fields when a pending decision exists. The bandit currently trains from `AdaptiveAlarmStore` local outcomes, not by replaying the Firestore `alarmInferences` collection back down to the device. Snooze frequency is intentionally excluded from adaptive reward training.
+- `AlarmBehaviourLogger` stores `scheduledWakeTime` locally when an alarm is scheduled, then writes `dismissed` and `woke_before_alarm` inference documents to Firestore and enriches training rows with adaptive reward fields when a pending decision exists. The bandit currently trains from `AdaptiveAlarmStore` local outcomes, not by replaying the Firestore `alarmInferences` collection back down to the device. However, those local outcomes DO round-trip to Firestore on their own: `AdaptiveAlarmStore.saveOutcomes(...)` mirrors the full outcomes array to `users/{uid}/adaptiveData/outcomes` (a JSON-string field), and `AdaptiveAlarmStore.loadFromFirestore()` (called after sign-in from `ContentView`) merges the remote set back into local storage (dedup by id, newest 120 kept). So adaptive training data survives reinstall / device change even though the bandit never reads `alarmInferences` directly. Snooze frequency is intentionally excluded from adaptive reward training.
 
 ## Font Usage
 - **Libre Franklin** is a variable font (`LibreFranklin-VariableFont_wght.ttf`). Do NOT use `.custom("Libre Franklin", size:).weight(.light)` — SwiftUI cannot apply weight modifiers to variable fonts via the family-name lookup and logs a warning. Always use `Font.libreFranklin(size:)` from `Utils.swift` instead. Pass `weight: 400` for Regular.
