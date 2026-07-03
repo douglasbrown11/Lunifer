@@ -896,7 +896,7 @@ struct LuniferSurvey: View {
                     }
                 }
                 .padding(.bottom, 24)
-                .padding(.horizontal, 50)
+                .padding(.horizontal, 60)
             }
         }
         
