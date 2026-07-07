@@ -1108,72 +1108,71 @@ struct SleepAndWearablesSettingsView: View {
                                         showDisconnectOuraAlert = true
                                     }
                                 )
-                            }
-                        }
 
-                        // ── Sleep tracking source (Apple Watch / Health) ──
-                        // Apple Watch is a measured-sleep data source, not a
-                        // recommendation source, so it sits separately from the
-                        // WHOOP/Oura recommendation wearables above and has no
-                        // one-wearable exclusivity.
-                        SettingsSection(title: "Sleep Tracking") {
-                            HStack(spacing: 12) {
-                                Image(systemName: "applewatch")
-                                    .font(.system(size: 20))
-                                    .foregroundColor(Color.white.opacity(0.85))
-                                VStack(alignment: .leading, spacing: 4) {
-                                    Text("Apple Watch")
-                                        .font(.custom("DM Sans", size: 14))
+                                // Apple Watch is a measured-sleep data source, not a
+                                // recommendation source, so it has no one-wearable
+                                // exclusivity with WHOOP/Oura above — it now lives in
+                                // the same "Wearables" section instead of its own.
+                                HStack(spacing: 12) {
+                                    Image(systemName: "applewatch")
+                                        .font(.system(size: 20))
                                         .foregroundColor(Color.white.opacity(0.85))
-                                    Text("Use Apple Health sleep data for more accurate insights")
-                                        .font(.custom("DM Sans", size: 12))
-                                        .foregroundColor(Color.white.opacity(0.35))
-                                        .fixedSize(horizontal: false, vertical: true)
-                                }
-                                Spacer()
-                                if healthKitManager.isLoading {
-                                    ProgressView()
-                                        .tint(Color(red: 0.627, green: 0.471, blue: 1.0))
-                                        .scaleEffect(0.8)
-                                } else if healthKitConnected {
-                                    Button {
-                                        HealthKitManager.shared.disconnect()
-                                    } label: {
-                                        Text("Disconnect")
-                                            .font(.custom("DM Sans", size: 13))
-                                            .foregroundColor(Color.red.opacity(0.7))
+                                    VStack(alignment: .leading, spacing: 4) {
+                                        Text("Apple Watch")
+                                            .font(.custom("DM Sans", size: 14))
+                                            .foregroundColor(Color.white.opacity(0.85))
+                                        /*
+                                        Text("Use Apple Health sleep data for more accurate insights")
+                                            .font(.custom("DM Sans", size: 12))
+                                            .foregroundColor(Color.white.opacity(0.35))
+                                            .fixedSize(horizontal: false, vertical: true)
+                                        */
                                     }
-                                } else {
-                                    Button {
-                                        Task { await HealthKitManager.shared.connect() }
-                                    } label: {
-                                        Text("Connect")
-                                            .font(.custom("DM Sans", size: 13))
-                                            .foregroundColor(Color(red: 0.627, green: 0.471, blue: 1.0))
-                                            .padding(.horizontal, 16)
-                                            .padding(.vertical, 8)
-                                            .background(
-                                                Capsule()
-                                                    .fill(Color(red: 0.627, green: 0.471, blue: 1.0).opacity(0.12))
-                                                    .overlay(
-                                                        Capsule()
-                                                            .stroke(Color(red: 0.627, green: 0.471, blue: 1.0).opacity(0.3), lineWidth: 1)
-                                                    )
-                                            )
+                                    Spacer()
+                                    if healthKitManager.isLoading {
+                                        ProgressView()
+                                            .tint(Color(red: 0.627, green: 0.471, blue: 1.0))
+                                            .scaleEffect(0.8)
+                                    } else if healthKitConnected {
+                                        Button {
+                                            HealthKitManager.shared.disconnect()
+                                        } label: {
+                                            Text("Disconnect")
+                                                .font(.custom("DM Sans", size: 13))
+                                                .foregroundColor(Color.red.opacity(0.7))
+                                        }
+                                    } else {
+                                        Button {
+                                            Task { await HealthKitManager.shared.connect() }
+                                        } label: {
+                                            Text("Connect")
+                                                .font(.custom("DM Sans", size: 13))
+                                                .foregroundColor(Color(red: 0.627, green: 0.471, blue: 1.0))
+                                                .padding(.horizontal, 16)
+                                                .padding(.vertical, 8)
+                                                .background(
+                                                    Capsule()
+                                                        .fill(Color(red: 0.627, green: 0.471, blue: 1.0).opacity(0.12))
+                                                        .overlay(
+                                                            Capsule()
+                                                                .stroke(Color(red: 0.627, green: 0.471, blue: 1.0).opacity(0.3), lineWidth: 1)
+                                                        )
+                                                )
+                                        }
+                                        .buttonStyle(.plain)
                                     }
-                                    .buttonStyle(.plain)
                                 }
+                                .padding(.horizontal, 16)
+                                .padding(.vertical, 14)
+                                .background(
+                                    RoundedRectangle(cornerRadius: 12)
+                                        .fill(Color.white.opacity(0.04))
+                                        .overlay(
+                                            RoundedRectangle(cornerRadius: 12)
+                                                .stroke(Color.white.opacity(0.08), lineWidth: 1)
+                                        )
+                                )
                             }
-                            .padding(.horizontal, 16)
-                            .padding(.vertical, 14)
-                            .background(
-                                RoundedRectangle(cornerRadius: 12)
-                                    .fill(Color.white.opacity(0.04))
-                                    .overlay(
-                                        RoundedRectangle(cornerRadius: 12)
-                                            .stroke(Color.white.opacity(0.08), lineWidth: 1)
-                                    )
-                            )
                         }
                     }
                     .padding(.horizontal, 24)
