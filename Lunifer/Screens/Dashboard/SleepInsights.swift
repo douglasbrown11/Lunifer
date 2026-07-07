@@ -1,5 +1,40 @@
 import SwiftUI
 
+// Builds an AttributedString where the numeric parts use `size` and the
+// "hrs" / "m" suffixes are 5 points smaller, used by sleep duration displays.
+fileprivate func formattedDurationAttributed(_ hours: Double, size: CGFloat) -> AttributedString {
+    let h      = Int(hours)
+    let m      = Int((hours - Double(h)) * 60)
+    let numFont = Font.libreFranklin(size: size)
+    let sufFont = Font.libreFranklin(size: size - 10)
+
+    var result  = AttributedString()
+
+    var numPart = AttributedString("\(h)")
+    numPart.font = numFont
+    result += numPart
+
+    if m == 0 {
+        var hrsPart = AttributedString(" hours")
+        hrsPart.font = sufFont
+        result += hrsPart
+    } else {
+        var hrsPart = AttributedString("hrs")
+        hrsPart.font = sufFont
+        result += hrsPart
+
+        var mNum  = AttributedString(" \(m)")
+        mNum.font = numFont
+        result   += mNum
+
+        var mSuf  = AttributedString("m")
+        mSuf.font = sufFont
+        result   += mSuf
+    }
+
+    return result
+}
+
 // ─────────────────────────────────────────────────────────────
 // SleepInsights
 // ─────────────────────────────────────────────────────────────
@@ -112,13 +147,12 @@ struct SleepInsights: View {
                         .padding(.leading, 3)
                     }
 
-                    Text("SLEEP")
+                    Text("RECOMMENDED SLEEP")
                         .font(.custom("DM Sans", size: 11))
                         .foregroundColor(Color.white.opacity(0.35))
                         .kerning(2.5)
 
-                    Text(SleepDurationModel.formatted(recommendedHours))
-                        .font(.libreFranklin(size: 44))
+                    Text(formattedDurationAttributed(recommendedHours, size: 44))
                         .foregroundColor(Color.white.opacity(0.95))
 
                     // "recommended to you via [logo]" — only shown when a wearable
@@ -545,8 +579,7 @@ private struct SleepInsightDetailCard: View {
             }
 
             HStack(alignment: .lastTextBaseline, spacing: 8) {
-                Text(SleepDurationModel.formatted(point.durationHours))
-                    .font(.libreFranklin(size: 32))
+                Text(formattedDurationAttributed(point.durationHours, size: 32))
                     .foregroundColor(.white.opacity(0.96))
 
                 Text(point.isAggregate ? "average" : "recorded")

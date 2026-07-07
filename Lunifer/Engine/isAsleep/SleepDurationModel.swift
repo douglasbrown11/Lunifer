@@ -70,9 +70,9 @@ struct SleepDurationModel {
         let h = Int(hours)
         let m = Int((hours - Double(h)) * 60)
         if m == 0 {
-            return "\(h) hours"
+            return "\(h) hrs"
         }
-        return "\(h) hours \(m)m"
+        return "\(h) hrs \(m)m"
     }
 
     /// Formats a duration in hours to a short display like "8:15".

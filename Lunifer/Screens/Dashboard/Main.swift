@@ -874,6 +874,7 @@ struct LuniferMain: View {
                                             .foregroundColor(Color.white.opacity(0.4))
                                             .frame(maxWidth: .infinity)
                                             .padding(.vertical, 10)
+                                            .padding(.horizontal, 1)
                                             .background(
                                                 RoundedRectangle(cornerRadius: 10)
                                                     .fill(Color.white.opacity(0.04))
@@ -1025,7 +1026,10 @@ struct LuniferMain: View {
                             await LuniferAlarm.shared.cancelAlarm()
                             WakeNotification.shared.cancel()
                             BatteryAlarmNotification.shared.cancelWarning()
+                            await TurnBackOnNotification.shared.schedule()
                         }
+                    } else {
+                        TurnBackOnNotification.shared.cancel()
                     }
                 } label: {
                     HStack(spacing: 10) {
@@ -1058,8 +1062,8 @@ struct LuniferMain: View {
                 .animation(.easeInOut(duration: 0.5), value: luniferEnabled)
             }
 
-            // ── Debug button — bottom left ────────────────────────
-            if !alarmExpanded && luniferEnabled {
+            // ── Debug button — bottom left (currently hidden) ─────
+            if false && !alarmExpanded && luniferEnabled {
                 Button { showDebug = true } label: {
                     Text("Debug")
                         .font(.custom("DM Sans", size: 13))

@@ -5,6 +5,7 @@ import CoreLocation
 import CoreMotion
 import UIKit
 import UserNotifications
+import AVFoundation
 
 // ── MARK: Models ─────────────────────────────────────────────
 
@@ -132,44 +133,53 @@ private struct WeekdayButton: View {
 // wraps UIPickerView with 60 000 virtual rows so the wheel feels
 // infinite and wraps 59 → 00 → 59 naturally.
 
-private struct LoopingMinutePicker: UIViewRepresentable {
-    @Binding var selection: Int   // always kept in 0…59
+// ── MARK: Combined hours + minutes picker ────────────────────
+// A single UIPickerView with two components (hours left, minutes right).
+// Using one UIPickerView means UIKit owns all gesture routing internally,
+// which prevents touch-target offset bugs that arise when two separate
+// UIViewRepresentable pickers sit side-by-side in a SwiftUI HStack.
+// Minutes use 60 000 virtual rows so the wheel loops seamlessly.
 
-    // Total virtual rows — must be divisible by 60 so modulo is clean.
-    private static let rowCount = 60_000
-    // Start position: exactly halfway, aligned to minute 00.
-    // 30 000 % 60 == 0, so row 30 000 maps to minute 00.
-    private static let midStart = rowCount / 2  // = 30 000
+private struct HoursMinutesPicker: UIViewRepresentable {
+    @Binding var hours: Int
+    @Binding var minutes: Int
+    let hourRange: ClosedRange<Int>
+
+    private static let minuteRowCount = 60_000
+    private static let minuteMidStart = minuteRowCount / 2  // 30 000 % 60 == 0 → maps to :00
 
     func makeUIView(context: Context) -> UIPickerView {
         let picker = UIPickerView()
         picker.dataSource = context.coordinator
         picker.delegate   = context.coordinator
         picker.backgroundColor = .clear
-        // Position wheel so the current minute is visible in the centre.
-        picker.selectRow(Self.midStart + selection, inComponent: 0, animated: false)
+        picker.selectRow(hours - hourRange.lowerBound, inComponent: 0, animated: false)
+        picker.selectRow(Self.minuteMidStart + minutes,  inComponent: 1, animated: false)
         return picker
     }
 
     func updateUIView(_ uiView: UIPickerView, context: Context) {
-        // Sync if an external write changed the value (e.g. "No" reset to 00).
-        let currentRow = uiView.selectedRow(inComponent: 0)
-        if currentRow % 60 != selection {
-            uiView.selectRow(Self.midStart + selection, inComponent: 0, animated: true)
+        let expectedHourRow = hours - hourRange.lowerBound
+        if uiView.selectedRow(inComponent: 0) != expectedHourRow {
+            uiView.selectRow(expectedHourRow, inComponent: 0, animated: true)
+        }
+        let currentMinRow = uiView.selectedRow(inComponent: 1)
+        if currentMinRow % 60 != minutes {
+            uiView.selectRow(Self.minuteMidStart + minutes, inComponent: 1, animated: true)
         }
     }
 
     func makeCoordinator() -> Coordinator { Coordinator(self) }
 
     final class Coordinator: NSObject, UIPickerViewDataSource, UIPickerViewDelegate {
-        var parent: LoopingMinutePicker
-        init(_ p: LoopingMinutePicker) { parent = p }
+        var parent: HoursMinutesPicker
+        init(_ p: HoursMinutesPicker) { parent = p }
 
-        func numberOfComponents(in pickerView: UIPickerView) -> Int { 1 }
+        func numberOfComponents(in pickerView: UIPickerView) -> Int { 2 }
 
         func pickerView(_ pickerView: UIPickerView,
                         numberOfRowsInComponent component: Int) -> Int {
-            LoopingMinutePicker.rowCount
+            component == 0 ? parent.hourRange.count : HoursMinutesPicker.minuteRowCount
         }
 
         func pickerView(_ pickerView: UIPickerView,
@@ -177,76 +187,23 @@ private struct LoopingMinutePicker: UIViewRepresentable {
                         forComponent component: Int,
                         reusing view: UIView?) -> UIView {
             let label = (view as? UILabel) ?? UILabel()
-            label.text          = String(format: "%02d", row % 60)
             label.textColor     = .white
             label.textAlignment = .center
             label.font          = .systemFont(ofSize: 20, weight: .regular)
+            label.text = component == 0
+                ? String(format: "%02d", row + parent.hourRange.lowerBound)
+                : String(format: "%02d", row % 60)
             return label
         }
 
         func pickerView(_ pickerView: UIPickerView,
                         didSelectRow row: Int,
                         inComponent component: Int) {
-            parent.selection = row % 60
-        }
-    }
-}
-
-// ── MARK: Hours picker ───────────────────────────────────────
-// UIViewRepresentable wrapper for a plain UIPickerView scoped to a
-// caller-supplied range. Using UIPickerView for both wheels (hours and
-// minutes) puts them on the same gesture system and prevents UIKit from
-// routing swipes on the hours wheel to the adjacent LoopingMinutePicker.
-
-private struct HoursPicker: UIViewRepresentable {
-    @Binding var selection: Int
-    let range: ClosedRange<Int>
-
-    func makeUIView(context: Context) -> UIPickerView {
-        let picker = UIPickerView()
-        picker.dataSource = context.coordinator
-        picker.delegate   = context.coordinator
-        picker.backgroundColor = .clear
-        picker.selectRow(selection - range.lowerBound, inComponent: 0, animated: false)
-        return picker
-    }
-
-    func updateUIView(_ uiView: UIPickerView, context: Context) {
-        let expectedRow = selection - range.lowerBound
-        if uiView.selectedRow(inComponent: 0) != expectedRow {
-            uiView.selectRow(expectedRow, inComponent: 0, animated: true)
-        }
-    }
-
-    func makeCoordinator() -> Coordinator { Coordinator(self) }
-
-    final class Coordinator: NSObject, UIPickerViewDataSource, UIPickerViewDelegate {
-        var parent: HoursPicker
-        init(_ p: HoursPicker) { parent = p }
-
-        func numberOfComponents(in pickerView: UIPickerView) -> Int { 1 }
-
-        func pickerView(_ pickerView: UIPickerView,
-                        numberOfRowsInComponent component: Int) -> Int {
-            parent.range.count
-        }
-
-        func pickerView(_ pickerView: UIPickerView,
-                        viewForRow row: Int,
-                        forComponent component: Int,
-                        reusing view: UIView?) -> UIView {
-            let label = (view as? UILabel) ?? UILabel()
-            label.text          = String(format: "%02d", row + parent.range.lowerBound)
-            label.textColor     = .white
-            label.textAlignment = .center
-            label.font          = .systemFont(ofSize: 20, weight: .regular)
-            return label
-        }
-
-        func pickerView(_ pickerView: UIPickerView,
-                        didSelectRow row: Int,
-                        inComponent component: Int) {
-            parent.selection = row + parent.range.lowerBound
+            if component == 0 {
+                parent.hours   = row + parent.hourRange.lowerBound
+            } else {
+                parent.minutes = row % 60
+            }
         }
     }
 }
@@ -334,41 +291,35 @@ struct TimeScalePicker: View {
             .animation(.easeInOut(duration: 0.2), value: value.auto)
             }
 
-            // Hours + minutes scroll pickers
+            // Hours + minutes scroll pickers (single UIPickerView, two components)
             if !value.auto || !showAutoToggle {
-                HStack(spacing: 0) {
-                    Spacer()
-
-                    // Hours wheel
-                    VStack(spacing: 4) {
+                VStack(spacing: 4) {
+                    // Column headers — spacers mirror the two equal components
+                    HStack(spacing: 0) {
+                        Spacer()
                         Text("HOURS")
                             .font(.custom("DM Sans", size: 11))
                             .foregroundColor(Color.white.opacity(0.3))
                             .kerning(1)
-                        HoursPicker(selection: $value.hours, range: hourRange)
-                            .frame(width: 80, height: 120)
-                            .clipped()
-                    }
-
-                    // Colon separator
-                    Text(":")
-                        .font(.libreFranklin(size: 32))
-                        .foregroundColor(Color.white.opacity(0.2))
-                        .padding(.top, 22)
-                        .padding(.horizontal, 6)
-
-                    // Minutes wheel — 1-minute increments, loops 59 → 00
-                    VStack(spacing: 4) {
+                        Spacer()
                         Text("MINUTES")
                             .font(.custom("DM Sans", size: 11))
                             .foregroundColor(Color.white.opacity(0.3))
                             .kerning(1)
-                        LoopingMinutePicker(selection: $value.minutes)
-                            .frame(width: 80, height: 120)
-                            .clipped()
+                        Spacer()
                     }
 
-                    Spacer()
+                    // Combined picker with colon overlaid between the two components
+                    ZStack {
+                        HoursMinutesPicker(hours: $value.hours,
+                                           minutes: $value.minutes,
+                                           hourRange: hourRange)
+                            .frame(height: 120)
+
+                        Text(":")
+                            .font(.libreFranklin(size: 32))
+                            .foregroundColor(Color.white.opacity(0.2))
+                    }
                 }
                 .padding(.top, 12)
                 .transition(.opacity.combined(with: .offset(y: 8)))
@@ -1254,6 +1205,7 @@ struct LuniferSurvey: View {
                     m.startActivityUpdates(to: .main) { _ in }
                     try? await Task.sleep(nanoseconds: 500_000_000)
                     m.stopActivityUpdates()
+                    requestMicrophonePermission()
                 }
             }
             // Skip the calendar step when it was pre-selected before sign-in
@@ -1272,6 +1224,14 @@ struct LuniferSurvey: View {
                 } else {
                     step -= 1
                 }
+            }
+        }
+
+        private func requestMicrophonePermission() {
+            if #available(iOS 17.0, *) {
+                AVAudioApplication.requestRecordPermission { _ in }
+            } else {
+                AVAudioSession.sharedInstance().requestRecordPermission { _ in }
             }
         }
 
