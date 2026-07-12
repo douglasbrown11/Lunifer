@@ -29,9 +29,10 @@ import Foundation
 //   Higher weight = that feature matters more to the prediction.
 //   The weights were set based on the sleep detection literature:
 //   - Phone inactivity is the #1 signal (iSenseSleep)
-//   - Motion is #2 (actigraphy research)
-//   - Time of day provides a strong prior
-//   - Unlock cadence is a supporting signal
+    //   - Motion is #2 (actigraphy research)
+    //   - Time of day provides a strong prior
+    //   - Unlock cadence is a supporting signal
+    //   - Active, bursty room noise delays sleep onset
 
 struct SleepPredictionModel {
 
@@ -48,6 +49,7 @@ struct SleepPredictionModel {
         var timeOfDay: Double          = 0.20   // Strong prior
         var unlockCadence: Double      = 0.10   // Supporting signal
         var historicalPrior: Double    = 0.07   // Learned pattern
+        var roomActivityAwake: Double  = 0.18   // Negative signal: room still sounds active
     }
 
     var weights = Weights()
@@ -70,6 +72,14 @@ struct SleepPredictionModel {
         /// The probability threshold above which we declare isAsleep = true.
         /// 0.65 means the model needs to be reasonably confident.
         var sleepThreshold: Double = 0.65
+
+        /// If the room still sounds active, require this many quiet minutes
+        /// before allowing a sleep-onset decision.
+        var quietMinutesRequiredAfterRoomActivity: Double = 10
+
+        /// Recent room activity above this score blocks sleep onset until the
+        /// quiet-duration threshold has passed.
+        var activeRoomScoreThreshold: Double = 0.55
     }
 
     var thresholds = Thresholds()
@@ -135,7 +145,8 @@ struct SleepPredictionModel {
             motionScore    * weights.motionStationary +
             timeScore      * weights.timeOfDay +
             unlockScore    * weights.unlockCadence +
-            historyScore   * weights.historicalPrior
+            historyScore   * weights.historicalPrior -
+            features.roomActivityScore * weights.roomActivityAwake
 
         // ── Apply sigmoid to get probability ─────────────────
         // The sigmoid squashes the raw score into 0–1 range.
@@ -145,7 +156,10 @@ struct SleepPredictionModel {
         //   rawScore ≈ 0.2 → probability ≈ 0.12 (likely awake)
         let probability = sigmoid(rawScore, steepness: 8, midpoint: 0.5)
 
-        let isAsleep = probability >= thresholds.sleepThreshold
+        let roomSeemsActive = features.roomActivityScore > thresholds.activeRoomScoreThreshold
+        let roomHasSettled = features.quietDurationMinutes >= thresholds.quietMinutesRequiredAfterRoomActivity
+        let isAsleep = probability >= thresholds.sleepThreshold &&
+            (!roomSeemsActive || roomHasSettled)
 
         return SleepPrediction(
             probability: probability,
