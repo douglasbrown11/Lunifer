@@ -32,6 +32,8 @@ import CoreMotion
 //   unlockCountLast30Min           persisted interaction log
 //   dayOfWeek                      system clock
 //   historicalAvgSleepOnset        rolling average (UserDefaults)
+//   roomActivityScore              recent bursty/variable microphone volume
+//   quietDurationMinutes           minutes since the room last sounded active
 
 @MainActor
 final class SleepFeatureCollector: ObservableObject {
@@ -46,6 +48,8 @@ final class SleepFeatureCollector: ObservableObject {
     @Published private(set) var dayOfWeek: Int = 1
     @Published var historicalAvgSleepOnsetWeekday: Double? = nil
     @Published var historicalAvgSleepOnsetWeekend: Double? = nil
+    @Published private(set) var roomActivityScore: Double = 0
+    @Published private(set) var quietDurationMinutes: Double = .infinity
 
     // MARK: - Private state
 
@@ -53,6 +57,7 @@ final class SleepFeatureCollector: ObservableObject {
     private var stationarySince: Date? = nil
     private var refreshTimer: Timer?
     private var cancellables = Set<AnyCancellable>()
+    private let ambientAudioMonitor = AmbientAudioMonitor()
 
     private let trackingStore = SleepTrackingStore.shared
 
@@ -63,6 +68,7 @@ final class SleepFeatureCollector: ObservableObject {
     func startCollecting() {
         loadPersistedState()
         startMotionUpdates()
+        startAmbientAudioUpdates()
         observeAppLifecycle()
 
         // Refresh computed features every 60 seconds while foregrounded
@@ -80,6 +86,7 @@ final class SleepFeatureCollector: ObservableObject {
 
     func stopCollecting() {
         motionActivityManager.stopActivityUpdates()
+        ambientAudioMonitor.stop()
         refreshTimer?.invalidate()
         refreshTimer = nil
         cancellables.removeAll()
@@ -97,7 +104,9 @@ final class SleepFeatureCollector: ObservableObject {
             timeOfDay: timeOfDay,
             unlockCountLast30Min: unlockCountLast30Min,
             dayOfWeek: dayOfWeek,
-            historicalAvgSleepOnset: onset
+            historicalAvgSleepOnset: onset,
+            roomActivityScore: roomActivityScore,
+            quietDurationMinutes: quietDurationMinutes
         )
     }
 
@@ -191,7 +200,9 @@ final class SleepFeatureCollector: ObservableObject {
             timeOfDay: Double(hour) + Double(minute) / 60.0,
             unlockCountLast30Min: recentInteractions.count,
             dayOfWeek: cal.component(.weekday, from: date),
-            historicalAvgSleepOnset: onset
+            historicalAvgSleepOnset: onset,
+            roomActivityScore: 0,
+            quietDurationMinutes: .infinity
         )
     }
 
@@ -227,6 +238,28 @@ final class SleepFeatureCollector: ObservableObject {
         if isStationary, let since = stationarySince {
             stationaryDurationMinutes = Date().timeIntervalSince(since) / 60.0
         }
+    }
+
+    // ─────────────────────────────────────────────────────────
+    // MARK: - Ambient audio: live room activity detection
+    // ─────────────────────────────────────────────────────────
+
+    private func startAmbientAudioUpdates() {
+        ambientAudioMonitor.$roomActivityScore
+            .receive(on: RunLoop.main)
+            .sink { [weak self] score in
+                self?.roomActivityScore = score
+            }
+            .store(in: &cancellables)
+
+        ambientAudioMonitor.$quietDurationMinutes
+            .receive(on: RunLoop.main)
+            .sink { [weak self] minutes in
+                self?.quietDurationMinutes = minutes
+            }
+            .store(in: &cancellables)
+
+        ambientAudioMonitor.start()
     }
 
     // ─────────────────────────────────────────────────────────
@@ -387,4 +420,6 @@ struct SleepFeatures {
     let unlockCountLast30Min: Int
     let dayOfWeek: Int
     let historicalAvgSleepOnset: Double?
+    let roomActivityScore: Double
+    let quietDurationMinutes: Double
 }
