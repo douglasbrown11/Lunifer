@@ -21,7 +21,7 @@ struct SurveyAnswers: Codable {
     var wakeDays: [String] = ["mon", "tue", "wed", "thu", "fri"]
     var calendar: String?  = nil
     var sleep   = TimeValue(hours: 8, minutes: 0,  auto: false)
-    var routine = TimeValue(hours: 1, minutes: 0,  auto: false)
+    var routine = TimeValue(hours: 0, minutes: 45, auto: false)
     var commute = TimeValue(hours: 0, minutes: 30, auto: true)
     /// Transport mode for commute: "drive", "transit", "walk", or "bike"
     var commuteMode: String = ""
@@ -293,7 +293,7 @@ struct TimeScalePicker: View {
 
             // Hours + minutes scroll pickers (single UIPickerView, two components)
             if !value.auto || !showAutoToggle {
-                VStack(spacing: 4) {
+                VStack(spacing: 16) {
                     // Column headers — spacers mirror the two equal components
                     HStack(spacing: 0) {
                         Spacer()
@@ -643,7 +643,7 @@ struct LuniferSurvey: View {
                 isLastStep ? handleFinish() : advance()
             }
             Button("No", role: .cancel) {
-                answers.routine = TimeValue(hours: 1, minutes: 0, auto: false)
+                answers.routine = TimeValue(hours: 0, minutes: 45, auto: false)
             }
         } message: {
             Text("\(longRoutineTimeLabel) is a long time for a morning routine. Are you sure that's how long you want Lunifer to remember your morning routine?")
@@ -752,7 +752,7 @@ struct LuniferSurvey: View {
                             // If switching AWAY FROM not_working, restore the routine default
                             // so the newly-visible step starts at a sensible value.
                             if previous == "not_working" && id != "not_working" {
-                                answers.routine = TimeValue(hours: 1, minutes: 0, auto: false)
+                                answers.routine = TimeValue(hours: 0, minutes: 45, auto: false)
                             }
                         } content: {
                             Text(label)

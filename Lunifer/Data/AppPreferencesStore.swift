@@ -47,6 +47,9 @@ final class AppPreferencesStore {
         // Rest-day event notification deduplication
         static let restDayNotificationSentDate = "lunifer_restday_notification_sent_date"
 
+        // Feedback slowmode — timestamp of the last submitted feedback (one per day)
+        static let lastFeedbackSubmittedDate = "lastFeedbackSubmittedDate"
+
         // Battery monitoring internals
         static let batteryDrainSamples = "lunifer_battery_drain_samples"
         static let batteryLastCheckTime = "lunifer_battery_last_check_time"
