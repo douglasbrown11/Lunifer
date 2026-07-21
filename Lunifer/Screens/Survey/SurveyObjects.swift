@@ -75,7 +75,7 @@ struct CalendarChoiceScreen: View {
                     .padding(.horizontal, 40)
                     .padding(.bottom, 8)
 
-                Text("Lunifer will sync with your calendar to automatically adapt your alarm around early meetings, late nights, and days off.")
+                Text("Lunifer will sync with your calendar to automatically adapt your alarm around your schedule.")
                     .font(.custom("DM Sans", size: 13))
                     .fontWeight(.light)
                     .foregroundColor(Color.white.opacity(0.4))

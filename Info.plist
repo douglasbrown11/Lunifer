@@ -62,6 +62,8 @@
 	<string>Lunifer uses your calendar to dX$etect early meetings, late events, and days off so it can automatically adjust your wake-up time.</string>
 	<key>NSHealthShareUsageDescription</key>
 	<string>Lunifer reads your sleep data from Apple Health (recorded by your Apple Watch) to give you more accurate sleep insights and a better-timed alarm.</string>
+	<key>NSHealthUpdateUsageDescription</key>
+	<string>Lunifer does not write any data to Apple Health; it only reads your sleep data to improve your sleep insights and alarm timing.</string>
 	<key>NSLocationAlwaysAndWhenInUseUsageDescription</key>
 	<string>Lunifer needs your location at all times to automatically calculate your commute and adjust your alarm accordingly.</string>
 	<key>NSLocationWhenInUseUsageDescription</key>

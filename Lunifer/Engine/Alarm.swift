@@ -524,44 +524,72 @@ class LuniferAlarm: ObservableObject {
         }
         let buffer = Double(routineMinutes + commuteMinutes) * 60
 
-        // Step 1: Live calendar event on the target day
+        // ── Sleep-onset natural wake time ─────────────────────────────────
+        // If SleepTracker detected onset tonight, compute when the user will
+        // have completed their recommended sleep. This is used in two ways:
+        //   • As a lower bound on steps 1–2: wake the user as soon as they've
+        //     slept enough rather than holding them until the event deadline.
+        //   • As step 3: direct fallback when no calendar/history data exists.
+        // Guard: only use an onset from the last 14 hours so we never pull in
+        // yesterday's value from a stale retroactive analysis.
+        let sleepHours = WearableRecommendationStore.recommendedHours(
+            from: WearableRecommendationStore.currentSources(),
+            fallback: answers
+        )
+        let tonightOnset: Date? = {
+            guard let onset = SleepTracker.shared.estimatedSleepOnset else { return nil }
+            return onset > Date().addingTimeInterval(-14 * 3600) ? onset : nil
+        }()
+        let naturalWakeTime: Date? = tonightOnset.map { $0.addingTimeInterval(sleepHours * 3600) }
+
+        // Step 1: Live calendar event on the target day.
+        // If sleep onset is known, wake the user at whichever comes first:
+        // when they've had enough sleep, or when they must be up for the event.
         await CalendarManager.shared.fetchEvents()
         let firstEvent = CalendarManager.shared.events(for: day)
             .filter { !$0.isAllDay && !$0.isDeclinedByUser }
             .sorted { $0.startDate < $1.startDate }
             .first
         if let event = firstEvent {
+            let eventDeadline = event.startDate.addingTimeInterval(-buffer)
+            let alarmDate = naturalWakeTime.map { min($0, eventDeadline) } ?? eventDeadline
             return BaselineAlarmResolution(
-                alarmDate: event.startDate.addingTimeInterval(-buffer),
+                alarmDate: alarmDate,
                 routineMinutes: routineMinutes,
                 commuteMinutes: commuteMinutes,
                 firstEvent: event
             )
         }
 
-        // Step 2: Historical average first-event time for this weekday
-        if let typical = CalendarManager.shared.typicalFirstEventTime(forWeekday: weekday) {
-            return BaselineAlarmResolution(
-                alarmDate: dateOn(day, hour: typical.hour, minute: typical.minute).addingTimeInterval(-buffer),
-                routineMinutes: routineMinutes,
-                commuteMinutes: commuteMinutes,
-                firstEvent: nil
-            )
-        }
-
-        // Step 3: Historical average wake time for this weekday.
+        // Step 2: Historical average wake time for this weekday.
         // Wake times already reflect how early the user needed to be up, so
         // routine + commute are not subtracted again.
+        // If sleep onset is known, take the earlier of natural wake vs history.
         if let avgWake = SleepHistoryStore.shared.averageWakeTime(forWeekday: weekday) {
+            let historyWake = dateOn(day, hour: avgWake.hour, minute: avgWake.minute)
+            let alarmDate = naturalWakeTime.map { min($0, historyWake) } ?? historyWake
             return BaselineAlarmResolution(
-                alarmDate: dateOn(day, hour: avgWake.hour, minute: avgWake.minute),
+                alarmDate: alarmDate,
                 routineMinutes: routineMinutes,
                 commuteMinutes: commuteMinutes,
                 firstEvent: nil
             )
         }
 
-        // Step 4: 8 AM hard fallback (cold-start, no data yet)
+        // Step 3: Sleep onset + recommended sleep hours.
+        // Fires when no calendar event and no history exist but the user has
+        // already fallen asleep tonight. Replaces 8 AM for most real nights.
+        if let naturalWake = naturalWakeTime {
+            return BaselineAlarmResolution(
+                alarmDate: naturalWake,
+                routineMinutes: routineMinutes,
+                commuteMinutes: commuteMinutes,
+                firstEvent: nil
+            )
+        }
+
+        // Step 4: 8 AM hard fallback — cold-start only, before sleep onset
+        // is detected on the very first night with the app installed.
         return BaselineAlarmResolution(
             alarmDate: dateOn(day, hour: 8, minute: 0).addingTimeInterval(-buffer),
             routineMinutes: routineMinutes,
