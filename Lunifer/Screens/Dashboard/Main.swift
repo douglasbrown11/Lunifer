@@ -384,6 +384,11 @@ struct LuniferMain: View {
                 }
                 .padding(.bottom, 28)
             }
+            // Hide the page dots while the alarm dropdown is open so they don't
+            // overlap the Confirm button, which extends into the bottom region.
+            .opacity(alarmExpanded ? 0 : 1)
+            .allowsHitTesting(!alarmExpanded)
+            .animation(.easeInOut(duration: 0.3), value: alarmExpanded)
 
             // ── Dim overlay when Lunifer is off ──────────────
             Color.black
@@ -467,6 +472,10 @@ struct LuniferMain: View {
             let wakeForNotification = overrideActive ? overrideTime : calculatedAlarmDate
             await WakeNotification.shared.schedule(wakeDate: wakeForNotification, answers: answers)
             await BirthdayNotification.shared.schedule(answers: answers)
+            // Nudge the user to keep their calendar populated if no calendar event
+            // has driven the alarm in over 7 wake days (resolveAlarmDate above has
+            // already recorded any event usage for tomorrow).
+            await CalendarNudgeNotification.shared.checkAndNudgeIfNeeded(answers: answers)
             // Request alarm authorization — waits for the user to respond
             await LuniferAlarm.shared.requestAuthorization()
 

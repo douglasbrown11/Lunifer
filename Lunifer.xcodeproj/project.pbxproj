@@ -7,6 +7,7 @@
 	objects = {
 
 /* Begin PBXBuildFile section */
+		19632391300FEAF400DCD67F /* FeedbackPulse in Frameworks */ = {isa = PBXBuildFile; productRef = 19632390300FEAF400DCD67F /* FeedbackPulse */; };
 		A3AB40112F6E25DA0077BA25 /* Alarm Clock.mp3 in Resources */ = {isa = PBXBuildFile; fileRef = A3AB400A2F6E25DA0077BA25 /* Alarm Clock.mp3 */; };
 		A3AB40122F6E25DA0077BA25 /* DeafultAlarm.wav in Resources */ = {isa = PBXBuildFile; fileRef = A3AB400D2F6E25DA0077BA25 /* DeafultAlarm.wav */; };
 		A3AB40132F6E25DA0077BA25 /* Crystal Bowl Rythym audio .m4a in Resources */ = {isa = PBXBuildFile; fileRef = A3AB400C2F6E25DA0077BA25 /* Crystal Bowl Rythym audio .m4a */; };
@@ -75,6 +76,7 @@
 			buildActionMask = 2147483647;
 			files = (
 				A3CF23FE2F61D9E600E6A310 /* GoogleSignInSwift in Frameworks */,
+				19632391300FEAF400DCD67F /* FeedbackPulse in Frameworks */,
 				A3CF23F52F61D9CA00E6A310 /* FirebaseAI in Frameworks */,
 				A3CF23FC2F61D9E600E6A310 /* GoogleSignIn in Frameworks */,
 				A3CF23F72F61D9CA00E6A310 /* FirebaseAuth in Frameworks */,
@@ -99,6 +101,13 @@
 /* End PBXFrameworksBuildPhase section */
 
 /* Begin PBXGroup section */
+		1963238C300FE0B900DCD67F /* Frameworks */ = {
+			isa = PBXGroup;
+			children = (
+			);
+			name = Frameworks;
+			sourceTree = "<group>";
+		};
 		A3AB40092F6E259A0077BA25 /* sounds */ = {
 			isa = PBXGroup;
 			children = (
@@ -120,6 +129,7 @@
 				A3AB40092F6E259A0077BA25 /* sounds */,
 				A3CF238B2F61D1D400E6A310 /* LuniferTests */,
 				A3CF23952F61D1D400E6A310 /* LuniferUITests */,
+				1963238C300FE0B900DCD67F /* Frameworks */,
 				A3CF237C2F61D1D200E6A310 /* Products */,
 			);
 			sourceTree = "<group>";
@@ -159,6 +169,7 @@
 				A3CF23F82F61D9CA00E6A310 /* FirebaseFirestore */,
 				A3CF23FB2F61D9E600E6A310 /* GoogleSignIn */,
 				A3CF23FD2F61D9E600E6A310 /* GoogleSignInSwift */,
+				19632390300FEAF400DCD67F /* FeedbackPulse */,
 			);
 			productName = Lunifer;
 			productReference = A3CF237B2F61D1D200E6A310 /* Lunifer.app */;
@@ -245,6 +256,7 @@
 			packageReferences = (
 				A3CF23F32F61D9CA00E6A310 /* XCRemoteSwiftPackageReference "firebase-ios-sdk" */,
 				A3CF23FA2F61D9E600E6A310 /* XCRemoteSwiftPackageReference "GoogleSignIn-iOS" */,
+				1963238F300FEAF400DCD67F /* XCLocalSwiftPackageReference "LocalPackages/FeedbackPulse" */,
 			);
 			preferredProjectObjectVersion = 77;
 			productRefGroup = A3CF237C2F61D1D200E6A310 /* Products */;
@@ -682,6 +694,13 @@
 		};
 /* End XCConfigurationList section */
 
+/* Begin XCLocalSwiftPackageReference section */
+		1963238F300FEAF400DCD67F /* XCLocalSwiftPackageReference "LocalPackages/FeedbackPulse" */ = {
+			isa = XCLocalSwiftPackageReference;
+			relativePath = LocalPackages/FeedbackPulse;
+		};
+/* End XCLocalSwiftPackageReference section */
+
 /* Begin XCRemoteSwiftPackageReference section */
 		A3CF23F32F61D9CA00E6A310 /* XCRemoteSwiftPackageReference "firebase-ios-sdk" */ = {
 			isa = XCRemoteSwiftPackageReference;
@@ -702,6 +721,10 @@
 /* End XCRemoteSwiftPackageReference section */
 
 /* Begin XCSwiftPackageProductDependency section */
+		19632390300FEAF400DCD67F /* FeedbackPulse */ = {
+			isa = XCSwiftPackageProductDependency;
+			productName = FeedbackPulse;
+		};
 		A3CF23F42F61D9CA00E6A310 /* FirebaseAI */ = {
 			isa = XCSwiftPackageProductDependency;
 			package = A3CF23F32F61D9CA00E6A310 /* XCRemoteSwiftPackageReference "firebase-ios-sdk" */;
