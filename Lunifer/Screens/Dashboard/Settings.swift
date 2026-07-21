@@ -1549,32 +1549,13 @@ struct NotificationsSettingsView: View {
                                 if !enabled { CommuteNotification.shared.cancelAll() }
                             }
 
-                            Divider()
-                                .background(Color.white.opacity(0.08))
-                                .padding(.leading, 16)
-
-                            // ── Rest day reminder row ──────────
-                            HStack(spacing: 12) {
-                                VStack(alignment: .leading, spacing: 4) {
-                                    Text("Rest Day Reminder")
-                                        .font(.custom("DM Sans", size: 14))
-                                        .foregroundColor(Color.white.opacity(allNotificationsEnabled ? 0.85 : 0.35))
-                                    Text("Notify me on rest days if I have an early event the next morning")
-                                        .font(.custom("DM Sans", size: 12))
-                                        .foregroundColor(Color.white.opacity(allNotificationsEnabled ? 0.35 : 0.18))
-                                        .fixedSize(horizontal: false, vertical: true)
-                                }
-                                Spacer()
-                                Toggle("", isOn: $restDayReminderEnabled)
-                                    .labelsHidden()
-                                    .tint(Color(red: 0.627, green: 0.471, blue: 1.0))
-                                    .disabled(!allNotificationsEnabled)
-                            }
-                            .padding(.horizontal, 16)
-                            .padding(.vertical, 16)
-                            .onChange(of: restDayReminderEnabled) { _, enabled in
-                                if !enabled { RestDayEventNotification.shared.cancel() }
-                            }
+                            // NOTE: The Rest Day Reminder has no visible row here.
+                            // It is intentionally hidden from the UI but still fully
+                            // controlled by the master "All Notifications" toggle:
+                            // restDayReminderEnabled is flipped on/off alongside the
+                            // other reminders in the master toggle's onChange below,
+                            // and RestDayEventNotification.scheduleIfNeeded still gates
+                            // on both restDayReminderEnabled and allNotificationsEnabled.
                         }
                         .background(
                             RoundedRectangle(cornerRadius: 12)

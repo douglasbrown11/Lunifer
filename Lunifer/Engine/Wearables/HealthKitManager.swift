@@ -29,7 +29,9 @@ import HealthKit
 // Setup required (outside this file):
 //   • HealthKit capability enabled on the App ID / in Xcode (writes the
 //     `com.apple.developer.healthkit` entitlement).
-//   • `NSHealthShareUsageDescription` in Info.plist.
+//   • `NSHealthShareUsageDescription` and `NSHealthUpdateUsageDescription`
+//     in Info.plist. App Store validation requires both purpose strings for
+//     HealthKit-enabled apps, even though Lunifer requests read-only access.
 
 @MainActor
 final class HealthKitManager: ObservableObject {
