@@ -4,6 +4,7 @@ import FirebaseAuth
 import GoogleSignIn
 import BackgroundTasks
 import UserNotifications
+import FeedbackPulse
 
 // "@main" tells Swift this is where the app starts
 @main
@@ -16,6 +17,17 @@ struct LuniferApp: App {
 
     init() {
         FirebaseApp.configure()
+
+        // Configure Feedback Pulse (powers the Submit Feedback screen). The fp_
+        // key is a public client ingestion key and is safe to embed. Debug builds
+        // report into the development environment so test feedback stays separate
+        // from real production feedback.
+        #if DEBUG
+        FeedbackPulse.configure(apiKey: "fp_qqrl3KrWH9d5hnJl7wDsTbDmFjr4jn0gPjTQZtCA8o0", environment: .development)
+        FeedbackPulse.shared.debugMode = true
+        #else
+        FeedbackPulse.configure(apiKey: "fp_qqrl3KrWH9d5hnJl7wDsTbDmFjr4jn0gPjTQZtCA8o0", environment: .production)
+        #endif
 
         // Register the background task handler for overnight sleep analysis.
         // iOS will call this handler when it wakes the app in the background.

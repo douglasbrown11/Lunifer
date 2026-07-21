@@ -11,9 +11,6 @@ import FirebaseAuth
 // AlarmKit requires us to attach a "metadata" struct to every alarm.
 // Think of metadata as a label we stick on the alarm that tells us
 // WHY this alarm was set and what data was used to calculate it.
-// This is also useful for the ML model — every alarm we log includes
-// this context so the model can learn from it.
-//
 
 struct LuniferAlarmMetadata: AlarmMetadata {
     var scheduledWakeTime: Date      // The time we calculated the alarm for
@@ -52,11 +49,7 @@ class LuniferAlarm: ObservableObject {
         loadAddedAlarmIDs()
     }
 
-    // ── @Published variables ──────────────────────────────────
-    // "@Published" means: whenever these values change, any SwiftUI view
-    // that's watching them will automatically refresh.
-    // Think of it like a live feed — the UI always shows the current value.
-
+     
     @Published var isAuthorized: Bool = false       // Has the user granted alarm permission?
     @Published var activeAlarms: [Alarm] = []       // List of currently scheduled alarms
     @Published var scheduledWakeTime: Date? = nil   // The time the next alarm is set for
@@ -551,6 +544,9 @@ class LuniferAlarm: ObservableObject {
             .sorted { $0.startDate < $1.startDate }
             .first
         if let event = firstEvent {
+            // A real calendar event is driving the alarm — reset the "days since
+            // a calendar event was used" counter behind CalendarNudgeNotification.
+            CalendarNudgeNotification.shared.recordCalendarEventUsed()
             let eventDeadline = event.startDate.addingTimeInterval(-buffer)
             let alarmDate = naturalWakeTime.map { min($0, eventDeadline) } ?? eventDeadline
             return BaselineAlarmResolution(

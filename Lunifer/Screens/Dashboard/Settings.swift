@@ -7,6 +7,7 @@ import FirebaseFirestore
 import GoogleSignIn
 import AuthenticationServices
 import CryptoKit
+import FeedbackPulse
 
 // ── MARK: Settings (root) ─────────────────────────────────────
 
@@ -1828,14 +1829,42 @@ struct FeedbackSettingsView: View {
     @State private var categoryExpanded = false
     @FocusState private var otherFieldFocused: Bool
     @State private var isSending = false
+    /// Feedback Pulse requires a positive/negative sentiment on every submission.
+    @State private var selectedSentiment: FeedbackSentiment? = nil
 
     private let categories = ["Bug Report", "Feature Request", "Alarm Issue", "UI / Design", "Notifications", "Wearable Integration", "Other"]
     @State private var otherCategoryText = ""
-    @State private var showConfirmation = false
+    @State private var toastMessage: String? = nil
+    @State private var toastIsSuccess = true
     @FocusState private var editorFocused: Bool
 
+    // Slowmode — one feedback submission per calendar day. Stored as an epoch
+    // timestamp so the limit survives app restarts. Cleared on sign-out via
+    // AccountDataManager so it doesn't carry over to the next account.
+    @AppStorage(AppPreferencesStore.Keys.lastFeedbackSubmittedDate)
+    private var lastFeedbackSubmittedTimestamp: Double = 0
+
+    /// True when feedback has already been submitted at some point today.
+    private var hasSubmittedToday: Bool {
+        guard lastFeedbackSubmittedTimestamp > 0 else { return false }
+        return Calendar.current.isDateInToday(
+            Date(timeIntervalSince1970: lastFeedbackSubmittedTimestamp)
+        )
+    }
+
     private var trimmed: String { feedbackText.trimmingCharacters(in: .whitespacesAndNewlines) }
-    private var canSend: Bool { trimmed.count >= 40 && !isSending }
+    // Tappable once there are 40+ characters AND a 👍/👎 sentiment is chosen (the
+    // Feedback Pulse API requires positive/negative). The daily slowmode is enforced
+    // in sendFeedback() with a toast, not by disabling the button.
+    private var canSend: Bool { trimmed.count >= 40 && selectedSentiment != nil && !isSending }
+
+    /// Guidance shown under the editor explaining what's still needed to send.
+    private var sendHint: String {
+        if selectedSentiment == nil && trimmed.count < 40 { return "Choose 👍 or 👎 and write at least 40 characters" }
+        if selectedSentiment == nil { return "Choose 👍 or 👎 to continue" }
+        if trimmed.count < 40 { return "40 characters minimum" }
+        return ""
+    }
 
     var body: some View {
         ZStack(alignment: .top) {
@@ -1867,6 +1896,18 @@ struct FeedbackSettingsView: View {
                             .font(.custom("DM Sans", size: 15))
                             .foregroundColor(Color.white.opacity(0.55))
                             .padding(.horizontal, 24)
+
+                        // ── Sentiment selector (required by Feedback Pulse) ──
+                        VStack(alignment: .leading, spacing: 8) {
+                            Text("How was your experience?")
+                                .font(.custom("DM Sans", size: 13))
+                                .foregroundColor(Color.white.opacity(0.5))
+                            HStack(spacing: 10) {
+                                sentimentButton(.positive, emoji: "👍", label: "Good")
+                                sentimentButton(.negative, emoji: "👎", label: "Bad")
+                            }
+                        }
+                        .padding(.horizontal, 24)
 
                         // ── Category picker ───────────────
                         VStack(alignment: .leading, spacing: 0) {
@@ -2028,7 +2069,7 @@ struct FeedbackSettingsView: View {
                         )
                         .padding(.horizontal, 24)
 
-                        Text("40 characters minimum")
+                        Text(sendHint)
                             .font(.custom("DM Sans", size: 12))
                             .foregroundColor(Color.white.opacity(0.25))
                             .padding(.horizontal, 24)
@@ -2064,40 +2105,149 @@ struct FeedbackSettingsView: View {
                     .padding(.bottom, 40)
                 }
             }
+
+            // ── Toast notification ────────────────────────
+            // On-screen banner used for both the success confirmation and the
+            // daily-slowmode warning. Slides in from the top and auto-dismisses.
+            if let message = toastMessage {
+                VStack {
+                    HStack(alignment: .top, spacing: 10) {
+                        Image(systemName: toastIsSuccess
+                              ? "checkmark.circle.fill"
+                              : "clock.badge.exclamationmark")
+                            .font(.system(size: 16))
+                            .foregroundColor(toastIsSuccess
+                                ? Color(red: 0.4, green: 0.9, blue: 0.5)
+                                : Color(red: 0.706, green: 0.588, blue: 0.902))
+                        Text(message)
+                            .font(.custom("DM Sans", size: 14).weight(.medium))
+                            .foregroundColor(Color.white.opacity(0.9))
+                            .fixedSize(horizontal: false, vertical: true)
+                            .multilineTextAlignment(.leading)
+                    }
+                    .padding(.horizontal, 18)
+                    .padding(.vertical, 14)
+                    .background(
+                        RoundedRectangle(cornerRadius: 16)
+                            .fill(Color(red: 0.12, green: 0.08, blue: 0.20))
+                            .overlay(RoundedRectangle(cornerRadius: 16)
+                                .stroke(Color.white.opacity(0.12), lineWidth: 1))
+                    )
+                    .shadow(color: .black.opacity(0.25), radius: 16, x: 0, y: 6)
+                    .padding(.horizontal, 24)
+                    .padding(.top, 80)
+                    Spacer()
+                }
+                .transition(.move(edge: .top).combined(with: .opacity))
+                .zIndex(1)
+            }
         }
         .toolbar(.hidden, for: .navigationBar)
-        .alert("Thanks for your feedback!", isPresented: $showConfirmation) {
-            Button("Done", role: .cancel) { dismiss() }
-        } message: {
-            Text("We appreciate you taking the time to share your thoughts.")
-        }
         .onTapGesture { editorFocused = false }
+    }
+
+    /// Shows the top toast with the given message and auto-dismisses it.
+    private func presentToast(_ message: String, success: Bool) {
+        toastIsSuccess = success
+        withAnimation(.easeInOut(duration: 0.3)) { toastMessage = message }
+        Task {
+            try? await Task.sleep(nanoseconds: 3_000_000_000)
+            withAnimation(.easeInOut(duration: 0.3)) { toastMessage = nil }
+        }
+    }
+
+    /// One 👍/👎 sentiment pill. Feedback Pulse requires positive or negative.
+    @ViewBuilder
+    private func sentimentButton(_ sentiment: FeedbackSentiment, emoji: String, label: String) -> some View {
+        let selected = selectedSentiment == sentiment
+        Button {
+            withAnimation(.easeInOut(duration: 0.15)) { selectedSentiment = sentiment }
+        } label: {
+            HStack(spacing: 8) {
+                Text(emoji).font(.system(size: 18))
+                Text(label)
+                    .font(.custom("DM Sans", size: 14))
+                    .foregroundColor(selected ? Color.white.opacity(0.95) : Color.white.opacity(0.6))
+            }
+            .frame(maxWidth: .infinity)
+            .padding(.vertical, 12)
+            .background(
+                RoundedRectangle(cornerRadius: 12)
+                    .fill(selected
+                        ? Color(red: 0.627, green: 0.471, blue: 1.0).opacity(0.18)
+                        : Color.white.opacity(0.04))
+                    .overlay(
+                        RoundedRectangle(cornerRadius: 12)
+                            .stroke(selected
+                                ? Color(red: 0.627, green: 0.471, blue: 1.0).opacity(0.65)
+                                : Color.white.opacity(0.08), lineWidth: 1.5)
+                    )
+            )
+        }
+        .buttonStyle(.plain)
     }
 
     private func sendFeedback() async {
         guard trimmed.count >= 40 else { return }
 
-        isSending = true
-
-        guard let uid = Auth.auth().currentUser?.uid else {
-            isSending = false
+        // Slowmode: the button stays tappable, but a second submission on the
+        // same calendar day is blocked with a toast instead of a silent no-op.
+        guard !hasSubmittedToday else {
+            editorFocused = false
+            presentToast("You've already submitted feedback today. Check back tomorrow to submit another feedback response.", success: false)
             return
         }
 
-        var entry: [String: Any] = [
-            "uid": uid,
-            "text": trimmed,
-            "submittedAt": FieldValue.serverTimestamp()
-        ]
+        isSending = true
+
+        // Fold the selected category (and signed-in uid, if any) into metadata so
+        // they appear alongside the comment in the Feedback Pulse dashboard.
+        // Feedback Pulse also auto-captures device, OS, and app-version metadata.
+        var metadata: [String: Any] = [:]
         if let cat = selectedCategory {
             let customOther = otherCategoryText.trimmingCharacters(in: .whitespacesAndNewlines)
-            entry["category"] = (cat == "Other" && !customOther.isEmpty) ? "Other: \(customOther)" : cat
+            metadata["category"] = (cat == "Other" && !customOther.isEmpty) ? "Other: \(customOther)" : cat
+        }
+        if let uid = Auth.auth().currentUser?.uid {
+            metadata["uid"] = uid
         }
 
+        // Feedback Pulse requires positive/negative; the 👍/👎 selector supplies it
+        // (canSend already blocks sending until one is chosen).
+        let sentiment = selectedSentiment ?? .negative
+
         do {
-            try await Firestore.firestore().collection("feedback").addDocument(data: entry)
+            // Submit the chosen sentiment with the written feedback as the comment.
+            // Bridged from the SDK's completion-handler API into async/await.
+            try await withCheckedThrowingContinuation { (continuation: CheckedContinuation<Void, Error>) in
+                FeedbackPulse.submit(
+                    sentiment: sentiment,
+                    comment: trimmed,
+                    metadata: metadata.isEmpty ? nil : metadata
+                ) { result in
+                    switch result {
+                    case .success:            continuation.resume(returning: ())
+                    case .failure(let error): continuation.resume(throwing: error)
+                    }
+                }
+            }
             isSending = false
-            showConfirmation = true
+
+            // Stamp the submission so the daily slowmode kicks in.
+            lastFeedbackSubmittedTimestamp = Date().timeIntervalSince1970
+
+            // Clear the form so the user sees an empty, reset state.
+            editorFocused = false
+            withAnimation(.easeInOut(duration: 0.25)) {
+                feedbackText = ""
+                selectedCategory = nil
+                otherCategoryText = ""
+                categoryExpanded = false
+                selectedSentiment = nil
+            }
+
+            // Show the on-screen success toast.
+            presentToast("Successfully submitted", success: true)
         } catch {
             print("❌ Feedback submission failed: \(error.localizedDescription)")
             isSending = false
