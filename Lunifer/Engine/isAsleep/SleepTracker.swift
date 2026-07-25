@@ -125,10 +125,7 @@ final class SleepTracker: ObservableObject {
     func scheduleBackgroundTask() {
         let request = BGProcessingTaskRequest(identifier: Self.backgroundTaskID)
 
-        // Ask iOS to run this task no earlier than 30 minutes from now.
-        // iOS will find an optimal time based on battery, charging, etc.
-        request.earliestBeginDate = Date().addingTimeInterval(30 * 60)
-
+        // No earliestBeginDate — iOS can run this immediately
         // We don't need network, just CPU for CoreMotion queries
         request.requiresNetworkConnectivity = false
 
