@@ -47,6 +47,12 @@ final class AppPreferencesStore {
         // Rest-day event notification deduplication
         static let restDayNotificationSentDate = "lunifer_restday_notification_sent_date"
 
+        // Rest-day alarm opt-in — set when the user taps "Yes" on the rest-day
+        // early-event notification. Marks a specific rest day (start-of-day) on
+        // which the user explicitly wants an alarm, so the rest-day cancel guards
+        // leave that alarm in place instead of cancelling it.
+        static let restDayAlarmOptInDate = "restDayAlarmOptInDate"
+
         // Feedback slowmode — timestamp of the last submitted feedback (one per day)
         static let lastFeedbackSubmittedDate = "lastFeedbackSubmittedDate"
 
@@ -78,6 +84,43 @@ final class AppPreferencesStore {
     func resetAlarmOverride() {
         defaults.set(false, forKey: Keys.overrideActive)
         defaults.removeObject(forKey: Keys.overrideTimestamp)
+    }
+
+    // MARK: - Rest-day alarm opt-in
+
+    /// The exact fire time of the alarm the user opted into on a rest day via the
+    /// rest-day notification, or nil if there is no active opt-in. Stored as the
+    /// full alarm time (not start-of-day) so the scheduling flow can tell whether
+    /// an opted-in alarm is still pending vs. already fired / lapsed.
+    var restDayAlarmOptInDate: Date? {
+        get { defaults.object(forKey: Keys.restDayAlarmOptInDate) as? Date }
+        set { defaults.set(newValue, forKey: Keys.restDayAlarmOptInDate) }
+    }
+
+    /// True when the opted-in alarm's fire time falls on the same calendar day as
+    /// `day`, so the rest-day cancel guards should NOT cancel that alarm.
+    func hasRestDayAlarmOptIn(for day: Date) -> Bool {
+        guard let optIn = restDayAlarmOptInDate else { return false }
+        return Calendar.current.isDate(optIn, inSameDayAs: day)
+    }
+
+    /// The opted-in alarm's fire time if it is still in the future (hasn't fired or
+    /// lapsed yet), else nil. Lets the scheduling flow preserve an opted-in rest-day
+    /// alarm even after midnight, when "tomorrow" has rolled past the alarm's own day.
+    func pendingRestDayAlarmDate() -> Date? {
+        guard let optIn = restDayAlarmOptInDate, optIn > Date() else { return nil }
+        return optIn
+    }
+
+    /// Records the exact fire time of the alarm the user opted into on a rest day.
+    func setRestDayAlarmOptIn(for alarmDate: Date) {
+        restDayAlarmOptInDate = alarmDate
+    }
+
+    /// Clears the rest-day alarm opt-in (e.g. once the alarm has fired, Lunifer is
+    /// turned off, or the user signs out).
+    func clearRestDayAlarmOptIn() {
+        defaults.removeObject(forKey: Keys.restDayAlarmOptInDate)
     }
 
     // MARK: - WHOOP

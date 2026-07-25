@@ -78,6 +78,8 @@
 		<string>CormorantGaramond-Light.ttf</string>
 		<string>DMSans-Regular.ttf</string>
 		<string>DMSans-Medium.ttf</string>
+		<string>LibreFranklin-VariableFont_wght.ttf</string>
+		<string>LibreFranklin-Italic-VariableFont_wght.ttf</string>
 	</array>
 	<key>UIApplicationSceneManifest</key>
 	<dict>

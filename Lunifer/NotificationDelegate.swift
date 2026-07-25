@@ -53,24 +53,61 @@ final class LuniferNotificationDelegate: NSObject, UNUserNotificationCenterDeleg
 
         case RestDayEventNotification.wakeupActionID:
             // User wants Lunifer to wake them tomorrow despite it being a rest day.
-            // The pre-calculated alarm time was embedded in userInfo at schedule time.
-            guard let timestamp = userInfo["wakeTimestamp"] as? TimeInterval else {
-                print("⚠️ Rest-day wake action: missing wakeTimestamp in userInfo")
-                break
-            }
-            let wakeDate = Date(timeIntervalSince1970: timestamp)
+            // Recompute the wake time NOW rather than using the value frozen into the
+            // notification at schedule time: resolve tomorrow's baseline live (4-step
+            // fallback chain, fresh calendar + routine/commute) and apply the adaptive
+            // bandit offset, so this alarm is adaptive like every other calculated alarm.
+            // The frozen `wakeTimestamp` is kept only as a fallback for when saved
+            // survey answers can't be loaded.
+            let frozenWake = (userInfo["wakeTimestamp"] as? TimeInterval)
+                .map { Date(timeIntervalSince1970: $0) }
             Task { @MainActor in
                 // Make sure Lunifer is switched on for the night.
                 UserDefaults.standard.set(true, forKey: AppPreferencesStore.Keys.luniferEnabled)
 
                 await LuniferAlarm.shared.requestAuthorization()
 
-                // Schedule the wake reminder notification in sync with the alarm.
-                if let answers = SurveyAnswers.loadFromDefaults() {
-                    await WakeNotification.shared.schedule(wakeDate: wakeDate, answers: answers)
+                let answers = SurveyAnswers.loadFromDefaults()
+                let wakeDate: Date
+
+                if let answers {
+                    let tomorrow = Calendar.current.date(
+                        byAdding: .day, value: 1,
+                        to: Calendar.current.startOfDay(for: Date())
+                    ) ?? Date()
+                    // Baseline resolution + adaptive offset, mirroring the dashboard /
+                    // scheduleNextWakeAlarm path so the pending adaptive decision is saved.
+                    let baseline = await LuniferAlarm.shared.resolveBaselineAlarmDate(
+                        answers: answers, targetDay: tomorrow
+                    )
+                    let finalAlarm = LuniferAlarm.shared.decideAlarm(from: baseline, answers: answers)
+
+                    // Mark this rest day as an explicit opt-in so the rest-day
+                    // cancel guards (dashboard load + checkAndAdaptAlarm) leave this
+                    // alarm in place instead of cancelling it. Set before scheduling
+                    // so a guard racing the schedule already sees the opt-in.
+                    AppPreferencesStore.shared.setRestDayAlarmOptIn(for: finalAlarm)
+
+                    // Keep the wake reminder in sync with the adaptive alarm.
+                    await WakeNotification.shared.schedule(wakeDate: finalAlarm, answers: answers)
+
+                    await LuniferAlarm.shared.scheduleAlarm(
+                        for: finalAlarm,
+                        eventTitle: baseline.firstEvent?.title ?? "your first event",
+                        routineMinutes: baseline.routineMinutes,
+                        commuteMinutes: baseline.commuteMinutes
+                    )
+                    wakeDate = finalAlarm
+                } else if let frozenWake {
+                    // No saved answers — fall back to the pre-computed (non-adaptive) time.
+                    AppPreferencesStore.shared.setRestDayAlarmOptIn(for: frozenWake)
+                    await LuniferAlarm.shared.scheduleAlarm(for: frozenWake)
+                    wakeDate = frozenWake
+                } else {
+                    print("⚠️ Rest-day wake action: no answers and missing wakeTimestamp")
+                    return
                 }
 
-                await LuniferAlarm.shared.scheduleAlarm(for: wakeDate)
                 print("⏰ Rest-day alarm scheduled for \(wakeDate.formatted(date: .omitted, time: .shortened))")
             }
 

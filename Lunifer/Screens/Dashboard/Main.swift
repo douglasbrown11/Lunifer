@@ -485,8 +485,19 @@ struct LuniferMain: View {
             // the user has not set a manual override, and tomorrow is a wake day.
             // If tomorrow is a rest day, cancel any existing alarm so AlarmKit doesn't
             // fire on a day the user has marked as off.
-            if luniferEnabled && !overrideActive {
-                if isTomorrowRestDay {
+            // Preserve an opted-in rest-day alarm scheduled for TODAY that hasn't
+            // fired yet. The normal flow below reschedules the single main-alarm
+            // slot for "tomorrow"; after midnight on the rest day that would evict
+            // the alarm the user opted into. Leave the AlarmKit slot untouched and
+            // pin the displayed time to it instead.
+            if let pendingTodayOptIn = AppPreferencesStore.shared.pendingRestDayAlarmDate(),
+               Calendar.current.isDateInToday(pendingTodayOptIn) {
+                resolvedAlarmDate = pendingTodayOptIn
+            } else if luniferEnabled && !overrideActive {
+                // Skip the rest-day cancel when the user explicitly opted into an
+                // alarm for tomorrow via the rest-day notification — otherwise
+                // fall through to schedule tomorrow's (adaptive) alarm normally.
+                if isTomorrowRestDay && !AppPreferencesStore.shared.hasRestDayAlarmOptIn(for: tomorrow) {
                     AdaptiveAlarmStore.shared.clearPendingDecision()
                     await LuniferAlarm.shared.cancelAlarm()
                 } else {
@@ -1032,6 +1043,9 @@ struct LuniferMain: View {
                     if !luniferEnabled {
                         Task {
                             AdaptiveAlarmStore.shared.clearPendingDecision()
+                            // Drop any rest-day opt-in so an alarm the user opted into
+                            // isn't resurrected by the guards when Lunifer is re-enabled.
+                            AppPreferencesStore.shared.clearRestDayAlarmOptIn()
                             await LuniferAlarm.shared.cancelAlarm()
                             WakeNotification.shared.cancel()
                             BatteryAlarmNotification.shared.cancelWarning()

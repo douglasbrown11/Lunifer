@@ -808,6 +808,8 @@ class LuniferAlarm: ObservableObject {
             // The manual override only applied to the alarm that just fired.
             UserDefaults.standard.set(false, forKey: "overrideActive")
             UserDefaults.standard.removeObject(forKey: "overrideTimestamp")
+            // A rest-day opt-in (if any) has now been consumed by this firing.
+            AppPreferencesStore.shared.clearRestDayAlarmOptIn()
             if let answers = SurveyAnswers.loadFromDefaults() {
                 await scheduleNextWakeAlarm(answers: answers)
             }
@@ -827,6 +829,8 @@ class LuniferAlarm: ObservableObject {
         // The manual override only applied to the alarm that just fired.
         UserDefaults.standard.set(false, forKey: "overrideActive")
         UserDefaults.standard.removeObject(forKey: "overrideTimestamp")
+        // A rest-day opt-in (if any) has now been consumed by this firing.
+        AppPreferencesStore.shared.clearRestDayAlarmOptIn()
         if let answers = SurveyAnswers.loadFromDefaults() {
             await scheduleNextWakeAlarm(answers: answers)
         }
@@ -909,7 +913,15 @@ class LuniferAlarm: ObservableObject {
         let tomorrowWeekdayIndex = cal2.component(.weekday, from: tomorrow2) - 1
         let weekdayIDs = ["sun", "mon", "tue", "wed", "thu", "fri", "sat"]
         let tomorrowID = weekdayIDs[tomorrowWeekdayIndex]
-        guard wakeDays.contains(tomorrowID) else {
+        // Skip the rest-day cancel when the user explicitly opted into an alarm via
+        // the rest-day notification: either it's for tomorrow, or it's a still-pending
+        // alarm scheduled for today (relaunch in the pre-dawn hours of the rest day,
+        // after "tomorrow" has rolled past the alarm's own day).
+        let hasPendingTodayOptIn = AppPreferencesStore.shared.pendingRestDayAlarmDate()
+            .map { Calendar.current.isDateInToday($0) } ?? false
+        guard wakeDays.contains(tomorrowID)
+            || AppPreferencesStore.shared.hasRestDayAlarmOptIn(for: tomorrow2)
+            || hasPendingTodayOptIn else {
             await cancelAlarm()
             return
         }
