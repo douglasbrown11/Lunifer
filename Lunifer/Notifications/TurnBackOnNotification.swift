@@ -6,17 +6,8 @@ import UserNotifications
 // ─────────────────────────────────────────────────────────────
 // Schedules a one-shot notification that fires 7 days after
 // Lunifer's alarm is turned off, prompting the user to re-enable it.
-//
-// ── USAGE ────────────────────────────────────────────────────
-// Call schedule() whenever the alarm is disabled or the app
-// detects the alarm has been inactive. Call cancel() as soon
-// as the alarm is turned back on so the notification never
-// reaches the user unnecessarily.
-//
-// ── TIMING ───────────────────────────────────────────────────
-// Fires 7 days (604800 seconds) after schedule() is called.
-// Non-repeating — fires once and is removed automatically.
-//
+
+
 // ── NOTIFICATION FORMAT ──────────────────────────────────────
 //   Title: "The nights have been quiet"
 //   Body:  "It's been a week since Lunifer was on. Tap to pick
