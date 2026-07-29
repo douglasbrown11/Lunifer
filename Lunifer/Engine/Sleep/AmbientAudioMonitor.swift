@@ -2,6 +2,9 @@ import Foundation
 import AVFoundation
 import Combine
 
+//continuously converts microphone sound into a privacy-safe "how active is this room" score and a "how long has it been quiet" timer, so the sleep engine won't mistake a noisy, still-awake room for sleep.
+
+
 @MainActor
 final class AmbientAudioMonitor: ObservableObject {
 

@@ -5,8 +5,8 @@ import SwiftUI
 fileprivate func formattedDurationAttributed(_ hours: Double, size: CGFloat) -> AttributedString {
     let h      = Int(hours)
     let m      = Int((hours - Double(h)) * 60)
-    let numFont = Font.libreFranklin(size: size)
-    let sufFont = Font.libreFranklin(size: size - 10)
+    let numFont = Font.custom("Poppins", size: size)
+    let sufFont = Font.custom("Poppins", size: size - 10)
 
     var result  = AttributedString()
 
@@ -561,7 +561,7 @@ private struct SleepInsightDetailCard: View {
                         .foregroundColor(Color.white.opacity(0.35))
 
                     Text(point.title)
-                        .font(.custom("DM Sans", size: 15).weight(.medium))
+                        .font(.custom("Poppins", size: 15).weight(.medium))
                         .foregroundColor(Color.white.opacity(0.82))
                 }
 

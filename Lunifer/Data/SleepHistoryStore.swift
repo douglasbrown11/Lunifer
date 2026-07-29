@@ -2,6 +2,31 @@ import Foundation
 import FirebaseAuth
 import FirebaseFirestore
 
+// ─────────────────────────────────────────────────────────────
+// SleepHistoryEntry
+// ─────────────────────────────────────────────────────────────
+// A single night's sleep data, used by Sleep Insights and history consumers.
+
+struct SleepHistoryEntry: Identifiable {
+    let id = UUID()
+    let date: Date
+    let durationHours: Double
+    let sleepOnset: Date?
+    let wakeTime: Date?
+
+    /// Day-of-week abbreviation for chart labels (e.g. "Mon", "Tue").
+    var dayLabel: String {
+        let formatter = DateFormatter()
+        formatter.dateFormat = "EEE"
+        return formatter.string(from: date)
+    }
+
+    /// Formatted duration for display (e.g. "7h 32m").
+    var formattedDuration: String {
+        SleepDurationModel.formatted(durationHours)
+    }
+}
+
 final class SleepHistoryStore {
     static let shared = SleepHistoryStore()
 
@@ -178,5 +203,48 @@ final class SleepHistoryStore {
         }
         guard let dateTS = entry["date"] as? Double else { return nil }
         return Date(timeIntervalSince1970: dateTS)
+    }
+}
+
+// ─────────────────────────────────────────────────────────────
+// SleepHistoryManager
+// ─────────────────────────────────────────────────────────────
+// Compatibility wrapper over SleepHistoryStore.
+// SleepHistoryStore keeps every locally recorded night and syncs each night to Firestore.
+
+final class SleepHistoryManager {
+
+    static let shared = SleepHistoryManager()
+    private let store = SleepHistoryStore.shared
+
+    /// Records a completed night of sleep locally and syncs to Firestore.
+    /// `source` controls per-night precedence — wearable nights outrank the
+    /// on-device CoreMotion estimate (see `SleepHistoryStore.SleepSource`).
+    func recordNight(date: Date, duration: Double, onset: Date?, wake: Date?,
+                     source: SleepHistoryStore.SleepSource = .motion) {
+        store.recordNight(date: date, duration: duration, onset: onset, wake: wake, source: source)
+    }
+
+    /// Returns sleep history entries from the last `days` calendar days, most recent first.
+    /// Filters by actual date rather than entry count, so stale development entries
+    /// don't corrupt the average once real data starts accumulating.
+    func recentHistory(days: Int = 7) -> [SleepHistoryEntry] {
+        store.recentHistory(days: days)
+    }
+
+    /// Returns every locally cached sleep history entry, most recent first.
+    func allHistory() -> [SleepHistoryEntry] {
+        store.allHistory()
+    }
+
+    /// Average sleep duration over the last N nights. Nil if no data.
+    func averageDuration(days: Int = 7) -> Double? {
+        store.averageDuration(days: days)
+    }
+
+    /// Removes entries whose duration is outside the realistic 3–12 hour band.
+    /// Call once at app launch to clear any corrupt data written during development.
+    func purgeBadEntries() {
+        store.purgeBadEntries()
     }
 }

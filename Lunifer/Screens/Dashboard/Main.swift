@@ -728,13 +728,13 @@ struct LuniferMain: View {
                         ZStack {
                             HStack(alignment: .lastTextBaseline, spacing: 6) {
                                 Text(wakeUpTime)
-                                    .font(.libreFranklin(size: 63))
+                                    .font(.custom("Poppins", size: 63))
                                     .foregroundColor(Color.white.opacity(0.95))
                                     .monospacedDigit()
                                     .minimumScaleFactor(0.5)
                                     .lineLimit(1)
                                 Text(wakeUpPeriod)
-                                    .font(.libreFranklin(size: 60))
+                                    .font(.custom("Poppins", size: 60))
                                     .foregroundColor(Color.white.opacity(0.95))
                             }
                             .frame(maxWidth: .infinity, alignment: .center)

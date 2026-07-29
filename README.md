@@ -78,7 +78,7 @@ Lunifer/
 │   │   ├── AlarmContextBuilder.swift
 │   │   ├── AdaptiveAlarmStore.swift
 │   │   └── AdaptiveAlarmTypes.swift
-│   ├── isAsleep/
+│   ├── Sleep/
 │   │   ├── SleepTracker.swift       # Live + retroactive sleep detection
 │   │   ├── SleepFeatureCollector.swift
 │   │   ├── SleepPredictionModel.swift
