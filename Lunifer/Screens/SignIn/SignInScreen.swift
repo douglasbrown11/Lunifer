@@ -331,7 +331,7 @@ struct LuniferSignin: View {
                     // ── Google button ────────────────────────
                     if showGoogleButton {
                         Button {
-                            backend.handleGoogleSignIn(agreedToTerms: agreedToTerms, onSignedIn: onSignedIn)
+                            backend.handleGoogleSignIn(calendarChoice: calendarChoice, agreedToTerms: agreedToTerms, onSignedIn: onSignedIn)
                         } label: {
                             HStack(spacing: 10) {
                                 GoogleLogoView()
@@ -353,7 +353,7 @@ struct LuniferSignin: View {
                     // ── Outlook button ───────────────────────
                     if showOutlookButton {
                         Button {
-                            backend.handleMicrosoftSignIn(agreedToTerms: agreedToTerms, onSignedIn: onSignedIn)
+                            backend.handleMicrosoftSignIn(calendarChoice: calendarChoice, agreedToTerms: agreedToTerms, onSignedIn: onSignedIn)
                         } label: {
                             HStack(spacing: 10) {
                                 MicrosoftLogoView()

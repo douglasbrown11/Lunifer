@@ -589,9 +589,6 @@ private struct SleepInsightDetailCard: View {
             }
 
             VStack(spacing: 9) {
-                detailRow("Target", SleepDurationModel.formatted(recommendedHours))
-                detailRow(deltaHours >= 0 ? "Above target" : "Below target", SleepDurationModel.formatted(abs(deltaHours)))
-
                 if point.isAggregate {
                     detailRow("Nights", "\(point.entryCount)")
                     detailRow("Range", "\(shortDate(point.startDate)) - \(shortDate(point.endDate))")
