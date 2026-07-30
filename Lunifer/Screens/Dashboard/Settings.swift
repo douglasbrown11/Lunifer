@@ -16,6 +16,7 @@ struct LuniferSettings: View {
     @Environment(\.dismiss) private var dismiss
     @AppStorage("surveyCompleted") private var surveyCompleted = false
     @ObservedObject private var whoopManager = WhoopManager.shared
+    @StateObject private var signinBackend = SigninBackend()
     @State private var showWhoopDisconnectAlert = false
     @State private var showSignOutAlert = false
     @State private var showSignOutErrorAlert = false
@@ -354,11 +355,15 @@ struct LuniferSettings: View {
     // ── MARK: Private helpers ──────────────────────────────────────
 
     // ── Account deletion ──────────────────────────────────────────
-    // Deletes Firestore data first (best-effort), then deletes the Firebase
-    // Auth account. If the session is stale (requiresRecentLogin), the user
-    // is prompted to enter their password. If they signed in via Google,
-    // Apple, or Microsoft without a linked password, a clear message directs
-    // them to sign out and back in instead — no complex OAuth re-auth needed.
+    // Order matters. The user is re-authenticated FIRST, before any data is
+    // removed, so that user.delete() below can never fail with
+    // requiresRecentLogin *after* data has already been wiped (which would
+    // leave a half-deleted account). Re-auth works for every provider —
+    // password, Google, Apple, and Microsoft — via reauthenticateCurrentUser.
+    // Only then are alarms cancelled, wearable tokens removed (awaited, so the
+    // Cloudflare KV delete finishes while the session is still valid), and
+    // Firestore data cleaned up as a client-side backup to the server-side
+    // beforeUserDeleted trigger — before finally deleting the auth account.
 
     private func performDeletion() async {
         guard let user = Auth.auth().currentUser else {
@@ -368,6 +373,21 @@ struct LuniferSettings: View {
         }
         isDeletingAccount = true
 
+        // ── Re-authenticate up front (all providers) ──────────────
+        do {
+            try await reauthenticateCurrentUser(user)
+        } catch is CancellationError {
+            // User backed out of the re-auth prompt — abort cleanly. Nothing
+            // has been deleted yet, so the account is left fully intact.
+            isDeletingAccount = false
+            return
+        } catch {
+            isDeletingAccount = false
+            deleteErrorMessage = "Couldn't verify your identity. Please try again."
+            showDeleteErrorAlert = true
+            return
+        }
+
         // ── Cancel all AlarmKit alarms ────────────────────────────
         // Must happen before user.delete() so AlarmKit alarms don't fire
         // on this device after the account no longer exists.
@@ -375,21 +395,25 @@ struct LuniferSettings: View {
         await LuniferAlarm.shared.cancelAllAddedAlarms()
 
         // ── Disconnect wearables from Cloudflare KV ───────────────
-        // Fire backend disconnect calls while the Firebase ID token is still
-        // valid (before user.delete()). Each disconnect() spawns a background
-        // Task for the network request and immediately clears local state.
+        // Awaited (disconnectAndWait, not fire-and-forget disconnect) so the KV
+        // token removal completes while the Firebase session is still valid,
+        // before user.delete() invalidates it and orphans the tokens.
         if AppPreferencesStore.shared.whoopConnected {
-            WhoopManager.shared.disconnect()
+            await WhoopManager.shared.disconnectAndWait()
         }
         if AppPreferencesStore.shared.ouraConnected {
-            OuraManager.shared.disconnect()
+            await OuraManager.shared.disconnectAndWait()
         }
 
-        // ── Firestore cleanup ─────────────────────────────────────
+        // ── Firestore cleanup (client-side backup to the server trigger) ──
+        // Includes adaptiveData (users/{uid}/adaptiveData/outcomes) — deleting
+        // the parent user doc does NOT remove subcollections, so each must be
+        // listed explicitly. Runs before user.delete() while the session can
+        // still satisfy security rules.
         let db      = Firestore.firestore()
         let userDoc = db.collection("users").document(user.uid)
         do {
-            for sub in ["sleepHistory", "alarmInferences", "private"] {
+            for sub in ["sleepHistory", "alarmInferences", "adaptiveData", "private"] {
                 let snap = try await userDoc.collection(sub).getDocuments()
                 for doc in snap.documents { try await doc.reference.delete() }
             }
@@ -398,34 +422,18 @@ struct LuniferSettings: View {
             print("⚠️ Firestore cleanup skipped: \(error.localizedDescription)")
         }
 
+        // ── Delete the auth account ───────────────────────────────
         do {
             try await user.delete()
             clearLocalAccountData()
             isDeletingAccount = false
             dismiss()
         } catch let nsError as NSError where nsError.code == AuthErrorCode.requiresRecentLogin.rawValue {
-            // Session is stale — ask the user to re-enter their password.
-            do {
-                let password = try await withCheckedThrowingContinuation { (cont: CheckedContinuation<String, Error>) in
-                    reauthPasswordContinuation = cont
-                    showReauthPasswordSheet = true
-                }
-                let credential = EmailAuthProvider.credential(
-                    withEmail: user.email ?? "",
-                    password: password
-                )
-                try await user.reauthenticate(with: credential)
-                try await user.delete()
-                clearLocalAccountData()
-                isDeletingAccount = false
-                dismiss()
-            } catch is CancellationError {
-                isDeletingAccount = false
-            } catch {
-                isDeletingAccount = false
-                deleteErrorMessage = "Couldn't verify your credentials. If you signed in with Google, Apple, or Microsoft, please sign out and sign back in, then try deleting your account again."
-                showDeleteErrorAlert = true
-            }
+            // Only reachable if re-auth was skipped (an unrecognised provider)
+            // and the session is stale. Fall back to the sign-out/in guidance.
+            isDeletingAccount = false
+            deleteErrorMessage = "For your security, please sign out and sign back in, then delete your account again."
+            showDeleteErrorAlert = true
         } catch let nsError as NSError {
             isDeletingAccount = false
             deleteErrorMessage = nsError.localizedDescription
@@ -434,7 +442,38 @@ struct LuniferSettings: View {
         }
     }
 
+    /// Re-authenticates the current user with whichever provider they signed in
+    /// with, so a sensitive operation (account deletion) satisfies Firebase's
+    /// recent-login requirement. Email/password uses the in-app password sheet;
+    /// Google / Apple / Microsoft each re-run their OAuth flow via SigninBackend.
+    /// Throws CancellationError if the user backs out. Unknown providers are
+    /// skipped (the delete path then surfaces requiresRecentLogin gracefully).
+    @MainActor
+    private func reauthenticateCurrentUser(_ user: User) async throws {
+        let providers = user.providerData.map { $0.providerID }
+
+        if providers.contains("password") {
+            let password = try await withCheckedThrowingContinuation { (cont: CheckedContinuation<String, Error>) in
+                reauthPasswordContinuation = cont
+                showReauthPasswordSheet = true
+            }
+            let credential = EmailAuthProvider.credential(withEmail: user.email ?? "", password: password)
+            try await user.reauthenticate(with: credential)
+        } else if providers.contains("google.com") {
+            try await signinBackend.reauthenticateGoogle()
+        } else if providers.contains("apple.com") {
+            try await signinBackend.reauthenticateApple()
+        } else if providers.contains("microsoft.com") {
+            try await signinBackend.reauthenticateMicrosoft()
+        }
+        // Unknown provider: skip re-auth and let user.delete() try; if the
+        // session is stale it surfaces requiresRecentLogin, handled above.
+    }
+
     private func clearLocalAccountData() {
+        // Also clear the cached Google session so it doesn't linger after a
+        // Google-linked account is deleted (mirrors handleSignOut()).
+        GIDSignIn.sharedInstance.signOut()
         AccountDataManager.shared.clearLocalAccountData()
         surveyCompleted = false
     }

@@ -6,6 +6,9 @@ final class AppPreferencesStore {
     enum Keys {
         static let surveyCompleted = "surveyCompleted"
 
+        // Onboarding walkthrough (one-time coach-mark dashboard/settings tour)
+        static let hasSeenWalkthrough = "hasSeenWalkthrough"
+
         // Alarm
         static let mainAlarmSnoozeMinutes = "mainAlarmSnoozeMinutes"
         static let selectedAlarmSound = "selectedAlarmSound"

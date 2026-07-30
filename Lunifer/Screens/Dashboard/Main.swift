@@ -86,6 +86,9 @@ struct LuniferMain: View {
     @AppStorage("luniferEnabled") private var luniferEnabled: Bool = true
     @AppStorage("selectedAlarmSound") private var selectedAlarmSound: String = "DeafultAlarm.wav"
     @AppStorage("mainAlarmSnoozeMinutes") private var mainAlarmSnoozeMinutes: Int = 5
+    /// One-time coach-mark walkthrough shown on the first post-survey dashboard load.
+    @ObservedObject private var walkthrough = WalkthroughController.shared
+    @AppStorage(AppPreferencesStore.Keys.hasSeenWalkthrough) private var hasSeenWalkthrough: Bool = false
     /// Ticks every minute so rest-period checks re-evaluate automatically,
     /// including the midnight transition back to the alarm view.
     @State private var ticker = Date()
@@ -398,6 +401,19 @@ struct LuniferMain: View {
                 .animation(.easeInOut(duration: 0.5), value: luniferEnabled)
         }
         .frame(maxWidth: .infinity, maxHeight: .infinity)
+        // Coach-mark overlay for the dashboard + Sleep Insights walkthrough steps.
+        .walkthroughHost([.dashboard, .insights])
+        // Drive navigation for the active walkthrough step: swipe to the right
+        // page so each target is on screen.
+        .onChange(of: walkthrough.currentStep) { _, step in
+            guard let step else { return }
+            switch step.surface {
+            case .dashboard:
+                withAnimation { currentPage = 1 }
+            case .insights:
+                withAnimation { currentPage = 0 }
+            }
+        }
         .sheet(isPresented: $showSettings) {
             LuniferSettings(answers: $answers)
         }
@@ -557,6 +573,15 @@ struct LuniferMain: View {
                     }
                 }
             }
+
+            // ── First-run walkthrough ─────────────────────────
+            // Show the one-time coach-mark tour once the dashboard has settled.
+            // Only start on the alarm page (its targets don't exist on the rest
+            // page); if today opens on the rest page it starts on a later load.
+            if !hasSeenWalkthrough && !isRestPeriodActive {
+                try? await Task.sleep(nanoseconds: 700_000_000)
+                walkthrough.start()
+            }
         }
         // Re-evaluate rest period every minute so the midnight transition
         // back to the alarm view happens automatically without a relaunch.
@@ -669,6 +694,9 @@ struct LuniferMain: View {
                                         .fill(Color.white.opacity(0.08))
                                         .overlay(Circle().stroke(Color.white.opacity(0.12), lineWidth: 1))
                                 )
+                                // Tag the visible "+" circle (not the padded hit area)
+                                // so the walkthrough highlight is a tight, on-screen box.
+                                .walkthroughTarget(.addAlarm)
                         }
                     }
                     .padding(20)
@@ -687,6 +715,9 @@ struct LuniferMain: View {
                                     .fill(Color.white.opacity(0.08))
                                     .overlay(Circle().stroke(Color.white.opacity(0.12), lineWidth: 1))
                             )
+                            // Tag the visible gear circle (not the padded hit area)
+                            // so the walkthrough highlight is a tight, on-screen box.
+                            .walkthroughTarget(.settingsGear)
                             .padding(20)
                             .padding(.horizontal, 40)
                     }
@@ -762,6 +793,7 @@ struct LuniferMain: View {
                                 alarmExpanded.toggle()
                             }
                         }
+                        .walkthroughTarget(.alarmTime)
 
                         // ── Divider below ─────────────────────────
                         Rectangle()

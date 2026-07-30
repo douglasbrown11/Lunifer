@@ -182,6 +182,27 @@ final class OuraManager: NSObject, ObservableObject, ASWebAuthenticationPresenta
         errorMessage          = nil
     }
 
+    /// Awaitable disconnect used by account deletion. Awaits the Cloudflare KV
+    /// token removal (rather than firing it in a detached Task) so it completes
+    /// while the Firebase session is still valid, before `user.delete()`.
+    func disconnectAndWait() async {
+        do {
+            let _: OuraBackendStatusResponse = try await callBackend(
+                path: Backend.disconnectPath,
+                payload: [:]
+            )
+        } catch {
+            // Local cleanup still happens even if the backend call fails.
+        }
+        AppPreferencesStore.shared.resetOuraData()
+        isConnected           = false
+        recommendedSleepHours = 0
+        lastSyncDate          = nil
+        latestSleepOnset      = nil
+        latestWakeTime        = nil
+        errorMessage          = nil
+    }
+
     // MARK: - Private helpers
 
     private func apply(status: OuraBackendStatusResponse) {

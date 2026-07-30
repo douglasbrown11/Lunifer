@@ -390,6 +390,179 @@ final class SigninBackend: ObservableObject {
             loading = false
         }
     }
+
+    // ── Re-authentication for account deletion ───────────────
+    // Sensitive operations (deleting the account) require a recent login.
+    // These mirror the sign-in handlers above but call user.reauthenticate
+    // instead of Auth.signIn, so LuniferSettings can re-verify the user across
+    // ALL providers — not just email/password — before deleting the account.
+    // Each throws CancellationError when the user backs out so the caller can
+    // abort silently without showing an error.
+
+    func reauthenticateGoogle() async throws {
+        guard let user = Auth.auth().currentUser else {
+            throw NSError(domain: "LuniferSignin", code: -1,
+                          userInfo: [NSLocalizedDescriptionKey: "No signed-in user."])
+        }
+        guard let windowScene = UIApplication.shared.connectedScenes
+            .compactMap({ $0 as? UIWindowScene })
+            .first(where: { $0.activationState == .foregroundActive }),
+              let window = windowScene.windows.first(where: { $0.isKeyWindow }),
+              let rootVC = window.rootViewController else {
+            throw NSError(domain: "LuniferSignin", code: -1,
+                          userInfo: [NSLocalizedDescriptionKey: "Unable to present sign in."])
+        }
+        var presentingVC = rootVC
+        while let presented = presentingVC.presentedViewController { presentingVC = presented }
+        do {
+            let result = try await GIDSignIn.sharedInstance.signIn(withPresenting: presentingVC)
+            guard let idToken = result.user.idToken?.tokenString else {
+                throw NSError(domain: "LuniferSignin", code: -1,
+                              userInfo: [NSLocalizedDescriptionKey: "Missing Google ID token."])
+            }
+            let credential = GoogleAuthProvider.credential(
+                withIDToken: idToken,
+                accessToken: result.user.accessToken.tokenString
+            )
+            try await user.reauthenticate(with: credential)
+        } catch let e as NSError where e.domain.contains("GIDSignIn") && e.code == -5 {
+            throw CancellationError()
+        }
+    }
+
+    func reauthenticateApple() async throws {
+        guard let user = Auth.auth().currentUser else {
+            throw NSError(domain: "LuniferSignin", code: -1,
+                          userInfo: [NSLocalizedDescriptionKey: "No signed-in user."])
+        }
+        let rawNonce = AppleSignInNonce.makeRandomNonce()
+        let request = ASAuthorizationAppleIDProvider().createRequest()
+        request.requestedScopes = [.fullName, .email]
+        request.nonce = AppleSignInNonce.sha256(rawNonce)
+
+        let coordinator = AppleSignInCoordinator()
+        let controller  = ASAuthorizationController(authorizationRequests: [request])
+        controller.delegate = coordinator
+        controller.presentationContextProvider = coordinator
+
+        do {
+            let credential = try await coordinator.perform(controller: controller)
+            guard let tokenData = credential.identityToken,
+                  let tokenString = String(data: tokenData, encoding: .utf8) else {
+                throw NSError(domain: "LuniferSignin", code: -1,
+                              userInfo: [NSLocalizedDescriptionKey: "Missing Apple identity token."])
+            }
+            let firebaseCredential = OAuthProvider.appleCredential(
+                withIDToken: tokenString,
+                rawNonce: rawNonce,
+                fullName: credential.fullName
+            )
+            try await user.reauthenticate(with: firebaseCredential)
+        } catch let e as ASAuthorizationError where e.code == .canceled {
+            throw CancellationError()
+        }
+    }
+
+    func reauthenticateMicrosoft() async throws {
+        guard let user = Auth.auth().currentUser else {
+            throw NSError(domain: "LuniferSignin", code: -1,
+                          userInfo: [NSLocalizedDescriptionKey: "No signed-in user."])
+        }
+        let clientID    = "55d084c8-c89d-4023-95c9-c20ac76a9a30"
+        let redirectURI = "msauth.Dream-AI.Lunifer://auth"
+
+        var buffer = [UInt8](repeating: 0, count: 64)
+        _ = SecRandomCopyBytes(kSecRandomDefault, buffer.count, &buffer)
+        let verifier = Data(buffer).base64EncodedString()
+            .replacingOccurrences(of: "+", with: "-")
+            .replacingOccurrences(of: "/", with: "_")
+            .replacingOccurrences(of: "=", with: "")
+        let challenge = Data(SHA256.hash(data: Data(verifier.utf8))).base64EncodedString()
+            .replacingOccurrences(of: "+", with: "-")
+            .replacingOccurrences(of: "/", with: "_")
+            .replacingOccurrences(of: "=", with: "")
+
+        var comps = URLComponents(string: "https://login.microsoftonline.com/common/oauth2/v2.0/authorize")!
+        comps.queryItems = [
+            URLQueryItem(name: "client_id",             value: clientID),
+            URLQueryItem(name: "response_type",         value: "code"),
+            URLQueryItem(name: "redirect_uri",          value: redirectURI),
+            URLQueryItem(name: "scope",                 value: "openid profile email"),
+            URLQueryItem(name: "response_mode",         value: "query"),
+            URLQueryItem(name: "state",                 value: UUID().uuidString),
+            URLQueryItem(name: "code_challenge",        value: challenge),
+            URLQueryItem(name: "code_challenge_method", value: "S256"),
+            URLQueryItem(name: "prompt",                value: "login")
+        ]
+        guard let authURL = comps.url else {
+            throw NSError(domain: "LuniferSignin", code: -1,
+                          userInfo: [NSLocalizedDescriptionKey: "Couldn't build the Microsoft auth URL."])
+        }
+
+        let coordinator = MicrosoftSignInCoordinator()
+        let callbackURL: URL = try await withCheckedThrowingContinuation { continuation in
+            let session = ASWebAuthenticationSession(
+                url: authURL,
+                callbackURLScheme: "msauth.Dream-AI.Lunifer"
+            ) { url, error in
+                if let asError = error as? ASWebAuthenticationSessionError,
+                   asError.code == .canceledLogin {
+                    continuation.resume(throwing: CancellationError())
+                } else if let url = url {
+                    continuation.resume(returning: url)
+                } else {
+                    continuation.resume(throwing: error ?? NSError(
+                        domain: "LuniferSignin", code: -1,
+                        userInfo: [NSLocalizedDescriptionKey: "Microsoft sign-in failed."]))
+                }
+            }
+            session.presentationContextProvider = coordinator
+            session.prefersEphemeralWebBrowserSession = false
+            msSignInSession     = session
+            msSignInCoordinator = coordinator
+            session.start()
+        }
+        msSignInSession     = nil
+        msSignInCoordinator = nil
+
+        guard let callbackComps = URLComponents(url: callbackURL, resolvingAgainstBaseURL: false),
+              let code = callbackComps.queryItems?.first(where: { $0.name == "code" })?.value else {
+            throw NSError(domain: "LuniferSignin", code: -1,
+                          userInfo: [NSLocalizedDescriptionKey: "Microsoft sign-in failed."])
+        }
+
+        var tokenRequest = URLRequest(url: URL(string: "https://login.microsoftonline.com/common/oauth2/v2.0/token")!)
+        tokenRequest.httpMethod = "POST"
+        tokenRequest.setValue("application/x-www-form-urlencoded", forHTTPHeaderField: "Content-Type")
+        let body: [String: String] = [
+            "client_id":     clientID,
+            "grant_type":    "authorization_code",
+            "code":          code,
+            "redirect_uri":  redirectURI,
+            "code_verifier": verifier,
+            "scope":         "openid profile email"
+        ]
+        tokenRequest.httpBody = body
+            .map { "\($0.key)=\($0.value.addingPercentEncoding(withAllowedCharacters: .urlQueryAllowed) ?? "")" }
+            .joined(separator: "&").data(using: .utf8)
+
+        let (data, _) = try await URLSession.shared.data(for: tokenRequest)
+        struct MSReauthTokenResponse: Decodable {
+            let access_token: String
+            let id_token: String?
+        }
+        let tokens = try JSONDecoder().decode(MSReauthTokenResponse.self, from: data)
+        guard let idToken = tokens.id_token else {
+            throw NSError(domain: "LuniferSignin", code: -1,
+                          userInfo: [NSLocalizedDescriptionKey: "Microsoft sign-in failed."])
+        }
+        let credential = OAuthProvider.credential(
+            providerID: .custom("microsoft.com"),
+            idToken: idToken,
+            accessToken: tokens.access_token
+        )
+        try await user.reauthenticate(with: credential)
+    }
 }
 
 // ── MARK: Apple Sign-In helpers ──────────────────────────────
