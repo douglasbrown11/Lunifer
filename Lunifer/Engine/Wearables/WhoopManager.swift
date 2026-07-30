@@ -215,6 +215,29 @@ final class WhoopManager: NSObject, ObservableObject, ASWebAuthenticationPresent
         errorMessage = nil
     }
 
+    /// Awaitable disconnect used by account deletion. Unlike `disconnect()`,
+    /// which fires the backend call in a detached Task, this awaits the
+    /// Cloudflare KV token removal so it completes while the Firebase session
+    /// is still valid — before `user.delete()` invalidates it. Prevents
+    /// orphaned WHOOP tokens in KV after account deletion.
+    func disconnectAndWait() async {
+        do {
+            let _: WhoopBackendStatusResponse = try await callBackend(
+                path: Backend.disconnectPath,
+                payload: [:]
+            )
+        } catch {
+            // Local cleanup still happens even if the backend call fails.
+        }
+        AppPreferencesStore.shared.resetWhoopData()
+        isConnected = false
+        recommendedSleepHours = 0
+        lastSyncDate = nil
+        latestSleepOnset = nil
+        latestWakeTime = nil
+        errorMessage = nil
+    }
+
     private func apply(status: WhoopBackendStatusResponse) {
         let hours = max(0, status.recommendedSleepHours ?? 0)
         let syncDate = status.lastSyncDate.flatMap(Self.parseDate)

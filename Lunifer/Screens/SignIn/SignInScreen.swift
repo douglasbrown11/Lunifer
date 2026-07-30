@@ -118,6 +118,9 @@ struct LuniferInputField: View {
 struct LuniferSignin: View {
     var calendarChoice: String = ""
     var onSignedIn: (_ isNewUser: Bool) async -> Void = { _ in }
+    /// Optional back action — when provided, a chevron appears top-left and
+    /// returns to the previous screen (the pre-auth calendar picker). Nil hides it.
+    var onBack: (() -> Void)? = nil
 
     // Which sign-in options to show, derived from the pre-auth calendar choice.
     // Google/Outlook selections lock the user to their corresponding SSO provider.
@@ -444,6 +447,31 @@ struct LuniferSignin: View {
                 )
                 .padding(.horizontal, 29)
                 .padding(.bottom, 52)
+            }
+
+            // ── Back button (top-left) ────────────────────────
+            // Shown only when a back action is supplied (i.e. reached from the
+            // pre-auth calendar picker). Pinned above the scrolling content.
+            if let onBack {
+                VStack {
+                    HStack {
+                        Button {
+                            onBack()
+                        } label: {
+                            Image(systemName: "chevron.left")
+                                .font(.system(size: 18, weight: .light))
+                                .foregroundColor(Color.white.opacity(0.75))
+                                .frame(width: 44, height: 44)
+                                .background(
+                                    Circle().fill(Color.white.opacity(0.06))
+                                )
+                        }
+                        Spacer()
+                    }
+                    Spacer()
+                }
+                .padding(.leading, 16)
+                .padding(.top, 60)
             }
         }
         .frame(maxWidth: .infinity, maxHeight: .infinity)

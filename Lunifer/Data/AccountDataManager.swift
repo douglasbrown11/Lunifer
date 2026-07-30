@@ -21,6 +21,9 @@ final class AccountDataManager {
         AppPreferencesStore.shared.clearRestDayAlarmOptIn()
         // Clear added-alarm storage so orphaned alarm cards don't appear on the next login
         UserDefaults.standard.removeObject(forKey: AppPreferencesStore.Keys.addedAlarms)
+        // Reset the one-time walkthrough flag so the next user on this device is
+        // shown the coach-mark tour after completing their own survey.
+        UserDefaults.standard.removeObject(forKey: AppPreferencesStore.Keys.hasSeenWalkthrough)
         // Clear the feedback slowmode timestamp so the daily limit doesn't carry
         // over to the next account signing in on this device.
         UserDefaults.standard.removeObject(forKey: AppPreferencesStore.Keys.lastFeedbackSubmittedDate)

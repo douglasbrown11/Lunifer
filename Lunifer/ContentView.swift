@@ -27,6 +27,8 @@ struct ContentView: View {
             case .auth:
                 LuniferSignin(calendarChoice: preSelectedCalendar, onSignedIn: { isNewUser in
                     await handleSignedIn(isNewUser: isNewUser)
+                }, onBack: {
+                    withAnimation(.easeInOut(duration: 0.3)) { screen = .calendarChoice }
                 })
             case .survey:
                 LuniferSurvey(preSelectedCalendar: preSelectedCalendar, onFinish: { answers in
