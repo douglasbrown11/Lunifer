@@ -219,6 +219,7 @@ final class SigninBackend: ObservableObject {
     // which caused the recurring "missing initial state / sessionStorage" error on iOS.
 
     func handleMicrosoftSignIn(
+        calendarChoice: String = "",
         agreedToTerms: Bool,
         onSignedIn: @escaping (_ isNewUser: Bool) async -> Void
     ) {
@@ -233,6 +234,16 @@ final class SigninBackend: ObservableObject {
 
             let clientID    = "55d084c8-c89d-4023-95c9-c20ac76a9a30"
             let redirectURI = "msauth.Dream-AI.Lunifer://auth"
+            // NOTE: calendar scopes are intentionally NOT folded into this Microsoft
+            // sign-in. Mixing Graph resource scopes (Calendars.Read) into the Firebase
+            // OIDC auth request produces a credential Firebase rejects — the sign-in
+            // fails with "Something went wrong". Unlike Google (which supports clean
+            // incremental consent), Outlook calendar access is connected separately,
+            // post-auth, from the survey via `MicrosoftCalendarService.connect()`, so
+            // this request stays auth-only. `calendarChoice` is accepted only for
+            // call-site symmetry with the Google handler.
+            _ = calendarChoice
+            let scopes = "openid profile email"
 
             // PKCE — code verifier + SHA-256 challenge
             var buffer = [UInt8](repeating: 0, count: 64)
@@ -251,7 +262,7 @@ final class SigninBackend: ObservableObject {
                 URLQueryItem(name: "client_id",             value: clientID),
                 URLQueryItem(name: "response_type",         value: "code"),
                 URLQueryItem(name: "redirect_uri",          value: redirectURI),
-                URLQueryItem(name: "scope",                 value: "openid profile email"),
+                URLQueryItem(name: "scope",                 value: scopes),
                 URLQueryItem(name: "response_mode",         value: "query"),
                 URLQueryItem(name: "state",                 value: UUID().uuidString),
                 URLQueryItem(name: "code_challenge",        value: challenge),
@@ -309,7 +320,7 @@ final class SigninBackend: ObservableObject {
                     "code":          code,
                     "redirect_uri":  redirectURI,
                     "code_verifier": verifier,
-                    "scope":         "openid profile email"
+                    "scope":         scopes
                 ]
                 tokenRequest.httpBody = body
                     .map { "\($0.key)=\($0.value.addingPercentEncoding(withAllowedCharacters: .urlQueryAllowed) ?? "")" }
@@ -347,6 +358,7 @@ final class SigninBackend: ObservableObject {
     // ── Google sign-in ───────────────────────────────────────
 
     func handleGoogleSignIn(
+        calendarChoice: String = "",
         agreedToTerms: Bool,
         onSignedIn: @escaping (_ isNewUser: Bool) async -> Void
     ) {
@@ -372,7 +384,17 @@ final class SigninBackend: ObservableObject {
                 while let presented = presentingVC.presentedViewController {
                     presentingVC = presented
                 }
-                let result = try await GIDSignIn.sharedInstance.signIn(withPresenting: presentingVC)
+                // When the user pre-selected Google Calendar, request the read-only
+                // calendar scope in this same Google sign-in so they authorize Google
+                // only once (auth + calendar together). The granted scope makes
+                // GoogleCalendarService.isConnected() true, so the survey's post-auth
+                // connect() no-ops rather than prompting a second time.
+                let additionalScopes = calendarChoice == "google" ? [GoogleCalendarService.scope] : nil
+                let result = try await GIDSignIn.sharedInstance.signIn(
+                    withPresenting: presentingVC,
+                    hint: nil,
+                    additionalScopes: additionalScopes
+                )
                 guard let idToken = result.user.idToken?.tokenString else {
                     errorMessage = "Something went wrong. Please try again."
                     loading = false

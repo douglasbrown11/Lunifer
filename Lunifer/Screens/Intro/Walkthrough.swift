@@ -56,7 +56,7 @@ enum WalkthroughStep: Int, CaseIterable {
         case .alarmTime:      return "This is when Lunifer will wake you tomorrow. Tap the time to set your own."
         case .addAlarm:       return "Need an extra alarm? Add your own here anytime."
         case .sleepInsights:  return "Your recommended sleep and nightly history live here — swipe right to come back."
-        case .settingsGear:   return "The gear opens Settings, where you can fine-tune everything — your profile, wake days, wearables and notifications."
+        case .settingsGear:   return "The gear opens Settings, where you can fine-tune everything."
         }
     }
 
