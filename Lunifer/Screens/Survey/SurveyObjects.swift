@@ -199,22 +199,13 @@ struct CalendarChoiceScreen: View {
                     showCalendarNudge = true
                 }
             } else {
-                switch id {
-                case "apple":
-                    if calendarManager.authorizationStatus == .notDetermined {
-                        Task { await calendarManager.requestAccess() }
-                    }
-                case "google":
-                    if !GoogleCalendarService.shared.isConnected() {
-                        Task { await GoogleCalendarService.shared.connect() }
-                    }
-                case "outlook":
-                    if !MicrosoftCalendarService.shared.isConnected() {
-                        Task { await MicrosoftCalendarService.shared.connect() }
-                    }
-                default:
-                    break
-                }
+                // Do NOT connect the calendar here. Triggering a provider sign-in
+                // on this pre-auth screen pops it over the sign-in page and forces
+                // the user to authorize the provider twice (once for the calendar,
+                // once for Firebase auth). Instead the selection is threaded into
+                // LuniferSignin, which folds the calendar scope into the single
+                // Firebase sign-in for Google/Outlook; Apple/EventKit access is
+                // requested post-auth when the survey appears.
                 onSelect(id)
             }
         } content: {
