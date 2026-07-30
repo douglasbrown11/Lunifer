@@ -182,6 +182,7 @@ struct SleepInsights: View {
                         )
                 )
                 .padding(.horizontal, 60)
+                .walkthroughTarget(.sleepInsights)
 
                 Spacer().frame(height: 16)
 

@@ -320,6 +320,9 @@ struct TimeScalePicker: View {
                             .font(.libreFranklin(size: 32))
                             .foregroundColor(Color.white.opacity(0.2))
                     }
+                    // Nudge the wheel down so its top rows don't overlap the
+                    // "HOURS" / "MINUTES" column headers above it.
+                    .padding(.top, 10)
                 }
                 .padding(.top, 12)
                 .transition(.opacity.combined(with: .offset(y: 8)))
