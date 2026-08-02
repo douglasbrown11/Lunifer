@@ -63,8 +63,9 @@ final class SigninBackend: ObservableObject {
 
     // Held alive for the duration of their respective auth flows
     private var currentAppleNonce: String? = nil
-    private var msSignInSession: ASWebAuthenticationSession? = nil
-    private var msSignInCoordinator: MicrosoftSignInCoordinator? = nil
+    /// Retained for the duration of the Firebase-managed Microsoft OAuth flow so
+    /// the provider (and its presented web session) isn't deallocated mid-sign-in.
+    private var msOAuthProvider: OAuthProvider? = nil
 
     // ── Email / password ─────────────────────────────────────
 
@@ -213,10 +214,17 @@ final class SigninBackend: ObservableObject {
     }
 
     // ── Microsoft sign-in ────────────────────────────────────
-    // Uses direct PKCE OAuth with Microsoft's endpoint via ASWebAuthenticationSession,
-    // bypassing Firebase's /__/auth/handler redirect page entirely. The old approach
-    // (OAuthProvider.getCredentialWith(nil)) routed through lunifer-ce086.firebaseapp.com
-    // which caused the recurring "missing initial state / sessionStorage" error on iOS.
+    // Uses Firebase's MANAGED OAuth flow (`OAuthProvider(providerID:"microsoft.com")`
+    // + getCredentialWith). This is the only path Firebase accepts for Microsoft —
+    // a generic OAuth provider — because Firebase will not validate a self-obtained
+    // Microsoft id_token via signInWithIdp (it returns INVALID_CREDENTIAL_OR_PROVIDER_ID,
+    // even though the token is valid). Only Google/Apple accept manual id_tokens.
+    //
+    // The managed flow redirects through https://lunifer-ce086.firebaseapp.com/__/auth/handler
+    // and back into the app. That callback is completed by the AppDelegate's
+    // application(_:open:) (see App.swift) forwarding to Auth.auth().canHandle(url).
+    // Without an AppDelegate, GoogleUtilities' swizzler can't hook the callback,
+    // which is what produced the earlier "missing initial state / sessionStorage" error.
 
     func handleMicrosoftSignIn(
         calendarChoice: String = "",
@@ -227,129 +235,58 @@ final class SigninBackend: ObservableObject {
             withAnimation { errorMessage = "Please agree to the Terms of Service and Privacy Policy to continue." }
             return
         }
+        // `calendarChoice` is accepted for call-site symmetry with the Google
+        // handler. Outlook calendar access is connected separately (post-auth) from
+        // the survey via `MicrosoftCalendarService.connect()`, so it is not requested
+        // here — folding Graph scopes into the Firebase auth request breaks it.
+        _ = calendarChoice
+
+        let provider = OAuthProvider(providerID: "microsoft.com")
+        // select_account lets the user pick which Microsoft account to use.
+        provider.customParameters = ["prompt": "select_account"]
+        // Retain the provider for the duration of the presented web flow.
+        msOAuthProvider = provider
+
         Task { @MainActor in
             loading = true
             errorMessage = nil
             resetMessage = nil
 
-            let clientID    = "55d084c8-c89d-4023-95c9-c20ac76a9a30"
-            let redirectURI = "msauth.Dream-AI.Lunifer://auth"
-            // NOTE: calendar scopes are intentionally NOT folded into this Microsoft
-            // sign-in. Mixing Graph resource scopes (Calendars.Read) into the Firebase
-            // OIDC auth request produces a credential Firebase rejects — the sign-in
-            // fails with "Something went wrong". Unlike Google (which supports clean
-            // incremental consent), Outlook calendar access is connected separately,
-            // post-auth, from the survey via `MicrosoftCalendarService.connect()`, so
-            // this request stays auth-only. `calendarChoice` is accepted only for
-            // call-site symmetry with the Google handler.
-            _ = calendarChoice
-            let scopes = "openid profile email"
-
-            // PKCE — code verifier + SHA-256 challenge
-            var buffer = [UInt8](repeating: 0, count: 64)
-            _ = SecRandomCopyBytes(kSecRandomDefault, buffer.count, &buffer)
-            let verifier = Data(buffer).base64EncodedString()
-                .replacingOccurrences(of: "+", with: "-")
-                .replacingOccurrences(of: "/", with: "_")
-                .replacingOccurrences(of: "=", with: "")
-            let challenge = Data(SHA256.hash(data: Data(verifier.utf8))).base64EncodedString()
-                .replacingOccurrences(of: "+", with: "-")
-                .replacingOccurrences(of: "/", with: "_")
-                .replacingOccurrences(of: "=", with: "")
-
-            var comps = URLComponents(string: "https://login.microsoftonline.com/common/oauth2/v2.0/authorize")!
-            comps.queryItems = [
-                URLQueryItem(name: "client_id",             value: clientID),
-                URLQueryItem(name: "response_type",         value: "code"),
-                URLQueryItem(name: "redirect_uri",          value: redirectURI),
-                URLQueryItem(name: "scope",                 value: scopes),
-                URLQueryItem(name: "response_mode",         value: "query"),
-                URLQueryItem(name: "state",                 value: UUID().uuidString),
-                URLQueryItem(name: "code_challenge",        value: challenge),
-                URLQueryItem(name: "code_challenge_method", value: "S256"),
-                URLQueryItem(name: "prompt",                value: "select_account")
-            ]
-            guard let authURL = comps.url else {
-                errorMessage = "Something went wrong. Please try again."
-                loading = false
-                return
-            }
-
             do {
-                let coordinator = MicrosoftSignInCoordinator()
-                let callbackURL: URL = try await withCheckedThrowingContinuation { continuation in
-                    let session = ASWebAuthenticationSession(
-                        url: authURL,
-                        callbackURLScheme: "msauth.Dream-AI.Lunifer"
-                    ) { url, error in
-                        if let asError = error as? ASWebAuthenticationSessionError,
-                           asError.code == .canceledLogin {
-                            continuation.resume(throwing: CancellationError())
-                        } else if let url = url {
-                            continuation.resume(returning: url)
+                // Passing nil for the UIDelegate lets Firebase present its own
+                // ASWebAuthenticationSession from the key window.
+                let credential: AuthCredential = try await withCheckedThrowingContinuation { continuation in
+                    provider.getCredentialWith(nil) { credential, error in
+                        if let error {
+                            continuation.resume(throwing: error)
+                        } else if let credential {
+                            continuation.resume(returning: credential)
                         } else {
-                            continuation.resume(throwing: error ?? NSError(
+                            continuation.resume(throwing: NSError(
                                 domain: "LuniferSignin", code: -1,
                                 userInfo: [NSLocalizedDescriptionKey: "Microsoft sign-in failed."]))
                         }
                     }
-                    session.presentationContextProvider = coordinator
-                    session.prefersEphemeralWebBrowserSession = false
-                    msSignInSession     = session
-                    msSignInCoordinator = coordinator
-                    session.start()
-                }
-                msSignInSession     = nil
-                msSignInCoordinator = nil
-
-                guard let callbackComps = URLComponents(url: callbackURL, resolvingAgainstBaseURL: false),
-                      let code = callbackComps.queryItems?.first(where: { $0.name == "code" })?.value
-                else {
-                    errorMessage = "Something went wrong. Please try again."
-                    loading = false
-                    return
                 }
 
-                // Exchange auth code for tokens (PKCE — no client secret on device)
-                var tokenRequest = URLRequest(url: URL(string: "https://login.microsoftonline.com/common/oauth2/v2.0/token")!)
-                tokenRequest.httpMethod = "POST"
-                tokenRequest.setValue("application/x-www-form-urlencoded", forHTTPHeaderField: "Content-Type")
-                let body: [String: String] = [
-                    "client_id":     clientID,
-                    "grant_type":    "authorization_code",
-                    "code":          code,
-                    "redirect_uri":  redirectURI,
-                    "code_verifier": verifier,
-                    "scope":         scopes
-                ]
-                tokenRequest.httpBody = body
-                    .map { "\($0.key)=\($0.value.addingPercentEncoding(withAllowedCharacters: .urlQueryAllowed) ?? "")" }
-                    .joined(separator: "&").data(using: .utf8)
-
-                let (data, _) = try await URLSession.shared.data(for: tokenRequest)
-
-                struct MSTokenResponse: Decodable {
-                    let access_token: String
-                    let id_token: String?
-                }
-                let tokens = try JSONDecoder().decode(MSTokenResponse.self, from: data)
-                guard let idToken = tokens.id_token else {
-                    errorMessage = "Something went wrong. Please try again."
-                    loading = false
-                    return
-                }
-
-                let credential = OAuthProvider.credential(
-                    providerID: .custom("microsoft.com"),
-                    idToken: idToken,
-                    accessToken: tokens.access_token
-                )
                 let authResult = try await Auth.auth().signIn(with: credential)
+                msOAuthProvider = nil
                 await onSignedIn(authResult.additionalUserInfo?.isNewUser ?? false)
-            } catch is CancellationError {
-                // User cancelled — no error message needed
             } catch {
-                errorMessage = friendlySigninError(error)
+                msOAuthProvider = nil
+                let nsError = error as NSError
+                // Treat an explicit web-session cancel as a silent no-op.
+                let cancelled =
+                    (error is CancellationError) ||
+                    (nsError.domain == "com.apple.AuthenticationServices.WebAuthenticationSession" && nsError.code == 1) ||
+                    (nsError.domain == AuthErrorDomain && nsError.code == AuthErrorCode.webContextCancelled.rawValue)
+                if !cancelled {
+                    // Log the raw error so any residual Firebase/Microsoft issue is
+                    // visible in the Xcode console rather than hidden behind the
+                    // friendly message.
+                    print("❌ Microsoft sign-in error: \(error) — \(nsError.userInfo)")
+                    errorMessage = friendlySigninError(error)
+                }
             }
             loading = false
         }
@@ -490,99 +427,27 @@ final class SigninBackend: ObservableObject {
             throw NSError(domain: "LuniferSignin", code: -1,
                           userInfo: [NSLocalizedDescriptionKey: "No signed-in user."])
         }
-        let clientID    = "55d084c8-c89d-4023-95c9-c20ac76a9a30"
-        let redirectURI = "msauth.Dream-AI.Lunifer://auth"
+        // Use Firebase's managed OAuth flow (same reason as handleMicrosoftSignIn):
+        // Firebase rejects a self-obtained Microsoft id_token, so we let it run the
+        // OAuth flow through its handler and hand back a credential it trusts.
+        let provider = OAuthProvider(providerID: "microsoft.com")
+        provider.customParameters = ["prompt": "login"]
+        msOAuthProvider = provider
+        defer { msOAuthProvider = nil }
 
-        var buffer = [UInt8](repeating: 0, count: 64)
-        _ = SecRandomCopyBytes(kSecRandomDefault, buffer.count, &buffer)
-        let verifier = Data(buffer).base64EncodedString()
-            .replacingOccurrences(of: "+", with: "-")
-            .replacingOccurrences(of: "/", with: "_")
-            .replacingOccurrences(of: "=", with: "")
-        let challenge = Data(SHA256.hash(data: Data(verifier.utf8))).base64EncodedString()
-            .replacingOccurrences(of: "+", with: "-")
-            .replacingOccurrences(of: "/", with: "_")
-            .replacingOccurrences(of: "=", with: "")
-
-        var comps = URLComponents(string: "https://login.microsoftonline.com/common/oauth2/v2.0/authorize")!
-        comps.queryItems = [
-            URLQueryItem(name: "client_id",             value: clientID),
-            URLQueryItem(name: "response_type",         value: "code"),
-            URLQueryItem(name: "redirect_uri",          value: redirectURI),
-            URLQueryItem(name: "scope",                 value: "openid profile email"),
-            URLQueryItem(name: "response_mode",         value: "query"),
-            URLQueryItem(name: "state",                 value: UUID().uuidString),
-            URLQueryItem(name: "code_challenge",        value: challenge),
-            URLQueryItem(name: "code_challenge_method", value: "S256"),
-            URLQueryItem(name: "prompt",                value: "login")
-        ]
-        guard let authURL = comps.url else {
-            throw NSError(domain: "LuniferSignin", code: -1,
-                          userInfo: [NSLocalizedDescriptionKey: "Couldn't build the Microsoft auth URL."])
-        }
-
-        let coordinator = MicrosoftSignInCoordinator()
-        let callbackURL: URL = try await withCheckedThrowingContinuation { continuation in
-            let session = ASWebAuthenticationSession(
-                url: authURL,
-                callbackURLScheme: "msauth.Dream-AI.Lunifer"
-            ) { url, error in
-                if let asError = error as? ASWebAuthenticationSessionError,
-                   asError.code == .canceledLogin {
-                    continuation.resume(throwing: CancellationError())
-                } else if let url = url {
-                    continuation.resume(returning: url)
+        let credential: AuthCredential = try await withCheckedThrowingContinuation { continuation in
+            provider.getCredentialWith(nil) { credential, error in
+                if let error {
+                    continuation.resume(throwing: error)
+                } else if let credential {
+                    continuation.resume(returning: credential)
                 } else {
-                    continuation.resume(throwing: error ?? NSError(
+                    continuation.resume(throwing: NSError(
                         domain: "LuniferSignin", code: -1,
                         userInfo: [NSLocalizedDescriptionKey: "Microsoft sign-in failed."]))
                 }
             }
-            session.presentationContextProvider = coordinator
-            session.prefersEphemeralWebBrowserSession = false
-            msSignInSession     = session
-            msSignInCoordinator = coordinator
-            session.start()
         }
-        msSignInSession     = nil
-        msSignInCoordinator = nil
-
-        guard let callbackComps = URLComponents(url: callbackURL, resolvingAgainstBaseURL: false),
-              let code = callbackComps.queryItems?.first(where: { $0.name == "code" })?.value else {
-            throw NSError(domain: "LuniferSignin", code: -1,
-                          userInfo: [NSLocalizedDescriptionKey: "Microsoft sign-in failed."])
-        }
-
-        var tokenRequest = URLRequest(url: URL(string: "https://login.microsoftonline.com/common/oauth2/v2.0/token")!)
-        tokenRequest.httpMethod = "POST"
-        tokenRequest.setValue("application/x-www-form-urlencoded", forHTTPHeaderField: "Content-Type")
-        let body: [String: String] = [
-            "client_id":     clientID,
-            "grant_type":    "authorization_code",
-            "code":          code,
-            "redirect_uri":  redirectURI,
-            "code_verifier": verifier,
-            "scope":         "openid profile email"
-        ]
-        tokenRequest.httpBody = body
-            .map { "\($0.key)=\($0.value.addingPercentEncoding(withAllowedCharacters: .urlQueryAllowed) ?? "")" }
-            .joined(separator: "&").data(using: .utf8)
-
-        let (data, _) = try await URLSession.shared.data(for: tokenRequest)
-        struct MSReauthTokenResponse: Decodable {
-            let access_token: String
-            let id_token: String?
-        }
-        let tokens = try JSONDecoder().decode(MSReauthTokenResponse.self, from: data)
-        guard let idToken = tokens.id_token else {
-            throw NSError(domain: "LuniferSignin", code: -1,
-                          userInfo: [NSLocalizedDescriptionKey: "Microsoft sign-in failed."])
-        }
-        let credential = OAuthProvider.credential(
-            providerID: .custom("microsoft.com"),
-            idToken: idToken,
-            accessToken: tokens.access_token
-        )
         try await user.reauthenticate(with: credential)
     }
 }
@@ -690,16 +555,5 @@ private final class AppleSignInCoordinator: NSObject,
             .compactMap({ $0 as? UIWindowScene })
             .flatMap({ $0.windows })
             .first ?? UIWindow()
-    }
-}
-
-// ── MARK: Microsoft Sign-In coordinator ──────────────────────
-
-private final class MicrosoftSignInCoordinator: NSObject, ASWebAuthenticationPresentationContextProviding {
-    func presentationAnchor(for session: ASWebAuthenticationSession) -> ASPresentationAnchor {
-        UIApplication.shared.connectedScenes
-            .compactMap({ $0 as? UIWindowScene })
-            .first(where: { $0.activationState == .foregroundActive })?
-            .windows.first(where: { $0.isKeyWindow }) ?? UIWindow()
     }
 }
