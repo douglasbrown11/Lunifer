@@ -1807,7 +1807,7 @@ struct AboutSettingsView: View {
                 // ── Links ─────────────────────────────────
                 VStack(spacing: 0) {
                     Button {
-                        openURL(URL(string: "https://lunifer-website.vercel.app/privacy-policy.html")!)
+                        openURL(URL(string: "https://www.luniferapp.com/privacy-policy.html")!)
                     } label: {
                         HStack {
                             Text("Privacy Policy")
@@ -1828,7 +1828,7 @@ struct AboutSettingsView: View {
                         .padding(.leading, 16)
 
                     Button {
-                        openURL(URL(string: "https://lunifer-website.vercel.app/terms.html")!)
+                        openURL(URL(string: "https://www.luniferapp.com/terms.html")!)
                     } label: {
                         HStack {
                             Text("Terms & Conditions")

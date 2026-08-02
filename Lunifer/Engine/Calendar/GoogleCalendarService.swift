@@ -23,14 +23,14 @@ import GoogleSignIn
 //
 // Setup required (outside this file):
 //   • The Google Cloud OAuth consent screen must list the
-//     `calendar.readonly` scope. No client secret is needed on device.
+//     `calendar.events.readonly` scope. No client secret is needed on device.
 
 @MainActor
 final class GoogleCalendarService: NSObject, ObservableObject, CalendarEventSource {
 
     static let shared = GoogleCalendarService()
 
-    static let scope = "https://www.googleapis.com/auth/calendar.readonly"
+    static let scope = "https://www.googleapis.com/auth/calendar.events.readonly"
     private static let eventsURL = "https://www.googleapis.com/calendar/v3/calendars/primary/events"
 
     private override init() { super.init() }
