@@ -1,4 +1,5 @@
 import SwiftUI
+import UIKit
 import Firebase
 import FirebaseAuth
 import GoogleSignIn
@@ -6,9 +7,38 @@ import BackgroundTasks
 import UserNotifications
 import FeedbackPulse
 
+// ─────────────────────────────────────────────────────────────
+// AppDelegate
+// ─────────────────────────────────────────────────────────────
+// This SwiftUI app previously had NO UIApplicationDelegate, so Firebase's
+// GoogleUtilities AppDelegateSwizzler couldn't hook incoming URL callbacks
+// ("App Delegate does not conform to UIApplicationDelegate protocol"). That
+// broke Firebase's MANAGED OAuth flow for Microsoft — the redirect back from
+// https://lunifer-ce086.firebaseapp.com/__/auth/handler was never delivered,
+// producing the "missing initial state / sessionStorage" error.
+//
+// Adding this delegate and forwarding open-URL callbacks to Firebase (and
+// Google Sign-In) lets that flow complete. Microsoft sign-in must use Firebase's
+// managed flow because Firebase rejects a self-obtained Microsoft id_token.
+final class AppDelegate: NSObject, UIApplicationDelegate {
+    func application(
+        _ application: UIApplication,
+        open url: URL,
+        options: [UIApplication.OpenURLOptionsKey: Any] = [:]
+    ) -> Bool {
+        if GIDSignIn.sharedInstance.handle(url) { return true }
+        if Auth.auth().canHandle(url) { return true }
+        return false
+    }
+}
+
 // "@main" tells Swift this is where the app starts
 @main
 struct LuniferApp: App {
+
+    // Bridges a UIApplicationDelegate into this SwiftUI app so Firebase can
+    // complete OAuth (Microsoft) URL callbacks. See AppDelegate above.
+    @UIApplicationDelegateAdaptor(AppDelegate.self) private var appDelegate
 
     // Creates one shared CalendarManager for the entire app.
     // "@StateObject" means SwiftUI owns this object and keeps it alive

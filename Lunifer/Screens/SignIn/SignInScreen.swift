@@ -153,8 +153,8 @@ struct LuniferSignin: View {
     private var canSubmit: Bool { !email.isEmpty && password.count >= 6 }
 
     private var termsAttributedString: AttributedString {
-        let tosURL  = URL(string: "https://lunifer-website.vercel.app/terms.html")!
-        let ppURL   = URL(string: "https://lunifer-website.vercel.app/privacy-policy.html")!
+        let tosURL  = URL(string: "https://www.luniferapp.com/terms.html")!
+        let ppURL   = URL(string: "https://www.luniferapp.com/privacy-policy.html")!
         let base    = Font.custom("DM Sans", size: 12)
         let muted   = Color.white.opacity(0.35)
         let accent  = Color(red: 0.627, green: 0.471, blue: 1.0).opacity(0.85)
