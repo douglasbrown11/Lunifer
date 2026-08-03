@@ -636,6 +636,34 @@ class LuniferAlarm: ObservableObject {
         return decideAlarm(from: baseline, answers: answers)
     }
 
+    @discardableResult
+    func refreshTomorrowAlarm(answers: SurveyAnswers) async -> Date? {
+        let defaults = UserDefaults.standard
+        let luniferEnabled = defaults.object(forKey: AppPreferencesStore.Keys.luniferEnabled) as? Bool ?? true
+        guard luniferEnabled,
+              !defaults.bool(forKey: AppPreferencesStore.Keys.overrideActive) else { return nil }
+
+        let calendar = Calendar.current
+        if let pending = AppPreferencesStore.shared.pendingRestDayAlarmDate(), calendar.isDateInToday(pending) {
+            return pending
+        }
+        let tomorrow = calendar.date(byAdding: .day, value: 1, to: calendar.startOfDay(for: Date())) ?? Date()
+        let weekdayIDs = ["sun", "mon", "tue", "wed", "thu", "fri", "sat"]
+        let tomorrowID = weekdayIDs[calendar.component(.weekday, from: tomorrow) - 1]
+        if !answers.wakeDays.contains(tomorrowID),
+           !AppPreferencesStore.shared.hasRestDayAlarmOptIn(for: tomorrow) {
+            AdaptiveAlarmStore.shared.clearPendingDecision()
+            await cancelAlarm()
+            return nil
+        }
+
+        let baseline = await resolveBaselineAlarmDate(answers: answers, targetDay: tomorrow)
+        let finalAlarm = decideAlarm(from: baseline, answers: answers)
+        await scheduleAlarm(for: finalAlarm, eventTitle: baseline.firstEvent?.title ?? "your first event", routineMinutes: baseline.routineMinutes, commuteMinutes: baseline.commuteMinutes)
+        await WakeNotification.shared.schedule(wakeDate: finalAlarm, answers: answers)
+        return finalAlarm
+    }
+
     /// Schedules the next wake day's alarm so Lunifer keeps running without the
     /// user reopening the app. No-op when Lunifer is disabled or no upcoming
     /// wake day exists. Called from stopAlarm() after the main alarm is dismissed.

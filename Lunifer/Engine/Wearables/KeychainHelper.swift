@@ -94,5 +94,7 @@ extension KeychainHelper {
         static let msCalendarAccessToken  = "ms_calendar_access_token"
         static let msCalendarRefreshToken = "ms_calendar_refresh_token"
         static let msCalendarTokenExpiry  = "ms_calendar_token_expiry"
+        static let apnsDeviceToken        = "apns_device_token"
+        static let pushInstallationID     = "push_installation_id"
     }
 }

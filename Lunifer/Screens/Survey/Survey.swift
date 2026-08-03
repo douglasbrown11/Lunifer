@@ -1346,6 +1346,13 @@ struct LuniferSurvey: View {
                 snapshot.saveToDefaults()
                 surveyCompleted = true
 
+                // Reset the one-time coach-mark walkthrough flag on fresh onboarding so
+                // a newly onboarded user (including a new account on a device where a
+                // previous user already finished the tour) sees it. Tying this to survey
+                // completion — rather than to sign-out — means a returning user signing
+                // back in never re-triggers the walkthrough.
+                UserDefaults.standard.set(false, forKey: AppPreferencesStore.Keys.hasSeenWalkthrough)
+
                 // Fire the Firestore sync in the background. A failure here is
                 // non-fatal: the local copy is the source of truth on this device,
                 // and syncProfile() will push it again whenever the user edits
