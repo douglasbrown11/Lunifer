@@ -482,14 +482,17 @@ struct LuniferSettings: View {
         answers.saveToDefaults()
         answers.saveToFirestore()
 
-        do {
-            GIDSignIn.sharedInstance.signOut()
-            try Auth.auth().signOut()
-            AccountDataManager.shared.clearLocalSessionDataOnSignOut()
-            dismiss()
-        } catch {
-            signOutErrorMessage = (error as NSError).localizedDescription
-            showSignOutErrorAlert = true
+        Task { @MainActor in
+            await SilentPushManager.shared.unregisterCurrentInstallation()
+            do {
+                GIDSignIn.sharedInstance.signOut()
+                try Auth.auth().signOut()
+                AccountDataManager.shared.clearLocalSessionDataOnSignOut()
+                dismiss()
+            } catch {
+                signOutErrorMessage = (error as NSError).localizedDescription
+                showSignOutErrorAlert = true
+            }
         }
     }
 

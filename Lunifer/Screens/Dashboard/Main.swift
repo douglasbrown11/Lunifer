@@ -476,7 +476,11 @@ struct LuniferMain: View {
             // Resolve the alarm date before starting any services so that the
             // wake notification and commute polling all use the same target.
             let tomorrow = Calendar.current.date(byAdding: .day, value: 1, to: Calendar.current.startOfDay(for: Date())) ?? Date()
-            resolvedAlarmDate = await LuniferAlarm.shared.resolveAlarmDate(answers: answers, targetDay: tomorrow)
+            if let refreshed = await LuniferAlarm.shared.refreshTomorrowAlarm(answers: answers) {
+                resolvedAlarmDate = refreshed
+            } else if overrideActive {
+                resolvedAlarmDate = await LuniferAlarm.shared.resolveAlarmDate(answers: answers, targetDay: tomorrow)
+            }
 
             await SleepTracker.shared.startTracking()
             // Pull Apple Watch sleep from HealthKit (authoritative nights) if connected.
@@ -497,44 +501,7 @@ struct LuniferMain: View {
 
             checkAlarmAuthorization()
 
-            // Schedule the Lunifer alarm from the resolved date if Lunifer is enabled,
-            // the user has not set a manual override, and tomorrow is a wake day.
-            // If tomorrow is a rest day, cancel any existing alarm so AlarmKit doesn't
-            // fire on a day the user has marked as off.
-            // Preserve an opted-in rest-day alarm scheduled for TODAY that hasn't
-            // fired yet. The normal flow below reschedules the single main-alarm
-            // slot for "tomorrow"; after midnight on the rest day that would evict
-            // the alarm the user opted into. Leave the AlarmKit slot untouched and
-            // pin the displayed time to it instead.
-            if let pendingTodayOptIn = AppPreferencesStore.shared.pendingRestDayAlarmDate(),
-               Calendar.current.isDateInToday(pendingTodayOptIn) {
-                resolvedAlarmDate = pendingTodayOptIn
-            } else if luniferEnabled && !overrideActive {
-                // Skip the rest-day cancel when the user explicitly opted into an
-                // alarm for tomorrow via the rest-day notification — otherwise
-                // fall through to schedule tomorrow's (adaptive) alarm normally.
-                if isTomorrowRestDay && !AppPreferencesStore.shared.hasRestDayAlarmOptIn(for: tomorrow) {
-                    AdaptiveAlarmStore.shared.clearPendingDecision()
-                    await LuniferAlarm.shared.cancelAlarm()
-                } else {
-                    let routineMins = answers.routine.auto
-                        ? 60
-                        : answers.routine.hours * 60 + answers.routine.minutes
-                    let commuteMins: Int = (answers.lifestyle == "student" || answers.lifestyle == "commuter")
-                        ? (answers.commute.auto
-                            ? (CommuteManager.shared.currentDurationMinutes > 0
-                                ? CommuteManager.shared.currentDurationMinutes
-                                : 30)
-                            : answers.commute.hours * 60 + answers.commute.minutes)
-                        : 0
-                    await LuniferAlarm.shared.scheduleAlarm(
-                        for: resolvedAlarmDate,
-                        eventTitle: CalendarManager.shared.firstEventTomorrow?.title ?? "your first event",
-                        routineMinutes: routineMins,
-                        commuteMinutes: commuteMins
-                    )
-                }
-            } else {
+            if !luniferEnabled || overrideActive {
                 AdaptiveAlarmStore.shared.clearPendingDecision()
             }
 

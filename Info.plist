@@ -18,7 +18,7 @@
 	<key>CFBundlePackageType</key>
 	<string>APPL</string>
 	<key>CFBundleShortVersionString</key>
-	<string>1.0</string>
+	<string>$(MARKETING_VERSION)</string>
 	<key>CFBundleURLTypes</key>
 	<array>
 		<dict>
@@ -49,7 +49,7 @@
 		</dict>
 	</array>
 	<key>CFBundleVersion</key>
-	<string>1</string>
+	<string>$(CURRENT_PROJECT_VERSION)</string>
 	<key>GIDClientID</key>
 	<string>7167900619-kt1j2i37t8cvkuo9afdnvhro643f05th.apps.googleusercontent.com</string>
 	<key>ITSAppUsesNonExemptEncryption</key>
@@ -68,10 +68,10 @@
 	<string>Lunifer needs your location at all times to automatically calculate your commute and adjust your alarm accordingly.</string>
 	<key>NSLocationWhenInUseUsageDescription</key>
 	<string>Lunifer uses your location to calculate your commute time so it can set the right wake-up alarm.</string>
-	<key>NSMotionUsageDescription</key>
-	<string>Lunifer uses motion data to detect when you fall asleep so it can calculate your optimal wake-up time.</string>
 	<key>NSMicrophoneUsageDescription</key>
 	<string>Lunifer uses microphone volume levels to tell whether your room is quiet enough for sleep. Audio is not recorded or saved.</string>
+	<key>NSMotionUsageDescription</key>
+	<string>Lunifer uses motion data to detect when you fall asleep so it can calculate your optimal wake-up time.</string>
 	<key>UIAppFonts</key>
 	<array>
 		<string>CormorantGaramond-LightItalic.ttf</string>
@@ -91,6 +91,7 @@
 		<string>processing</string>
 		<string>fetch</string>
 		<string>audio</string>
+		<string>remote-notification</string>
 	</array>
 	<key>UILaunchScreen</key>
 	<dict/>

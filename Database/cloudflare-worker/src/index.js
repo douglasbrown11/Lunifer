@@ -78,12 +78,157 @@ export default {
         });
       }
 
+      if (url.pathname === "/push/register") {
+        const body = await request.json();
+        const token = requiredString(body.token, "token");
+        const installationID = requiredString(body.installationID, "installationID");
+        const timeZone = requiredString(body.timeZone, "timeZone");
+        const environment = requiredString(body.environment, "environment");
+        if (!/^[0-9a-f]{64}$/i.test(token)) {
+          throw httpError(400, "Invalid APNs device token.");
+        }
+        if (environment !== "sandbox" && environment !== "production") {
+          throw httpError(400, "Invalid APNs environment.");
+        }
+        try {
+          new Intl.DateTimeFormat("en-AU", {timeZone}).format(new Date());
+        } catch {
+          throw httpError(400, "Invalid time zone.");
+        }
+        const key = pushTokenKey(uid, installationID);
+        const existing = await env.WHOOP_TOKENS.get(key, "json");
+        await env.WHOOP_TOKENS.put(key, JSON.stringify({
+          token,
+          timeZone,
+          environment,
+          updatedAt: new Date().toISOString(),
+          lastSentLocalDate: existing?.lastSentLocalDate || null,
+          lastSentAt: existing?.lastSentAt || null
+        }));
+        return json({registered: true});
+      }
+
+      if (url.pathname === "/push/unregister") {
+        const body = await request.json();
+        const installationID = requiredString(body.installationID, "installationID");
+        await env.WHOOP_TOKENS.delete(pushTokenKey(uid, installationID));
+        return json({registered: false});
+      }
+
       return json({ error: "Not found." }, 404);
     } catch (error) {
       return json({ error: error.message || "Unknown error." }, error.status || 500);
     }
+  },
+
+  async scheduled(_controller, env) {
+    await sendNightlyAlarmRefreshes(env);
   }
 };
+
+function pushTokenKey(uid, installationID) {
+  return `push:${uid}:${installationID}`;
+}
+
+async function sendNightlyAlarmRefreshes(env) {
+  let cursor;
+  do {
+    const page = await env.WHOOP_TOKENS.list({prefix: "push:", cursor});
+    for (const key of page.keys) {
+      const registration = await env.WHOOP_TOKENS.get(key.name, "json");
+      if (!registration) continue;
+      const local = localDateAndHour(new Date(), registration.timeZone);
+      if (local.hour !== "19" || registration.lastSentLocalDate === local.date) continue;
+      const response = await sendAPNsBackgroundPush(env, registration);
+      if (response.ok) {
+        registration.lastSentLocalDate = local.date;
+        registration.lastSentAt = new Date().toISOString();
+        await env.WHOOP_TOKENS.put(key.name, JSON.stringify(registration));
+      } else if (response.status === 410 ||
+                 (response.status === 400 && response.reason === "BadDeviceToken")) {
+        await env.WHOOP_TOKENS.delete(key.name);
+      } else {
+        console.error(`APNs send failed for ${key.name}: ${response.status} ${response.reason}`);
+      }
+    }
+    cursor = page.list_complete ? undefined : page.cursor;
+  } while (cursor);
+}
+
+function localDateAndHour(date, timeZone) {
+  const parts = new Intl.DateTimeFormat("en-CA", {
+    timeZone,
+    year: "numeric",
+    month: "2-digit",
+    day: "2-digit",
+    hour: "2-digit",
+    hourCycle: "h23"
+  }).formatToParts(date);
+  const value = type => parts.find(part => part.type === type)?.value;
+  return {
+    date: `${value("year")}-${value("month")}-${value("day")}`,
+    hour: value("hour")
+  };
+}
+
+async function sendAPNsBackgroundPush(env, registration) {
+  const authorization = await createAPNsAuthorization(env);
+  const host = registration.environment === "sandbox"
+    ? "https://api.sandbox.push.apple.com"
+    : "https://api.push.apple.com";
+  const response = await fetch(`${host}/3/device/${registration.token}`, {
+    method: "POST",
+    headers: {
+      authorization,
+      "apns-topic": env.APNS_TOPIC,
+      "apns-push-type": "background",
+      "apns-priority": "5",
+      "content-type": "application/json"
+    },
+    body: JSON.stringify({
+      aps: {"content-available": 1},
+      type: "lunifer_alarm_refresh"
+    })
+  });
+  let reason = "";
+  if (!response.ok) {
+    try { reason = (await response.json()).reason || ""; } catch { /* no body */ }
+  }
+  return {ok: response.ok, status: response.status, reason};
+}
+
+async function createAPNsAuthorization(env) {
+  const now = Math.floor(Date.now() / 1000);
+  const header = base64UrlEncode(JSON.stringify({alg: "ES256", kid: env.APNS_KEY_ID}));
+  const claims = base64UrlEncode(JSON.stringify({iss: env.APNS_TEAM_ID, iat: now}));
+  const signingInput = `${header}.${claims}`;
+  const privateKey = await crypto.subtle.importKey(
+    "pkcs8",
+    pemToBytes(env.APNS_PRIVATE_KEY),
+    {name: "ECDSA", namedCurve: "P-256"},
+    false,
+    ["sign"]
+  );
+  const signature = await crypto.subtle.sign(
+    {name: "ECDSA", hash: "SHA-256"},
+    privateKey,
+    new TextEncoder().encode(signingInput)
+  );
+  return `bearer ${signingInput}.${base64UrlEncode(new Uint8Array(signature))}`;
+}
+
+function pemToBytes(pem) {
+  const base64 = pem.replace(/-----[^-]+-----/g, "").replace(/\s/g, "");
+  const binary = atob(base64);
+  return Uint8Array.from(binary, character => character.charCodeAt(0));
+}
+
+function base64UrlEncode(value) {
+  const bytes = typeof value === "string" ? new TextEncoder().encode(value) : value;
+  let binary = "";
+  for (const byte of bytes) binary += String.fromCharCode(byte);
+  return btoa(binary).replace(/=/g, "").replace(/\+/g, "-").replace(/\//g, "_");
+}
 
 async function fetchAndPersistSleepNeed(env, uid) {
   const tokenData = await loadWhoopToken(env, uid);
