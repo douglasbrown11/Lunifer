@@ -321,12 +321,12 @@ final class SigninBackend: ObservableObject {
                 while let presented = presentingVC.presentedViewController {
                     presentingVC = presented
                 }
-                // When the user pre-selected Google Calendar, request the read-only
-                // calendar scope in this same Google sign-in so they authorize Google
+                // When the user pre-selected Google Calendar, request the least-privilege
+                // event + calendar-list scopes in this same sign-in so they authorize Google
                 // only once (auth + calendar together). The granted scope makes
                 // GoogleCalendarService.isConnected() true, so the survey's post-auth
                 // connect() no-ops rather than prompting a second time.
-                let additionalScopes = calendarChoice == "google" ? [GoogleCalendarService.scope] : nil
+                let additionalScopes = calendarChoice == "google" ? GoogleCalendarService.scopes : nil
                 let result = try await GIDSignIn.sharedInstance.signIn(
                     withPresenting: presentingVC,
                     hint: nil,

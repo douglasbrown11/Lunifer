@@ -59,7 +59,7 @@
 	<key>NSAlarmKitUsageDescription</key>
 	<string>Lunifer sets a wake-up alarm for you automatically each night based on your schedule.</string>
 	<key>NSCalendarsFullAccessUsageDescription</key>
-	<string>Lunifer uses your calendar to dX$etect early meetings, late events, and days off so it can automatically adjust your wake-up time.</string>
+	<string>Lunifer uses your calendar to detect early meetings, late events, and days off so it can automatically adjust your wake-up time.</string>
 	<key>NSHealthShareUsageDescription</key>
 	<string>Lunifer reads your sleep data from Apple Health (recorded by your Apple Watch) to give you more accurate sleep insights and a better-timed alarm.</string>
 	<key>NSHealthUpdateUsageDescription</key>

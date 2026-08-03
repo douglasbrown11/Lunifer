@@ -394,6 +394,21 @@ struct LuniferSignin: View {
                         }
                     }
                     } // end if showEmailSection (mode toggle)
+
+                    // ── Back to calendar picker ───────────────
+                    // Small centered text link (matches the survey's "← Back"),
+                    // shown below the mode toggle. Only when a back action exists.
+                    if let onBack {
+                        Button {
+                            onBack()
+                        } label: {
+                            Text("← Back")
+                                .font(.custom("DM Sans", size: 14))
+                                .foregroundColor(Color.white.opacity(0.3))
+                                .padding(.vertical, 8)
+                        }
+                        .padding(.top, 12)
+                    }
                 }
                 .padding(.horizontal, 62)
                 .padding(.top, 115)
@@ -447,31 +462,6 @@ struct LuniferSignin: View {
                 )
                 .padding(.horizontal, 29)
                 .padding(.bottom, 52)
-            }
-
-            // ── Back button (top-left) ────────────────────────
-            // Shown only when a back action is supplied (i.e. reached from the
-            // pre-auth calendar picker). Pinned above the scrolling content.
-            if let onBack {
-                VStack {
-                    HStack {
-                        Button {
-                            onBack()
-                        } label: {
-                            Image(systemName: "chevron.left")
-                                .font(.system(size: 18, weight: .light))
-                                .foregroundColor(Color.white.opacity(0.75))
-                                .frame(width: 44, height: 44)
-                                .background(
-                                    Circle().fill(Color.white.opacity(0.06))
-                                )
-                        }
-                        Spacer()
-                    }
-                    Spacer()
-                }
-                .padding(.leading, 16)
-                .padding(.top, 60)
             }
         }
         .frame(maxWidth: .infinity, maxHeight: .infinity)
