@@ -12,6 +12,7 @@ final class AccountDataManager {
         MorningRoutineEstimator.clearStoredData()
         HealthKitManager.clearStoredData()
         CalendarNudgeNotification.clearStoredData()
+        SilentPushManager.clearStoredData()
         // Clear Outlook (Microsoft Graph) calendar tokens so they don't leak to
         // the next account on this device. Google calendar access rides on the
         // GIDSignIn session, which is cleared on sign-out separately.
@@ -21,9 +22,11 @@ final class AccountDataManager {
         AppPreferencesStore.shared.clearRestDayAlarmOptIn()
         // Clear added-alarm storage so orphaned alarm cards don't appear on the next login
         UserDefaults.standard.removeObject(forKey: AppPreferencesStore.Keys.addedAlarms)
-        // Reset the one-time walkthrough flag so the next user on this device is
-        // shown the coach-mark tour after completing their own survey.
-        UserDefaults.standard.removeObject(forKey: AppPreferencesStore.Keys.hasSeenWalkthrough)
+        // NOTE: hasSeenWalkthrough is intentionally NOT cleared here. Resetting it on
+        // sign-out re-triggered the coach-mark tour for RETURNING users who signed back
+        // in (they skip the survey and land straight on the dashboard with the flag
+        // freshly cleared). The flag is instead reset on survey completion in
+        // Survey.swift's handleFinish(), so only a user who actually onboards sees it.
         // Clear the feedback slowmode timestamp so the daily limit doesn't carry
         // over to the next account signing in on this device.
         UserDefaults.standard.removeObject(forKey: AppPreferencesStore.Keys.lastFeedbackSubmittedDate)

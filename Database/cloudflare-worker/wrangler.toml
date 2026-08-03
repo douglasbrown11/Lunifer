@@ -4,6 +4,10 @@ compatibility_date = "2026-03-30"
 
 [vars]
 FIREBASE_PROJECT_ID = "lunifer-ce086"
+APNS_TOPIC = "Dream-AI.Lunifer"
+
+[triggers]
+crons = ["0 * * * *"]
 
 [[kv_namespaces]]
 binding = "WHOOP_TOKENS"

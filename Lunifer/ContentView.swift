@@ -51,6 +51,7 @@ struct ContentView: View {
                 authStateHandle = Auth.auth().addStateDidChangeListener { _, user in
                     Task { @MainActor in
                         if user != nil, surveyCompleted, let saved = SurveyAnswers.loadFromDefaults() {
+                            await SilentPushManager.shared.syncStoredToken()
                             surveyAnswers = saved
                             screen = .splash
                             await AdaptiveAlarmStore.shared.loadFromFirestore()
@@ -91,6 +92,7 @@ struct ContentView: View {
 
     @MainActor
     private func handleSignedIn(isNewUser: Bool) async {
+        await SilentPushManager.shared.syncStoredToken()
         if isNewUser {
             surveyCompleted = false
             screen = .survey

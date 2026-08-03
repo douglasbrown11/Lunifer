@@ -21,6 +21,32 @@ import FeedbackPulse
 // Google Sign-In) lets that flow complete. Microsoft sign-in must use Firebase's
 // managed flow because Firebase rejects a self-obtained Microsoft id_token.
 final class AppDelegate: NSObject, UIApplicationDelegate {
+    func application(_ application: UIApplication, didFinishLaunchingWithOptions launchOptions: [UIApplication.LaunchOptionsKey: Any]? = nil) -> Bool {
+        application.registerForRemoteNotifications()
+        return true
+    }
+
+    func application(_ application: UIApplication, didRegisterForRemoteNotificationsWithDeviceToken deviceToken: Data) {
+        Task { @MainActor in
+            await SilentPushManager.shared.receivedDeviceToken(deviceToken)
+        }
+    }
+
+    func application(_ application: UIApplication, didFailToRegisterForRemoteNotificationsWithError error: Error) {
+        print("Remote-notification registration failed: \(error.localizedDescription)")
+    }
+
+    func application(_ application: UIApplication, didReceiveRemoteNotification userInfo: [AnyHashable: Any], fetchCompletionHandler completionHandler: @escaping (UIBackgroundFetchResult) -> Void) {
+        guard userInfo["type"] as? String == SilentPushManager.refreshMessageType else {
+            completionHandler(.noData)
+            return
+        }
+        Task { @MainActor in
+            let refreshed = await SilentPushManager.shared.refreshTomorrowAlarm()
+            completionHandler(refreshed ? .newData : .noData)
+        }
+    }
+
     func application(
         _ application: UIApplication,
         open url: URL,

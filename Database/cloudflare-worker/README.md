@@ -1,6 +1,6 @@
-# Lunifer WHOOP Cloudflare Worker
+# Lunifer Cloudflare Worker
 
-This Worker replaces the previous Firebase Functions WHOOP backend so Lunifer can keep the WHOOP `client_secret` off-device without requiring Firebase Blaze.
+This Worker hosts Lunifer's wearable integrations and APNs silent-push sender without requiring Firebase Blaze.
 
 ## What it does
 
@@ -9,6 +9,8 @@ This Worker replaces the previous Firebase Functions WHOOP backend so Lunifer ca
 - Fetches WHOOP sleep-need data
 - Stores per-user WHOOP token data in Cloudflare KV
 - Verifies Firebase ID tokens sent from the iOS app
+- Registers and removes authenticated APNs device tokens in KV
+- Runs hourly and sends one background push during each device's local 7 PM hour
 
 ## Required Cloudflare setup
 
@@ -20,6 +22,9 @@ This Worker replaces the previous Firebase Functions WHOOP backend so Lunifer ca
 ```bash
 wrangler secret put WHOOP_CLIENT_ID
 wrangler secret put WHOOP_CLIENT_SECRET
+wrangler secret put APNS_PRIVATE_KEY
+wrangler secret put APNS_KEY_ID
+wrangler secret put APNS_TEAM_ID
 ```
 
 ## Local install / deploy
@@ -45,3 +50,9 @@ in:
 - `POST /whoop/exchange-code`
 - `POST /whoop/fetch-sleep-need`
 - `POST /whoop/disconnect`
+- `POST /push/register`
+- `POST /push/unregister`
+
+The hourly Cron Trigger is declared in `wrangler.toml`. APNs registrations share
+the existing `WHOOP_TOKENS` namespace under `push:{firebaseUID}:{installationID}`
+keys; the APNs private key exists only as a Worker secret.
