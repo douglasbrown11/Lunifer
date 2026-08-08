@@ -36,6 +36,10 @@ final class GoogleCalendarService: NSObject, ObservableObject, CalendarEventSour
     static let calendarListScope = "https://www.googleapis.com/auth/calendar.calendarlist.readonly"
     static let scopes = [eventScope, calendarListScope]
 
+    /// Changes whenever Google Sign-In restores or updates its current session,
+    /// allowing connection-status UI to re-evaluate `isConnected()`.
+    @Published private(set) var sessionRevision = 0
+
     private static let calendarListURL = "https://www.googleapis.com/calendar/v3/users/me/calendarList"
     private static let eventsBaseURL = "https://www.googleapis.com/calendar/v3/calendars"
 
@@ -53,6 +57,18 @@ final class GoogleCalendarService: NSObject, ObservableObject, CalendarEventSour
     }
 
     // MARK: - Connect
+
+    /// Reloads the Google Sign-In session persisted by the SDK. This is silent:
+    /// it does not present consent UI or ask the user to sign in again.
+    func restorePreviousSession() async {
+        do {
+            _ = try await GIDSignIn.sharedInstance.restorePreviousSignIn()
+        } catch {
+            // No restorable Google session is a valid state (for example, users
+            // who authenticate with Apple, Microsoft, or email/password).
+        }
+        sessionRevision += 1
+    }
 
     /// Requests the least-privilege event and calendar-list scopes. If a Google
     /// session already exists (e.g. the user signed in with Google), this adds them
@@ -75,6 +91,7 @@ final class GoogleCalendarService: NSObject, ObservableObject, CalendarEventSour
                     additionalScopes: Self.scopes
                 )
             }
+            sessionRevision += 1
             print("✅ Google calendar connected")
         } catch {
             print("❌ Google calendar connect failed: \(error.localizedDescription)")

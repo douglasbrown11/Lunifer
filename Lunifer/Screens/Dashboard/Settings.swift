@@ -404,6 +404,13 @@ struct LuniferSettings: View {
         if AppPreferencesStore.shared.ouraConnected {
             await OuraManager.shared.disconnectAndWait()
         }
+        // Apple Watch / HealthKit: reset the in-memory connected flag too.
+        // The static clearStoredData() run later (via AccountDataManager) only
+        // wipes the persisted keys, leaving this @MainActor singleton's
+        // isConnected == true for the rest of the session — which let a brand-new
+        // account silently re-import Apple Watch sleep on its first dashboard load.
+        // disconnect() resets the in-memory flag (no backend/server tokens involved).
+        HealthKitManager.shared.disconnect()
 
         // ── Firestore cleanup (client-side backup to the server trigger) ──
         // Includes adaptiveData (users/{uid}/adaptiveData/outcomes) — deleting
@@ -486,6 +493,12 @@ struct LuniferSettings: View {
             await SilentPushManager.shared.unregisterCurrentInstallation()
             do {
                 GIDSignIn.sharedInstance.signOut()
+                // Reset the HealthKit singleton's in-memory connected flag before
+                // clearing persisted data. clearLocalSessionDataOnSignOut() calls the
+                // static clearStoredData(), which only wipes UserDefaults and leaves
+                // isConnected == true in memory — otherwise a different account signing
+                // in during the same session would silently re-import Apple Watch sleep.
+                HealthKitManager.shared.disconnect()
                 try Auth.auth().signOut()
                 AccountDataManager.shared.clearLocalSessionDataOnSignOut()
                 dismiss()
@@ -503,7 +516,11 @@ struct LuniferSettings: View {
 struct AboutYouSettingsView: View {
     @Binding var answers: SurveyAnswers
     @Environment(\.dismiss) private var dismiss
+    @ObservedObject private var calendarManager = CalendarManager.shared
+    @ObservedObject private var googleCalendarService = GoogleCalendarService.shared
+    @ObservedObject private var microsoftCalendarService = MicrosoftCalendarService.shared
     @State private var editingField: String? = nil
+    @State private var calendarConnectionRevision = 0
     // Commute-type gate: shown when user switches to student/commuter from a non-commuter lifestyle
     @State private var showCommuteTypeSheet = false
     @State private var pendingLifestyle: String = ""
@@ -513,6 +530,8 @@ struct AboutYouSettingsView: View {
     @State private var longRoutineTimeLabel = ""
     // Calendar authorization
     @State private var showCalendarDeniedAlert = false
+    @State private var showCalendarNudge = false
+    @State private var previousCalendarChoice: String? = nil
 
     private var isCommuterUser: Bool {
         answers.lifestyle == "student" || answers.lifestyle == "commuter"
@@ -536,6 +555,46 @@ struct AboutYouSettingsView: View {
         case "none": return "None"
         default: return "Not set"
         }
+    }
+
+    private var calendarConnectionLabel: String {
+        // Read this state so a completed Google connection refreshes the computed label.
+        _ = calendarConnectionRevision
+        switch answers.calendar {
+        case "apple":
+            return calendarManager.authorizationStatus == .authorized
+                ? "Connected · iPhone calendars"
+                : "Permission required"
+        case "google":
+            return googleCalendarService.isConnected()
+                ? "Connected · Primary and shared calendars"
+                : "Reconnect required"
+        case "outlook":
+            return microsoftCalendarService.isConnected()
+                ? "Connected · Outlook calendars"
+                : "Reconnect required"
+        case "none":
+            return "No calendar connected"
+        default:
+            return "Choose a calendar provider"
+        }
+    }
+
+    private var isCalendarConnected: Bool {
+        switch answers.calendar {
+        case "apple": return calendarManager.authorizationStatus == .authorized
+        case "google": return googleCalendarService.isConnected()
+        case "outlook": return microsoftCalendarService.isConnected()
+        default: return false
+        }
+    }
+
+    private var calendarStatusColor: Color {
+        if isCalendarConnected { return Color.green.opacity(0.85) }
+        if answers.calendar == nil || answers.calendar == "none" || answers.calendar?.isEmpty == true {
+            return Color.white.opacity(0.3)
+        }
+        return Color.orange.opacity(0.8)
     }
 
     private var routineLabel: String {
@@ -570,30 +629,6 @@ struct AboutYouSettingsView: View {
         return answers.age
     }
 
-    /// Returns a Binding<Date> backed by answers.age for the DatePicker.
-    private var birthdayBinding: Binding<Date> {
-        Binding(
-            get: {
-                let formatter = DateFormatter()
-                formatter.dateFormat = "yyyy-MM-dd"
-                return formatter.date(from: answers.age)
-                    ?? Calendar.current.date(byAdding: .year, value: -25, to: Date())
-                    ?? Date()
-            },
-            set: { newDate in
-                let formatter = DateFormatter()
-                formatter.dateFormat = "yyyy-MM-dd"
-                answers.age = formatter.string(from: newDate)
-            }
-        )
-    }
-
-    private var aboutYouDivider: some View {
-        Divider()
-            .background(Color.white.opacity(0.08))
-            .padding(.leading, 16)
-    }
-
     var body: some View {
         ZStack(alignment: .top) {
             Color.luniferBg.ignoresSafeArea()
@@ -618,40 +653,34 @@ struct AboutYouSettingsView: View {
                 .padding(.bottom, 20)
 
                 ScrollView(showsIndicators: false) {
-                    VStack(spacing: 0) {
-                        aboutYouRow(label: "Age", value: ageDisplayString, field: "age")
-                        aboutYouDivider
+                    VStack(spacing: 10) {
+                        immutableAgeRow
                         aboutYouRow(label: "Lifestyle", value: lifestyleLabel, field: "lifestyle")
-                        aboutYouDivider
                         aboutYouRow(label: "Calendar", value: calendarLabel, field: "calendar")
                         if answers.lifestyle != "not_working" {
-                            aboutYouDivider
                             aboutYouRow(label: "Morning Routine", value: routineLabel, field: "routine")
                         }
                         if isCommuterUser {
-                            aboutYouDivider
                             aboutYouRow(label: "Commute Type", value: commuteModeLabel, field: "commuteMode")
                         }
                     }
-                    .background(
-                        RoundedRectangle(cornerRadius: 12)
-                            .fill(Color.white.opacity(0.04))
-                            .overlay(
-                                RoundedRectangle(cornerRadius: 12)
-                                    .stroke(Color.white.opacity(0.08), lineWidth: 1)
-                            )
-                    )
                     .padding(.horizontal, 24)
                     .padding(.top, 8)
+                    .padding(.bottom, 32)
                 }
+            }
+
+            if showCalendarNudge {
+                Color.black.opacity(0.45)
+                    .ignoresSafeArea()
+                    .transition(.opacity)
+
+                calendarNudgePopup
+                    .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .center)
+                    .transition(.scale(scale: 0.9).combined(with: .opacity))
             }
         }
         .toolbar(.hidden, for: .navigationBar)
-        .onChange(of: answers.age) { _, _ in
-            answers.saveToDefaults()
-            answers.saveToFirestore()
-            Task { await BirthdayNotification.shared.schedule(answers: answers) }
-        }
         .onChange(of: answers.lifestyle) { _, _ in
             answers.saveToDefaults()
             answers.saveToFirestore()
@@ -715,18 +744,137 @@ struct AboutYouSettingsView: View {
         }
     }
 
+    private var calendarNudgePopup: some View {
+        VStack(spacing: 0) {
+            VStack(alignment: .leading, spacing: 4) {
+                Text("Are you sure you don't want to allow access to your calendar?")
+                    .font(.system(size: 14, weight: .semibold))
+                    .foregroundColor(Color(.label))
+                    .fixedSize(horizontal: false, vertical: true)
+                Text("Lunifer works best when it can read your schedule — connecting a calendar lets it set your alarm around your actual day.")
+                    .font(.system(size: 13))
+                    .foregroundColor(Color(.secondaryLabel))
+                    .fixedSize(horizontal: false, vertical: true)
+                    .lineSpacing(3)
+                    .padding(.top, 2)
+            }
+            .frame(maxWidth: .infinity, alignment: .leading)
+            .padding(.horizontal, 16)
+            .padding(.top, 16)
+            .padding(.bottom, 16)
+
+            Divider()
+
+            HStack(spacing: 0) {
+                Button {
+                    showCalendarNudge = false
+                    editingField = nil
+                } label: {
+                    Text("Yes, Continue")
+                        .font(.system(size: 16))
+                        .foregroundColor(Color(.systemBlue))
+                        .frame(maxWidth: .infinity)
+                        .frame(height: 44)
+                }
+
+                Divider().frame(height: 44)
+
+                Button {
+                    withAnimation(.spring(response: 0.3, dampingFraction: 0.8)) {
+                        answers.calendar = previousCalendarChoice
+                        showCalendarNudge = false
+                    }
+                } label: {
+                    Text("No")
+                        .font(.system(size: 16, weight: .semibold))
+                        .foregroundColor(Color(.systemBlue))
+                        .frame(maxWidth: .infinity)
+                        .frame(height: 44)
+                }
+            }
+        }
+        .background(Color(.systemGray6))
+        .clipShape(RoundedRectangle(cornerRadius: 20))
+        .shadow(color: .black.opacity(0.25), radius: 24, x: 0, y: 8)
+        .frame(maxWidth: 320)
+        .padding(.horizontal, 20)
+    }
+
+    private var immutableAgeRow: some View {
+        HStack {
+            Text("Age")
+                .font(.custom("DM Sans", size: 14))
+                .foregroundColor(Color.white.opacity(0.45))
+
+            Text(ageDisplayString)
+                .font(.custom("DM Sans", size: 14))
+                .foregroundColor(Color.white.opacity(0.85))
+                .padding(.leading, 12)
+
+            Spacer()
+
+            Image(systemName: "lock.fill")
+                .font(.system(size: 10, weight: .medium))
+                .foregroundColor(Color.white.opacity(0.25))
+        }
+        .padding(.horizontal, 16)
+        .padding(.vertical, 14)
+        .background(
+            RoundedRectangle(cornerRadius: 12)
+                .fill(Color.white.opacity(0.04))
+        )
+        .overlay(
+            RoundedRectangle(cornerRadius: 12)
+                .stroke(Color.white.opacity(0.08), lineWidth: 1)
+        )
+        .opacity(editingField == nil ? 1 : 0.5)
+        .scaleEffect(editingField == nil ? 1 : 0.985)
+        .animation(.spring(response: 0.38, dampingFraction: 0.82), value: editingField)
+    }
+
     @ViewBuilder
     private func aboutYouRow(label: String, value: String, field: String) -> some View {
+        let isEditing = editingField == field
+        let isDimmed = editingField != nil && !isEditing
+
         VStack(spacing: 0) {
             HStack {
-                Text(label)
-                    .font(.custom("DM Sans", size: 14))
-                    .foregroundColor(Color.white.opacity(0.45))
+                if field == "calendar" {
+                    Image(systemName: "calendar.badge.clock")
+                        .font(.system(size: 15, weight: .medium))
+                        .foregroundColor(Color(red: 0.72, green: 0.61, blue: 1.0))
+                        .frame(width: 36, height: 36)
+                        .background(
+                            Circle().fill(Color(red: 0.627, green: 0.471, blue: 1.0).opacity(0.14))
+                        )
 
-                Text(value)
-                    .font(.custom("DM Sans", size: 14))
-                    .foregroundColor(Color.white.opacity(0.85))
-                    .padding(.leading, 12)
+                    VStack(alignment: .leading, spacing: 4) {
+                        HStack(spacing: 8) {
+                            Text(value)
+                                .font(.custom("DM Sans", size: 14).weight(.medium))
+                                .foregroundColor(Color.white.opacity(0.9))
+
+                            Circle()
+                                .fill(calendarStatusColor)
+                                .frame(width: 6, height: 6)
+                        }
+
+                        Text(calendarConnectionLabel)
+                            .font(.custom("DM Sans", size: 11))
+                            .foregroundColor(Color.white.opacity(0.42))
+                            .lineLimit(1)
+                    }
+                    .padding(.leading, 2)
+                } else {
+                    Text(label)
+                        .font(.custom("DM Sans", size: 14))
+                        .foregroundColor(Color.white.opacity(0.45))
+
+                    Text(value)
+                        .font(.custom("DM Sans", size: 14))
+                        .foregroundColor(Color.white.opacity(0.85))
+                        .padding(.leading, 12)
+                }
 
                 Spacer()
 
@@ -748,9 +896,16 @@ struct AboutYouSettingsView: View {
                         }
                     }
                 } label: {
-                    Text(editingField == field ? "Done" : "Change")
-                        .font(.custom("DM Sans", size: 13))
-                        .foregroundColor(Color(red: 0.627, green: 0.471, blue: 1.0))
+                    HStack(spacing: 7) {
+                        if isEditing {
+                            Text("Done")
+                                .font(.custom("DM Sans", size: 13))
+                        }
+                        Image(systemName: "chevron.down")
+                            .font(.system(size: 11, weight: .semibold))
+                            .rotationEffect(.degrees(isEditing ? 180 : 0))
+                    }
+                    .foregroundColor(Color(red: 0.627, green: 0.471, blue: 1.0))
                 }
                 .padding(.leading, 12)
             }
@@ -763,19 +918,6 @@ struct AboutYouSettingsView: View {
 
                 Group {
                     switch field {
-                    case "age":
-                        DatePicker(
-                            "",
-                            selection: birthdayBinding,
-                            in: ...Calendar.current.date(byAdding: .year, value: -13, to: Date())!,
-                            displayedComponents: .date
-                        )
-                        .datePickerStyle(.wheel)
-                        .labelsHidden()
-                        .colorScheme(.dark)
-                        .frame(height: 120)
-                        .clipped()
-
                     case "lifestyle":
                         VStack(spacing: 8) {
                             let lifestyleOptions: [(String, String)] = [
@@ -848,7 +990,16 @@ struct AboutYouSettingsView: View {
                                 ("none", "None")
                             ], id: \.0) { id, title in
                                 Button {
+                                    let oldCalendarChoice = answers.calendar
                                     answers.calendar = id
+                                    if id == "none" {
+                                        previousCalendarChoice = oldCalendarChoice
+                                        withAnimation(.spring(response: 0.35, dampingFraction: 0.8)) {
+                                            showCalendarNudge = true
+                                        }
+                                    } else {
+                                        showCalendarNudge = false
+                                    }
                                     // Trigger consent for the chosen provider. Apple uses
                                     // EventKit; Google/Outlook read their web APIs directly,
                                     // so they work even when the account isn't synced into
@@ -859,15 +1010,24 @@ struct AboutYouSettingsView: View {
                                         if status == .denied {
                                             showCalendarDeniedAlert = true
                                         } else if status != .authorized {
-                                            Task { await CalendarManager.shared.requestAccess() }
+                                            Task {
+                                                await CalendarManager.shared.requestAccess()
+                                                calendarConnectionRevision += 1
+                                            }
                                         }
                                     case "google":
                                         if !GoogleCalendarService.shared.isConnected() {
-                                            Task { await GoogleCalendarService.shared.connect() }
+                                            Task {
+                                                await GoogleCalendarService.shared.connect()
+                                                calendarConnectionRevision += 1
+                                            }
                                         }
                                     case "outlook":
                                         if !MicrosoftCalendarService.shared.isConnected() {
-                                            Task { await MicrosoftCalendarService.shared.connect() }
+                                            Task {
+                                                await MicrosoftCalendarService.shared.connect()
+                                                calendarConnectionRevision += 1
+                                            }
                                         }
                                     default:
                                         break
@@ -919,23 +1079,24 @@ struct AboutYouSettingsView: View {
                                 ("walk",    "figure.walk", "Walk"),
                                 ("bike",    "bicycle",     "Bike")
                             ], id: \.0) { mode, icon, title in
+                                let isSelected = answers.commuteMode == mode
                                 Button {
                                     answers.commuteMode = mode
                                 } label: {
                                     HStack {
                                         Image(systemName: icon)
                                             .font(.system(size: 14))
-                                            .foregroundColor(answers.commuteMode == mode
+                                            .foregroundColor(isSelected
                                                 ? Color(red: 0.627, green: 0.471, blue: 1.0)
                                                 : Color.white.opacity(0.45))
                                             .frame(width: 24)
                                         Text(title)
                                             .font(.custom("DM Sans", size: 14))
-                                            .foregroundColor(answers.commuteMode == mode
+                                            .foregroundColor(isSelected
                                                 ? Color.white.opacity(0.95)
                                                 : Color.white.opacity(0.7))
                                         Spacer()
-                                        if answers.commuteMode == mode {
+                                        if isSelected {
                                             Image(systemName: "checkmark")
                                                 .font(.system(size: 12, weight: .medium))
                                                 .foregroundColor(Color(red: 0.627, green: 0.471, blue: 1.0))
@@ -949,7 +1110,7 @@ struct AboutYouSettingsView: View {
                                             .overlay(
                                                 RoundedRectangle(cornerRadius: 10)
                                                     .stroke(
-                                                        answers.commuteMode == mode
+                                                        isSelected
                                                         ? Color(red: 0.627, green: 0.471, blue: 1.0).opacity(0.55)
                                                         : Color.white.opacity(0.06),
                                                         lineWidth: 1
@@ -970,6 +1131,31 @@ struct AboutYouSettingsView: View {
                 .transition(.opacity.combined(with: .offset(y: -6)))
             }
         }
+        .background(
+            RoundedRectangle(cornerRadius: 14)
+                .fill(
+                    isEditing
+                    ? Color(red: 0.627, green: 0.471, blue: 1.0).opacity(0.11)
+                    : Color.white.opacity(0.04)
+                )
+        )
+        .overlay(
+            RoundedRectangle(cornerRadius: 14)
+                .stroke(
+                    isEditing
+                    ? Color(red: 0.627, green: 0.471, blue: 1.0).opacity(0.55)
+                    : Color.white.opacity(0.08),
+                    lineWidth: 1
+                )
+        )
+        .shadow(
+            color: isEditing ? Color(red: 0.50, green: 0.30, blue: 0.95).opacity(0.18) : .clear,
+            radius: 14,
+            y: 5
+        )
+        .opacity(isDimmed ? 0.5 : 1)
+        .scaleEffect(isEditing ? 1 : (isDimmed ? 0.985 : 1))
+        .animation(.spring(response: 0.38, dampingFraction: 0.82), value: editingField)
     }
 }
 
@@ -1120,6 +1306,9 @@ struct SleepAndWearablesSettingsView: View {
                                         if ouraConnected {
                                             conflictingWearableName = "Oura Ring"
                                             showOneWearableAlert = true
+                                        } else if healthKitConnected {
+                                            conflictingWearableName = "Apple Watch"
+                                            showOneWearableAlert = true
                                         } else {
                                             Task {
                                                 try? await WhoopManager.shared.connect()
@@ -1141,6 +1330,9 @@ struct SleepAndWearablesSettingsView: View {
                                         if whoopConnected {
                                             conflictingWearableName = "WHOOP"
                                             showOneWearableAlert = true
+                                        } else if healthKitConnected {
+                                            conflictingWearableName = "Apple Watch"
+                                            showOneWearableAlert = true
                                         } else {
                                             Task {
                                                 try? await OuraManager.shared.connect()
@@ -1153,9 +1345,10 @@ struct SleepAndWearablesSettingsView: View {
                                 )
 
                                 // Apple Watch is a measured-sleep data source, not a
-                                // recommendation source, so it has no one-wearable
-                                // exclusivity with WHOOP/Oura above — it now lives in
-                                // the same "Wearables" section instead of its own.
+                                // recommendation source, but it is still subject to the
+                                // one-wearable-at-a-time rule: connecting it requires
+                                // WHOOP/Oura to be disconnected first (and vice versa),
+                                // enforced in its Connect button below.
                                 HStack(spacing: 12) {
                                     Image(systemName: "applewatch")
                                         .font(.system(size: 20))
@@ -1186,7 +1379,15 @@ struct SleepAndWearablesSettingsView: View {
                                         }
                                     } else {
                                         Button {
-                                            Task { await HealthKitManager.shared.connect() }
+                                            if whoopConnected {
+                                                conflictingWearableName = "WHOOP"
+                                                showOneWearableAlert = true
+                                            } else if ouraConnected {
+                                                conflictingWearableName = "Oura Ring"
+                                                showOneWearableAlert = true
+                                            } else {
+                                                Task { await HealthKitManager.shared.connect() }
+                                            }
                                         } label: {
                                             Text("Connect")
                                                 .font(.custom("DM Sans", size: 13))

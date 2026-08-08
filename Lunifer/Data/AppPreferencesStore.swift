@@ -15,6 +15,7 @@ final class AppPreferencesStore {
         static let luniferEnabled = "luniferEnabled"
         static let overrideActive = "overrideActive"
         static let overrideTimestamp = "overrideTimestamp"
+        static let calculatedAlarmTimestamp = "calculatedAlarmTimestamp"
 
         // Added alarms (stored as a JSON-encoded [AddedAlarm] array)
         static let addedAlarms = "addedAlarms"

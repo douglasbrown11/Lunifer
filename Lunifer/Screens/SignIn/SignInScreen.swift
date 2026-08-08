@@ -140,6 +140,9 @@ struct LuniferSignin: View {
     private var showOrDivider: Bool {
         showEmailSection && (showAppleButton || showGoogleButton || showOutlookButton)
     }
+    private var shouldShowCalendarEmailGuidance: Bool {
+        calendarChoice == "google" || calendarChoice == "outlook"
+    }
 
     // Backend owns auth state and all action logic
     @StateObject private var backend = SigninBackend()
@@ -326,6 +329,16 @@ struct LuniferSignin: View {
                         }
                         .disabled(backend.loading)
                         .padding(.bottom, 12)
+                    }
+
+                    if shouldShowCalendarEmailGuidance {
+                        Text("Sign in with the email associated with your primary calendar")
+                            .font(.custom("DM Sans", size: 13))
+                            .foregroundColor(Color.white.opacity(0.55))
+                            .multilineTextAlignment(.center)
+                            .fixedSize(horizontal: false, vertical: true)
+                            .padding(.horizontal, 12)
+                            .padding(.bottom, 12)
                     }
 
                     // ── Google button ────────────────────────
