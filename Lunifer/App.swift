@@ -22,6 +22,7 @@ import FeedbackPulse
 // managed flow because Firebase rejects a self-obtained Microsoft id_token.
 final class AppDelegate: NSObject, UIApplicationDelegate {
     func application(_ application: UIApplication, didFinishLaunchingWithOptions launchOptions: [UIApplication.LaunchOptionsKey: Any]? = nil) -> Bool {
+        FirebaseApp.configure()
         application.registerForRemoteNotifications()
         return true
     }
@@ -72,8 +73,6 @@ struct LuniferApp: App {
     @StateObject private var calendarManager = CalendarManager()
 
     init() {
-        FirebaseApp.configure()
-
         // Configure Feedback Pulse (powers the Submit Feedback screen). The fp_
         // key is a public client ingestion key and is safe to embed. Debug builds
         // report into the development environment so test feedback stays separate
@@ -125,6 +124,13 @@ struct LuniferApp: App {
                 // ".environmentObject" makes calendarManager available to every
                 // screen in the app without needing to pass it manually each time.
                 .environmentObject(calendarManager)
+                .task {
+                    // Google Sign-In persists authorization securely, but its
+                    // currentUser exists only after the SDK restores that saved
+                    // session following a cold launch. Restore it silently before
+                    // calendar-dependent screens and alarm refreshes use it.
+                    await GoogleCalendarService.shared.restorePreviousSession()
+                }
                 // ".onOpenURL" handles the URL callback from Google Sign In.
                 // When the user finishes signing in via the browser, iOS sends
                 // the app a URL — this passes it to Google Sign In to complete the flow.

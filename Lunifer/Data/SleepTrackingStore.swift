@@ -12,6 +12,13 @@ final class SleepTrackingStore {
     private let historicalWeekendKey  = "lunifer_avg_sleep_onset_weekend"
     private let sleepLogKey = "lunifer_sleep_log"
     private let lastRetroactiveAnalysisKey = "lunifer_last_retroactive_analysis"
+    // Throttle timestamp for retroactive analysis, kept separate from the coverage
+    // checkpoint (lastRetroactiveAnalysisKey) so the checkpoint can be pinned back to
+    // a still-asleep onset without causing constant re-runs.
+    private let lastRetroactiveRunKey = "lunifer_last_retroactive_run"
+    // Dedupe for the morning phone-pickup fast path — the "yyyy-MM-dd" of the last day
+    // a wake was recorded that way, so it records at most one night per morning.
+    private let morningWakeRecordedDayKey = "lunifer_morning_wake_recorded_day"
 
     func recordInteraction(at date: Date) {
         defaults.set(date.timeIntervalSince1970, forKey: lastInteractionKey)
@@ -79,6 +86,28 @@ final class SleepTrackingStore {
         defaults.set(date.timeIntervalSince1970, forKey: lastRetroactiveAnalysisKey)
     }
 
+    // ── Retroactive-analysis throttle (separate from the coverage checkpoint) ──
+
+    func lastRetroactiveRunDate() -> Date? {
+        let timestamp = defaults.double(forKey: lastRetroactiveRunKey)
+        guard timestamp > 0 else { return nil }
+        return Date(timeIntervalSince1970: timestamp)
+    }
+
+    func setLastRetroactiveRunDate(_ date: Date) {
+        defaults.set(date.timeIntervalSince1970, forKey: lastRetroactiveRunKey)
+    }
+
+    // ── Morning phone-pickup wake dedupe ──
+
+    func lastMorningWakeRecordedDay() -> String? {
+        defaults.string(forKey: morningWakeRecordedDayKey)
+    }
+
+    func setLastMorningWakeRecordedDay(_ dayKey: String) {
+        defaults.set(dayKey, forKey: morningWakeRecordedDayKey)
+    }
+
     func appendSleepEvent(type: String, at date: Date) {
         var log = defaults.array(forKey: sleepLogKey) as? [[String: Any]] ?? []
         log.append([
@@ -100,7 +129,9 @@ final class SleepTrackingStore {
             historicalWeekdayKey,
             historicalWeekendKey,
             sleepLogKey,
-            lastRetroactiveAnalysisKey
+            lastRetroactiveAnalysisKey,
+            lastRetroactiveRunKey,
+            morningWakeRecordedDayKey
         ] {
             defaults.removeObject(forKey: key)
         }

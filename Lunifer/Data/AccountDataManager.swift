@@ -19,6 +19,7 @@ final class AccountDataManager {
         MicrosoftCalendarService.clearStoredData()
         AppPreferencesStore.shared.resetBatteryMonitoringState()
         AppPreferencesStore.shared.resetAlarmOverride()
+        UserDefaults.standard.removeObject(forKey: AppPreferencesStore.Keys.calculatedAlarmTimestamp)
         AppPreferencesStore.shared.clearRestDayAlarmOptIn()
         // Clear added-alarm storage so orphaned alarm cards don't appear on the next login
         UserDefaults.standard.removeObject(forKey: AppPreferencesStore.Keys.addedAlarms)

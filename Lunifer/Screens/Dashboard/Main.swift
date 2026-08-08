@@ -86,6 +86,7 @@ struct LuniferMain: View {
     @AppStorage("luniferEnabled") private var luniferEnabled: Bool = true
     @AppStorage("selectedAlarmSound") private var selectedAlarmSound: String = "DeafultAlarm.wav"
     @AppStorage("mainAlarmSnoozeMinutes") private var mainAlarmSnoozeMinutes: Int = 5
+    @AppStorage(AppPreferencesStore.Keys.calculatedAlarmTimestamp) private var calculatedAlarmTimestamp: Double = 0
     /// One-time coach-mark walkthrough shown on the first post-survey dashboard load.
     @ObservedObject private var walkthrough = WalkthroughController.shared
     @AppStorage(AppPreferencesStore.Keys.hasSeenWalkthrough) private var hasSeenWalkthrough: Bool = false
@@ -204,17 +205,27 @@ struct LuniferMain: View {
 
     // ── Resolved alarm date ───────────────────────────────────
     // Single source of truth for tomorrow's Lunifer alarm time.
-    // Initialised synchronously to an 8 AM default, then replaced
-    // in .task with the result of the 4-step fallback chain:
+    // Initialised synchronously from the last calculation when it still targets
+    // tomorrow, then refreshed in .task with the 4-step fallback chain:
     //   1. First calendar event tomorrow
     //   2. Historical average first-event time for this weekday
     //   3. Historical average wake time for this weekday
     //   4. 8:00 AM hard fallback
     @State private var resolvedAlarmDate: Date = {
-        var comps = Calendar.current.dateComponents([.year, .month, .day], from: Date())
+        let calendar = Calendar.current
+        let tomorrow = calendar.date(byAdding: .day, value: 1, to: calendar.startOfDay(for: Date())) ?? Date()
+        let savedTimestamp = UserDefaults.standard.double(forKey: AppPreferencesStore.Keys.calculatedAlarmTimestamp)
+        if savedTimestamp > 0 {
+            let savedDate = Date(timeIntervalSince1970: savedTimestamp)
+            if calendar.isDate(savedDate, inSameDayAs: tomorrow) {
+                return savedDate
+            }
+        }
+        var comps = calendar.dateComponents([.year, .month, .day], from: tomorrow)
         comps.hour = 8; comps.minute = 0; comps.second = 0
-        return Calendar.current.date(from: comps) ?? Date()
+        return calendar.date(from: comps) ?? tomorrow
     }()
+    @State private var isAlarmCalculating = true
 
     /// The Lunifer-calculated alarm date (no manual override applied).
     /// All downstream logic that needs a raw schedule reference uses this.
@@ -260,13 +271,11 @@ struct LuniferMain: View {
         return count
     }
 
-    /// Rest screen is active once today's alarm has passed (noon minimum)
-    /// and at least one no-alarm day follows.
+    /// The dashboard represents tomorrow's schedule, so switch to the rest page
+    /// immediately whenever tomorrow is no longer a selected wake day.
     private var isRestPeriodActive: Bool {
         guard luniferEnabled else { return false }
-        guard consecutiveRestDaysFromTomorrow > 0 else { return false }
-        let noon = Calendar.current.date(bySettingHour: 12, minute: 0, second: 0, of: Date())!
-        return Date() >= max(calculatedAlarmDate, noon)
+        return consecutiveRestDaysFromTomorrow > 0
     }
 
     /// True when tomorrow is not in the user's scheduled wake days.
@@ -414,6 +423,9 @@ struct LuniferMain: View {
                 withAnimation { currentPage = 0 }
             }
         }
+        .onChange(of: answers.wakeDays) { _, _ in
+            Task { await refreshAlarmAfterWakeDayChange() }
+        }
         .sheet(isPresented: $showSettings) {
             LuniferSettings(answers: $answers)
         }
@@ -478,9 +490,11 @@ struct LuniferMain: View {
             let tomorrow = Calendar.current.date(byAdding: .day, value: 1, to: Calendar.current.startOfDay(for: Date())) ?? Date()
             if let refreshed = await LuniferAlarm.shared.refreshTomorrowAlarm(answers: answers) {
                 resolvedAlarmDate = refreshed
+                calculatedAlarmTimestamp = refreshed.timeIntervalSince1970
             } else if overrideActive {
                 resolvedAlarmDate = await LuniferAlarm.shared.resolveAlarmDate(answers: answers, targetDay: tomorrow)
             }
+            isAlarmCalculating = false
 
             await SleepTracker.shared.startTracking()
             // Pull Apple Watch sleep from HealthKit (authoritative nights) if connected.
@@ -565,6 +579,10 @@ struct LuniferMain: View {
             checkAlarmAuthorization()
             checkMotionAuthorization()
             MorningRoutineEstimator.shared.refresh(answers: answers)
+            // A morning phone pickup near the alarm is a strong wake signal — try to
+            // finalize last night immediately so Sleep Insights updates on foreground.
+            // Independent of the alarm enable/override state, so it runs before the guard.
+            Task { await SleepTracker.shared.confirmWakeFromMorningPickup() }
             guard luniferEnabled && !overrideActive else { return }
             Task { await LuniferAlarm.shared.checkAlarmAgainstCalendar() }
         }
@@ -590,6 +608,26 @@ struct LuniferMain: View {
         } message: {
             Text("Lunifer needs Motion & Fitness access to accurately track your sleep. Please tap Open Settings and allow it under Motion & Fitness.")
         }
+    }
+
+    /// Reconciles both the dashboard and AlarmKit as soon as Wake Days changes.
+    /// This runs while Settings is still presented, so dismissing it reveals the
+    /// correct rest/alarm page with no stale scheduled alarm behind it.
+    @MainActor
+    private func refreshAlarmAfterWakeDayChange() async {
+        isAlarmCalculating = !isTomorrowRestDay
+        if let refreshed = await LuniferAlarm.shared.refreshTomorrowAlarm(answers: answers) {
+            resolvedAlarmDate = refreshed
+            calculatedAlarmTimestamp = refreshed.timeIntervalSince1970
+        } else if isTomorrowRestDay {
+            calculatedAlarmTimestamp = 0
+            // Removing the day also ends any manual override for that alarm;
+            // otherwise re-selecting the day could resurrect a cancelled time.
+            overrideActive = false
+            overrideTimestamp = 0
+            CommuteManager.shared.stopPolling()
+        }
+        isAlarmCalculating = false
     }
 
     private func checkAlarmAuthorization() {
@@ -723,44 +761,57 @@ struct LuniferMain: View {
                             .frame(height: 1)
 
                         // ── Tappable alarm time row ───────────────
-                        ZStack {
-                            HStack(alignment: .lastTextBaseline, spacing: 6) {
-                                Text(wakeUpTime)
-                                    .font(.custom("Poppins", size: 63))
-                                    .foregroundColor(Color.white.opacity(0.95))
-                                    .monospacedDigit()
-                                    .minimumScaleFactor(0.5)
-                                    .lineLimit(1)
-                                Text(wakeUpPeriod)
-                                    .font(.custom("Poppins", size: 60))
-                                    .foregroundColor(Color.white.opacity(0.95))
-                            }
-                            .frame(maxWidth: .infinity, alignment: .center)
+                        Group {
+                            if isAlarmCalculating && !overrideActive {
+                                HStack(spacing: 10) {
+                                    ProgressView()
+                                        .tint(Color.white.opacity(0.75))
+                                    Text("Calculating")
+                                        .font(.custom("DM Sans", size: 15))
+                                        .foregroundColor(Color.white.opacity(0.7))
+                                }
+                                .frame(maxWidth: .infinity, minHeight: 76)
+                            } else {
+                                ZStack {
+                                    HStack(alignment: .lastTextBaseline, spacing: 6) {
+                                        Text(wakeUpTime)
+                                            .font(.custom("Poppins", size: 63))
+                                            .foregroundColor(Color.white.opacity(0.95))
+                                            .monospacedDigit()
+                                            .minimumScaleFactor(0.5)
+                                            .lineLimit(1)
+                                        Text(wakeUpPeriod)
+                                            .font(.custom("Poppins", size: 60))
+                                            .foregroundColor(Color.white.opacity(0.95))
+                                    }
+                                    .frame(maxWidth: .infinity, alignment: .center)
 
-                            HStack {
-                                Spacer()
-                                Image(systemName: "chevron.right")
-                                    .font(.system(size: 14, weight: .light))
-                                    .foregroundColor(Color.white.opacity(0.95))
-                                    .rotationEffect(.degrees(alarmExpanded ? 90 : 0))
-                                    .animation(.easeInOut(duration: 0.3), value: alarmExpanded)
-                                    .padding(.trailing, 24)
+                                    HStack {
+                                        Spacer()
+                                        Image(systemName: "chevron.right")
+                                            .font(.system(size: 14, weight: .light))
+                                            .foregroundColor(Color.white.opacity(0.95))
+                                            .rotationEffect(.degrees(alarmExpanded ? 90 : 0))
+                                            .animation(.easeInOut(duration: 0.3), value: alarmExpanded)
+                                            .padding(.trailing, 24)
+                                    }
+                                }
+                                .contentShape(Rectangle())
+                                .onTapGesture {
+                                    withAnimation(.easeInOut(duration: 0.3)) {
+                                        if !alarmExpanded {
+                                            // Seed the staging picker from the current committed time
+                                            // so the user starts from where the alarm actually is.
+                                            pendingOverrideTime = overrideActive ? overrideTime : calculatedAlarmDate
+                                        }
+                                        alarmExpanded.toggle()
+                                    }
+                                }
+                                .walkthroughTarget(.alarmTime)
                             }
                         }
                         .frame(maxWidth: .infinity)
                         .padding(.vertical, 8)
-                        .contentShape(Rectangle())
-                        .onTapGesture {
-                            withAnimation(.easeInOut(duration: 0.3)) {
-                                if !alarmExpanded {
-                                    // Seed the staging picker from the current committed time
-                                    // so the user starts from where the alarm actually is.
-                                    pendingOverrideTime = overrideActive ? overrideTime : calculatedAlarmDate
-                                }
-                                alarmExpanded.toggle()
-                            }
-                        }
-                        .walkthroughTarget(.alarmTime)
 
                         // ── Divider below ─────────────────────────
                         Rectangle()
@@ -768,7 +819,7 @@ struct LuniferMain: View {
                             .frame(height: 1)
 
                         // ── Bedtime → wake row ────────────────────
-                        if !alarmExpanded {
+                        if !alarmExpanded && (!isAlarmCalculating || overrideActive) {
                             HStack(spacing: 6) {
                                 Text(bedtimeString)
                                     .font(.custom("DM Sans", size: 12))
