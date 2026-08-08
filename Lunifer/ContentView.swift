@@ -50,12 +50,24 @@ struct ContentView: View {
             if authStateHandle == nil {
                 authStateHandle = Auth.auth().addStateDidChangeListener { _, user in
                     Task { @MainActor in
-                        if user != nil, surveyCompleted, let saved = SurveyAnswers.loadFromDefaults() {
+                        // An explicit sign-in owns its own routing through
+                        // handleSignedIn. In particular, a newly-created account
+                        // can arrive while this device still has the previous
+                        // account's completed-survey flag and cached answers.
+                        // Do not let the auth listener briefly route that new
+                        // account through the returning-user splash.
+                        if user != nil,
+                           screen != .auth,
+                           surveyCompleted,
+                           let saved = SurveyAnswers.loadFromDefaults() {
                             await SilentPushManager.shared.syncStoredToken()
                             surveyAnswers = saved
                             screen = .splash
                             await AdaptiveAlarmStore.shared.loadFromFirestore()
-                        } else if user == nil, screen != .intro {
+                        } else if user == nil,
+                                  screen != .intro,
+                                  screen != .calendarChoice,
+                                  screen != .auth {
                             screen = .intro
                         }
                     }
@@ -76,7 +88,12 @@ struct ContentView: View {
             }
         }
         .onChange(of: surveyCompleted) { _, completed in
-            if !completed { screen = .intro }
+            // A new account intentionally clears a stale completion flag before
+            // entering its survey. Only treat that reset as a sign-out when
+            // Firebase no longer has an authenticated user.
+            if !completed, Auth.auth().currentUser == nil {
+                screen = .intro
+            }
         }
         .task {
             await LuniferAlarm.shared.startMonitoring()

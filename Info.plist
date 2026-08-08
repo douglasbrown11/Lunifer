@@ -52,6 +52,8 @@
 	<string>$(CURRENT_PROJECT_VERSION)</string>
 	<key>GIDClientID</key>
 	<string>7167900619-kt1j2i37t8cvkuo9afdnvhro643f05th.apps.googleusercontent.com</string>
+	<key>FirebaseAppDelegateProxyEnabled</key>
+	<false/>
 	<key>ITSAppUsesNonExemptEncryption</key>
 	<false/>
 	<key>LSRequiresIPhoneOS</key>
@@ -80,6 +82,8 @@
 		<string>DMSans-Medium.ttf</string>
 		<string>LibreFranklin-VariableFont_wght.ttf</string>
 		<string>LibreFranklin-Italic-VariableFont_wght.ttf</string>
+		<string>Poppins-Regular.ttf</string>
+		<string>Poppins-Medium.ttf</string>
 	</array>
 	<key>UIApplicationSceneManifest</key>
 	<dict>

@@ -640,8 +640,7 @@ class LuniferAlarm: ObservableObject {
     func refreshTomorrowAlarm(answers: SurveyAnswers) async -> Date? {
         let defaults = UserDefaults.standard
         let luniferEnabled = defaults.object(forKey: AppPreferencesStore.Keys.luniferEnabled) as? Bool ?? true
-        guard luniferEnabled,
-              !defaults.bool(forKey: AppPreferencesStore.Keys.overrideActive) else { return nil }
+        guard luniferEnabled else { return nil }
 
         let calendar = Calendar.current
         if let pending = AppPreferencesStore.shared.pendingRestDayAlarmDate(), calendar.isDateInToday(pending) {
@@ -654,8 +653,14 @@ class LuniferAlarm: ObservableObject {
            !AppPreferencesStore.shared.hasRestDayAlarmOptIn(for: tomorrow) {
             AdaptiveAlarmStore.shared.clearPendingDecision()
             await cancelAlarm()
+            WakeNotification.shared.cancel()
             return nil
         }
+
+        // A manual override applies only while tomorrow remains a selected wake
+        // day. Check the wake-day cancellation above before respecting it so a
+        // settings change cannot leave an overridden AlarmKit alarm registered.
+        guard !defaults.bool(forKey: AppPreferencesStore.Keys.overrideActive) else { return nil }
 
         let baseline = await resolveBaselineAlarmDate(answers: answers, targetDay: tomorrow)
         let finalAlarm = decideAlarm(from: baseline, answers: answers)

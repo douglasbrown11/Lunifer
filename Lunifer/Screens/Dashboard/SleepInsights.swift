@@ -243,10 +243,7 @@ struct SleepInsights: View {
                 if let selectedPoint {
                     Spacer().frame(height: 14)
 
-                    SleepInsightDetailCard(
-                        point: selectedPoint,
-                        recommendedHours: recommendedHours
-                    )
+                    SleepInsightDetailCard(point: selectedPoint)
                     .padding(.horizontal, 60)
                 }
 
@@ -530,27 +527,6 @@ private struct SleepHistoryChartPoint: Identifiable, Equatable {
 
 private struct SleepInsightDetailCard: View {
     let point: SleepHistoryChartPoint
-    let recommendedHours: Double
-
-    private var deltaHours: Double {
-        point.durationHours - recommendedHours
-    }
-
-    private var statusText: String {
-        if abs(deltaHours) < 0.1 {
-            return "On target"
-        }
-
-        return deltaHours > 0 ? "Surplus" : "Debt"
-    }
-
-    private var statusColor: Color {
-        if deltaHours >= -0.1 {
-            return Color(red: 0.627, green: 0.471, blue: 1.0)
-        }
-
-        return Color(red: 1.0, green: 0.56, blue: 0.56)
-    }
 
     var body: some View {
         VStack(alignment: .leading, spacing: 14) {
@@ -562,21 +538,9 @@ private struct SleepInsightDetailCard: View {
                         .foregroundColor(Color.white.opacity(0.35))
 
                     Text(point.title)
-                        .font(.custom("Poppins", size: 15).weight(.medium))
+                        .font(.custom("Poppins-Medium", size: 15))
                         .foregroundColor(Color.white.opacity(0.82))
                 }
-
-                Spacer()
-
-                Text(statusText)
-                    .font(.custom("DM Sans", size: 11).weight(.medium))
-                    .foregroundColor(statusColor.opacity(0.95))
-                    .padding(.horizontal, 10)
-                    .padding(.vertical, 5)
-                    .background(
-                        Capsule()
-                            .fill(statusColor.opacity(0.12))
-                    )
             }
 
             HStack(alignment: .lastTextBaseline, spacing: 8) {

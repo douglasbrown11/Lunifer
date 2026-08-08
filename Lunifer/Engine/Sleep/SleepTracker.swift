@@ -78,6 +78,12 @@ final class SleepTracker: ObservableObject {
         // Run retroactive analysis for the overnight period we missed
         await runRetroactiveAnalysis()
 
+        // A deliberate phone pickup in the morning near the alarm is a near-certain
+        // "the user is awake now" signal. Finalize last night immediately so Sleep
+        // Insights updates the moment the app is opened, rather than waiting for the
+        // passive state machine to confirm a wake (which is slow right after waking).
+        await confirmWakeFromMorningPickup()
+
         // Start the foreground prediction timer
         predictionTimer = Timer.scheduledTimer(
             withTimeInterval: predictionInterval,
@@ -190,8 +196,12 @@ final class SleepTracker: ObservableObject {
             analysisStart = now.addingTimeInterval(-12 * 3600)
         }
 
-        // Don't re-analyze if we ran very recently (< 10 minutes ago)
-        if now.timeIntervalSince(analysisStart) < 10 * 60 { return }
+        // Throttle: don't re-run if the analysis actually ran within the last 10
+        // minutes. This uses a dedicated "last run" timestamp rather than the
+        // coverage checkpoint (analysisStart), so pinning the checkpoint back to a
+        // still-asleep onset below does not cause the analysis to fire every tick.
+        if let lastRun = trackingStore.lastRetroactiveRunDate(),
+           now.timeIntervalSince(lastRun) < 10 * 60 { return }
 
         print("🔍 Running retroactive sleep analysis from \(analysisStart.formatted()) to \(now.formatted())")
 
@@ -217,16 +227,30 @@ final class SleepTracker: ObservableObject {
             analysisTime = analysisTime.addingTimeInterval(stepInterval)
         }
 
-        // Process the retroactive predictions through the state machine
-        processRetroPredictions(retroPredictions)
+        // Process the retroactive predictions through the state machine. When it
+        // ends still-asleep (onset found, no wake yet), it returns that onset.
+        let pendingOnset = processRetroPredictions(retroPredictions)
 
-        // Mark this analysis as complete
-        trackingStore.setLastRetroactiveAnalysisDate(now)
+        // Record that the analysis ran (throttle), then advance the coverage
+        // checkpoint. If we're still asleep, keep the checkpoint at/just before the
+        // detected onset so the NEXT window still spans the full night and can
+        // complete the onset→wake cycle. Advancing to `now` here (the old behaviour)
+        // orphaned the onset, so the night was never recorded once the wake happened.
+        trackingStore.setLastRetroactiveRunDate(now)
+        if let pendingOnset {
+            trackingStore.setLastRetroactiveAnalysisDate(min(pendingOnset, now))
+        } else {
+            trackingStore.setLastRetroactiveAnalysisDate(now)
+        }
     }
 
-    /// Runs the sleep onset / wake state machine over a batch
-    /// of retroactive predictions.
-    private func processRetroPredictions(_ predictions: [(date: Date, prediction: SleepPrediction)]) {
+    /// Runs the sleep onset / wake state machine over a batch of retroactive
+    /// predictions. Returns the detected sleep onset when the batch ends
+    /// still-asleep (onset found but no confirmed wake yet), so the caller can hold
+    /// the coverage checkpoint before it; returns nil otherwise (complete cycle
+    /// recorded, or no onset found).
+    @discardableResult
+    private func processRetroPredictions(_ predictions: [(date: Date, prediction: SleepPrediction)]) -> Date? {
         var localConsecutiveAsleep = 0
         var localConsecutiveAwake = 0
         var sleepDetected = false
@@ -299,8 +323,181 @@ final class SleepTracker: ObservableObject {
                 estimatedSleepOnset = onset
                 isAsleep = true
                 print("🔍 Retroactive: Sleep onset at \(onset.formatted(date: .omitted, time: .shortened)), still asleep")
+                // Surface the pending onset so runRetroactiveAnalysis holds the
+                // coverage checkpoint at/before it (prevents orphaning the night).
+                return onset
             }
         }
+        return nil
+    }
+
+    // ─────────────────────────────────────────────────────────
+    // MARK: - Morning phone-pickup fast path
+    // ─────────────────────────────────────────────────────────
+    // The passive state machine can be slow to CONFIRM a wake: it needs a
+    // sustained awake signal, and pre-dawn time-of-day still scores as likely
+    // sleep, so a completed night can fail to land in Sleep Insights the moment
+    // the user gets up — especially when they wake before their alarm. A
+    // deliberate phone pickup in the morning near the alarm is a near-certain
+    // "awake now" signal, so this path treats the pickup as the wake and finalizes
+    // last night immediately. Only the WAKE is shortcut — the onset it pairs with
+    // still comes from the full prediction model (or its retroactive re-run, or the
+    // historical average as a last resort), so onset accuracy is unchanged.
+    //
+    // Guarded so a middle-of-the-night phone check can't be logged as a wake:
+    //   • Only near the scheduled alarm's clock time projected onto today
+    //     ([alarm − 2h, alarm + 3h]); with no alarm, only in a morning band.
+    //   • Only records a physically plausible 3–12h night.
+    //   • Records at most once per calendar day (dedupe).
+
+    /// Finalizes last night from a morning phone pickup. Safe to call on every app
+    /// open / foreground; it no-ops outside the morning window, without an onset, or
+    /// once it has already recorded a wake today.
+    func confirmWakeFromMorningPickup() async {
+        let now = Date()
+
+        // Dedupe — at most one morning-pickup wake per calendar day.
+        let dayKey = Self.dayKey(for: now)
+        if trackingStore.lastMorningWakeRecordedDay() == dayKey { return }
+
+        // Only in the morning, near the alarm.
+        guard isWithinMorningWakeWindow(now: now) else { return }
+
+        // Resolve last night's onset from the full model (with fallbacks).
+        guard let onset = await resolveOnsetForMorningWake(now: now) else { return }
+
+        let duration = now.timeIntervalSince(onset) / 3600.0
+        guard duration >= 3.0, duration <= 12.0 else { return }
+
+        // Update in-memory state and run the SAME tail the normal wake path uses.
+        estimatedSleepOnset    = onset
+        estimatedWakeTime      = now
+        isAsleep               = false
+        consecutiveAwakeCount  = wakeConsecutiveThreshold
+        consecutiveAsleepCount = 0
+
+        let cal = Calendar.current
+        let onsetHour = Double(cal.component(.hour, from: onset))
+            + Double(cal.component(.minute, from: onset)) / 60.0
+        featureCollector.updateHistoricalAverage(newOnsetHour: onsetHour, for: onset)
+
+        SleepHistoryManager.shared.recordNight(
+            date: now, duration: duration, onset: onset, wake: now
+        )
+        LuniferAlarm.shared.recordWokeBeforeAlarmIfNeeded(at: now)
+        if let answers = SurveyAnswers.loadFromDefaults() {
+            MorningRoutineEstimator.shared.handleWakeDetected(at: now, answers: answers)
+        }
+        logSleepEvent(type: "morning_pickup_wake", at: now)
+
+        trackingStore.setLastMorningWakeRecordedDay(dayKey)
+        print("☀️ Morning pickup wake recorded — onset \(onset.formatted(date: .omitted, time: .shortened)), \(String(format: "%.1f", duration))h")
+    }
+
+    /// True when `now` sits in the morning window where a phone pickup should count
+    /// as a wake. Preferred gate is proximity to the scheduled alarm's time-of-day
+    /// projected onto today ([alarm − 2h, alarm + 3h]) — projecting the clock time
+    /// means it still works after the scheduled alarm has rolled to tomorrow's date.
+    /// With no scheduled alarm it falls back to a plain morning band (3 AM–11 AM).
+    private func isWithinMorningWakeWindow(now: Date) -> Bool {
+        let cal = Calendar.current
+        if let alarm = LuniferAlarm.shared.scheduledWakeTime {
+            let h = cal.component(.hour, from: alarm)
+            let m = cal.component(.minute, from: alarm)
+            if let alarmToday = cal.date(bySettingHour: h, minute: m, second: 0, of: now) {
+                let start = alarmToday.addingTimeInterval(-2 * 3600)
+                let end   = alarmToday.addingTimeInterval(3 * 3600)
+                return now >= start && now <= end
+            }
+        }
+        let hour = cal.component(.hour, from: now)
+        return hour >= 3 && hour < 11
+    }
+
+    /// Resolves last night's sleep onset for the fast path, in priority order:
+    ///   1. The model's own `estimatedSleepOnset`, if fresh (< 14h old, before now).
+    ///   2. A retroactive re-run of the FULL prediction model over the last 14h.
+    ///   3. The stored historical average onset mapped onto last night.
+    /// Returns nil if none yields a plausible pre-`now` onset.
+    private func resolveOnsetForMorningWake(now: Date) async -> Date? {
+        // 1. Fresh model output.
+        if let onset = estimatedSleepOnset,
+           onset < now,
+           now.timeIntervalSince(onset) <= 14 * 3600 {
+            return onset
+        }
+
+        // 2. Full-model retroactive scan of the night (NOT a motion-only heuristic —
+        //    reconstructFeatures + model.predict is the same model used everywhere).
+        let windowStart = now.addingTimeInterval(-14 * 3600)
+        let motionHistory = await featureCollector.queryMotionHistory(from: windowStart, to: now)
+        if let onset = detectOnset(from: windowStart, to: now, motionHistory: motionHistory),
+           onset < now {
+            return onset
+        }
+
+        // 3. Historical average onset mapped onto last night.
+        if let onset = historicalAverageOnset(for: now), onset < now {
+            return onset
+        }
+        return nil
+    }
+
+    /// Steps the full prediction model across a window in 5-minute increments and
+    /// returns the first detected sleep onset (3 consecutive asleep predictions,
+    /// walked back to the likely start). Same model + threshold as the live and
+    /// retroactive paths — this is not a motion-only shortcut.
+    private func detectOnset(from start: Date, to end: Date, motionHistory: [MotionSample]) -> Date? {
+        var t = start
+        let step: TimeInterval = 5 * 60
+        var consecutiveAsleep = 0
+        while t <= end {
+            let features = featureCollector.reconstructFeatures(at: t, motionHistory: motionHistory)
+            if model.predict(features: features).isAsleep {
+                consecutiveAsleep += 1
+                if consecutiveAsleep >= consecutiveThreshold {
+                    let offset = Double(consecutiveThreshold - 1) * step
+                    return t.addingTimeInterval(-offset)
+                }
+            } else {
+                consecutiveAsleep = 0
+            }
+            t = t.addingTimeInterval(step)
+        }
+        return nil
+    }
+
+    /// Builds a concrete onset Date for last night from the stored rolling-average
+    /// onset hour (weekday/weekend). Evening onsets (hour ≥ 12) are placed on
+    /// yesterday; after-midnight onsets (hour < 12) on today, so the result lands
+    /// before a morning wake. Picks the bucket from the previous evening's weekday.
+    private func historicalAverageOnset(for now: Date) -> Date? {
+        let cal = Calendar.current
+        func build(_ avgHour: Double?) -> Date? {
+            guard let avgHour else { return nil }
+            let h = Int(avgHour)
+            let m = Int((avgHour - Double(h)) * 60)
+            let baseDay = h >= 12
+                ? (cal.date(byAdding: .day, value: -1, to: now) ?? now)
+                : now
+            return cal.date(bySettingHour: h, minute: m, second: 0, of: baseDay)
+        }
+        // Weekend sleep = the onset evening was Fri (6) or Sat (7).
+        let yesterday = cal.date(byAdding: .day, value: -1, to: now) ?? now
+        let wd = cal.component(.weekday, from: yesterday)
+        let preferWeekend = (wd == 6 || wd == 7)
+        let preferred = preferWeekend
+            ? featureCollector.historicalAvgSleepOnsetWeekend
+            : featureCollector.historicalAvgSleepOnsetWeekday
+        return build(preferred)
+            ?? build(featureCollector.historicalAvgSleepOnsetWeekday)
+            ?? build(featureCollector.historicalAvgSleepOnsetWeekend)
+    }
+
+    /// "yyyy-MM-dd" key for the morning-wake dedupe.
+    private static func dayKey(for date: Date) -> String {
+        let c = Calendar.current.dateComponents([.year, .month, .day], from: date)
+        return String(format: "%04d-%02d-%02d", c.year ?? 0, c.month ?? 0, c.day ?? 0)
     }
 
     // ─────────────────────────────────────────────────────────

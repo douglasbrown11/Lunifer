@@ -320,6 +320,8 @@ struct TimeScalePicker: View {
                             .font(.libreFranklin(size: 32))
                             .foregroundColor(Color.white.opacity(0.2))
                     }
+                    .frame(height: 120)
+                    .clipped()
                     // Nudge the wheel down so its top rows don't overlap the
                     // "HOURS" / "MINUTES" column headers above it.
                     .padding(.top, 10)
@@ -507,28 +509,6 @@ struct LuniferSurvey: View {
                         .transition(.opacity)
 
                     VStack(spacing: 0) {
-                        // Header row: icon + app name + timestamp
-                        HStack(spacing: 8) {
-                            ZStack {
-                                RoundedRectangle(cornerRadius: 7)
-                                    .fill(Color(red: 0.30, green: 0.20, blue: 0.55))
-                                    .frame(width: 28, height: 28)
-                                Image(systemName: "moon.stars.fill")
-                                    .foregroundColor(.white)
-                                    .font(.system(size: 13))
-                            }
-                            Text("Lunifer")
-                                .font(.system(size: 12, weight: .semibold))
-                                .foregroundColor(Color(.secondaryLabel))
-                            Spacer()
-                            Text("now")
-                                .font(.system(size: 12))
-                                .foregroundColor(Color(.secondaryLabel))
-                        }
-                        .padding(.horizontal, 16)
-                        .padding(.top, 14)
-                        .padding(.bottom, 10)
-
                         // Body
                         VStack(alignment: .leading, spacing: 4) {
                             Text("Are you sure you don't want to allow access to your calendar?")
@@ -544,6 +524,7 @@ struct LuniferSurvey: View {
                         }
                         .frame(maxWidth: .infinity, alignment: .leading)
                         .padding(.horizontal, 16)
+                        .padding(.top, 16)
                         .padding(.bottom, 16)
 
                         Divider()
