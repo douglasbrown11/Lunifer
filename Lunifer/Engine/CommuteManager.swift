@@ -2,6 +2,7 @@ import Foundation
 import Combine
 import BackgroundTasks
 import CoreLocation
+import MapKit
 
 // ─────────────────────────────────────────────────────────────
 // CommuteManager
@@ -310,32 +311,82 @@ final class CommuteManager: ObservableObject {
         }
     }
 
-    /// Requests a route from ORS and returns travel time in minutes, or nil on failure.
-    private static func routeMinutes(from origin: CLLocationCoordinate2D,
-                                     to destination: CLLocationCoordinate2D,
-                                     mode: String) async -> Int? {
+    /// Builds the ORS directions GET URL for a given mode and origin/destination.
+    private static func orsURL(mode: String,
+                               from origin: CLLocationCoordinate2D,
+                               to destination: CLLocationCoordinate2D) -> URL? {
         let profile = orsProfile(for: mode)
         let urlString = "https://api.openrouteservice.org/v2/directions/\(profile)"
             + "?api_key=\(orsAPIKey)"
             + "&start=\(origin.longitude),\(origin.latitude)"
             + "&end=\(destination.longitude),\(destination.latitude)"
+        return URL(string: urlString)
+    }
 
-        guard let url = URL(string: urlString) else { return nil }
+    /// A routed result: travel time in minutes plus the road-following polyline
+    /// geometry. The geometry is used to draw the commute map; callers that only
+    /// need the duration use `routeMinutes`.
+    struct RouteResult {
+        let minutes: Int
+        let coordinates: [CLLocationCoordinate2D]
+    }
 
+    /// Requests a route from ORS and returns BOTH the travel time and the full
+    /// GeoJSON geometry. The ORS response already contains the road-following
+    /// polyline under `features[0].geometry.coordinates` (as [lon, lat] pairs) —
+    /// the duration path historically read only `summary.duration` and discarded
+    /// the rest; this parses both.
+    static func fetchRoute(from origin: CLLocationCoordinate2D,
+                           to destination: CLLocationCoordinate2D,
+                           mode: String) async -> RouteResult? {
+        guard let url = orsURL(mode: mode, from: origin, to: destination) else { return nil }
         do {
             let (data, _) = try await URLSession.shared.data(from: url)
-            if let json = try JSONSerialization.jsonObject(with: data) as? [String: Any],
-               let features = json["features"] as? [[String: Any]],
-               let first = features.first,
-               let properties = first["properties"] as? [String: Any],
-               let summary = properties["summary"] as? [String: Any],
-               let duration = summary["duration"] as? Double {
-                return Int(duration / 60.0)
-            }
+            guard let json = try JSONSerialization.jsonObject(with: data) as? [String: Any],
+                  let features = json["features"] as? [[String: Any]],
+                  let first = features.first else { return nil }
+
+            guard let properties = first["properties"] as? [String: Any],
+                  let summary = properties["summary"] as? [String: Any],
+                  let duration = summary["duration"] as? Double else { return nil }
+
+            let coordinates: [CLLocationCoordinate2D] = {
+                guard let geometry = first["geometry"] as? [String: Any],
+                      let pairs = geometry["coordinates"] as? [[Double]] else { return [] }
+                return pairs.compactMap { pair in
+                    guard pair.count >= 2 else { return nil }
+                    return CLLocationCoordinate2D(latitude: pair[1], longitude: pair[0])
+                }
+            }()
+
+            return RouteResult(minutes: Int(duration / 60.0), coordinates: coordinates)
         } catch {
             print("🚗 ORS routing error: \(error.localizedDescription)")
+            return nil
         }
-        return nil
+    }
+
+    /// Requests a route from ORS and returns travel time in minutes, or nil on failure.
+    private static func routeMinutes(from origin: CLLocationCoordinate2D,
+                                     to destination: CLLocationCoordinate2D,
+                                     mode: String) async -> Int? {
+        await fetchRoute(from: origin, to: destination, mode: mode)?.minutes
+    }
+
+    /// Resolves the origin (live GPS fix) and the road-following route polyline to
+    /// the given destination address, for rendering the commute map on the
+    /// dashboard card. Returns nil when there is no GPS fix or the address can't be
+    /// geocoded. If ORS returns no geometry, falls back to a straight
+    /// origin → destination line so the map still shows a route.
+    func routeForSnapshot(destinationAddress: String, mode: String) async
+        -> (origin: CLLocationCoordinate2D, route: [CLLocationCoordinate2D])? {
+        guard let origin = LocationManager.shared.currentCoordinate else { return nil }
+        guard let destination = await Self.geocode(destinationAddress) else { return nil }
+        if let result = await Self.fetchRoute(from: origin, to: destination, mode: mode),
+           !result.coordinates.isEmpty {
+            return (origin, result.coordinates)
+        }
+        return (origin, [origin, destination])
     }
 
     // ── Internal — background ─────────────────────────────────
