@@ -1075,7 +1075,7 @@ struct AboutYouSettingsView: View {
                         VStack(spacing: 8) {
                             ForEach([
                                 ("drive",   "car.fill",    "Drive"),
-                                ("transit", "tram.fill",   "Transit"),
+                                ("transit", "train.side.front.car", "Transit"),
                                 ("walk",    "figure.walk", "Walk"),
                                 ("bike",    "bicycle",     "Bike")
                             ], id: \.0) { mode, icon, title in
@@ -1869,7 +1869,7 @@ struct CommuteTypeRequiredSheet: View {
 
     private let modes: [(id: String, icon: String, label: String)] = [
         ("drive",   "car.fill",    "Drive"),
-        ("transit", "tram.fill",   "Transit"),
+        ("transit", "train.side.front.car", "Transit"),
         ("walk",    "figure.walk", "Walk"),
         ("bike",    "bicycle",     "Bike")
     ]

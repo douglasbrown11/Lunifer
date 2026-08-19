@@ -1107,20 +1107,21 @@ struct LuniferSurvey: View {
                     .frame(maxWidth: .infinity, alignment: .center)
                     .padding(.bottom, 8)
 
-                Text("Lunifer will calculate your commute time automatically.")
+                Text("Lunifer will calculate and alert you about your commute when you add locations to your calendar events")
                     .font(.custom("DM Sans", size: 13))
                     .fontWeight(.light)
                     .foregroundColor(Color.white.opacity(0.4))
                     .multilineTextAlignment(.center)
+                    .lineSpacing(4)
                     .frame(maxWidth: .infinity, alignment: .center)
                     .padding(.bottom, 20)
-                    .padding(.horizontal, 40)
+                    .padding(.horizontal, 34)
 
                 // ── Transport mode icons ─────────────────────
                 HStack(spacing: 0) {
                     ForEach([
                         ("drive",   "car.fill"),
-                        ("transit", "tram.fill"),
+                        ("transit", "train.side.front.car"),
                         ("walk",    "figure.walk"),
                         ("bike",    "bicycle")
                     ], id: \.0) { mode, icon in
@@ -1149,6 +1150,14 @@ struct LuniferSurvey: View {
                 }
                 .padding(.horizontal, 40)
                 .padding(.bottom, 14)
+
+                // ── Live dashboard preview ───────────────────
+                // Shows what the commute card looks like once the user has
+                // locations on their calendar events. Uses a baked walking sample
+                // rendered through the same MKMapSnapshotter path as the real card.
+                CommutePreviewCard(mode: "walk")
+                    .padding(.horizontal, 40)
+                    .padding(.bottom, 6)
 
                 if answers.commuteMode.isEmpty {
                     Text("Select a commute type above to continue.")
@@ -1379,6 +1388,70 @@ struct LuniferSurvey: View {
         }
     }
     
+// ── MARK: Commute preview card ───────────────────────────────
+// The dashboard commute card as it appears once the user has locations on
+// their calendar events. Shown inside the survey's commute step so people see
+// the payoff during onboarding. The map is a baked sample route (there is no
+// real event yet) rendered through the same snapshotter as the live card; the
+// duration/leave-by are representative walking sample values. The selectable
+// commute mode above remains independent from this illustrative preview.
+
+private struct CommutePreviewCard: View {
+    let mode: String
+
+    private var modeIcon: String {
+        switch mode {
+        case "transit": return "train.side.front.car"
+        case "walk":    return "figure.walk"
+        case "bike":    return "bicycle"
+        default:        return "car.fill"
+        }
+    }
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 12) {
+            Text("COMMUTE")
+                .font(.custom("DM Sans", size: 9))
+                .kerning(2)
+                .foregroundColor(Color.white.opacity(0.3))
+
+            CommuteRouteMap(source: .sample, height: 150)
+
+            VStack(spacing: 8) {
+                HStack(alignment: .center, spacing: 8) {
+                    Image(systemName: modeIcon)
+                        .font(.system(size: 13, weight: .light))
+                        .foregroundColor(Color(red: 0.706, green: 0.588, blue: 0.902))
+                    (
+                        Text("\(CommuteRouteSample.durationMinutes) min")
+                            .font(.libreFranklin(size: 22))
+                            .foregroundColor(Color.white.opacity(0.85))
+                        + Text(" to \(CommuteRouteSample.destinationName)")
+                            .font(.libreFranklin(size: 22))
+                            .foregroundColor(Color.white.opacity(0.55))
+                    )
+                    .multilineTextAlignment(.center)
+                }
+                .frame(maxWidth: .infinity, alignment: .center)
+
+                Text("Leave by 7:38 AM")
+                    .font(.custom("DM Sans", size: 12))
+                    .foregroundColor(Color.white.opacity(0.4))
+                    .frame(maxWidth: .infinity, alignment: .center)
+            }
+        }
+        .padding(14)
+        .background(
+            RoundedRectangle(cornerRadius: 16)
+                .fill(Color.white.opacity(0.03))
+                .overlay(
+                    RoundedRectangle(cornerRadius: 16)
+                        .stroke(Color.white.opacity(0.08), lineWidth: 1)
+                )
+        )
+    }
+}
+
 // ── MARK: Preview ────────────────────────────────────────────
 
 #Preview {

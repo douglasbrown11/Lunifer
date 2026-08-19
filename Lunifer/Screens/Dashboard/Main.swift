@@ -745,9 +745,22 @@ struct LuniferMain: View {
                     Spacer()
                         .frame(height: alarmExpanded
                                ? max(0, geo.size.height * 0.08)
+                               : shouldShowCommuteCard
+                               ? max(0, geo.size.height * 0.16)
                                : max(0, geo.size.height / 2 - 72 - 85))
                         .animation(.easeInOut(duration: 0.3), value: alarmExpanded)
 
+                    // ── Commute takeover ──────────────────────
+                    // On a wake-day morning, between the alarm firing and the first
+                    // event starting, the commute card takes over the page: the
+                    // calculated-alarm header (TOMORROW'S ALARM, alarm time, bedtime →
+                    // wake row) and its dropdown are hidden and only the commute card
+                    // is shown here. Added alarms still render below it. Once
+                    // shouldShowCommuteCard is false again, the alarm header returns.
+                    if shouldShowCommuteCard {
+                        CommuteStatusCard(answers: answers, alarmDate: calculatedAlarmDate)
+                            .transition(.opacity)
+                    } else {
                     // ── Alarm header — never moves ────────────
                     VStack(spacing: 12) {
                         Text("TOMORROW'S ALARM")
@@ -1000,6 +1013,7 @@ struct LuniferMain: View {
                         }
                         .transition(.opacity.combined(with: .offset(y: -8)))
                     }
+                    } // end else — alarm header hidden while the commute card takes over
 
                     // ── Added Alarm cards ─────────────────────
                     // Each row is a Button that opens EditAddedAlarmSheet on tap.
@@ -1028,11 +1042,8 @@ struct LuniferMain: View {
                         .offset(y: luniferEnabled ? 0 : 8)
                     }
 
-                    // ── Commute card ──────────────────────────
-                    if shouldShowCommuteCard && !alarmExpanded {
-                        CommuteStatusCard(answers: answers, alarmDate: calculatedAlarmDate)
-                            .transition(.opacity)
-                    }
+                    // The commute card is no longer rendered here — when active it
+                    // takes over the alarm-header slot above (see "Commute takeover").
 
                     Spacer()
                 }
