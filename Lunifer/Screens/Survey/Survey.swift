@@ -765,7 +765,7 @@ struct LuniferSurvey: View {
             ]
 
             return VStack(alignment: .center, spacing: 0) {
-                Text("What days of the week should Lunifer to wake you up?")
+                Text("What days of the week should Lunifer wake you up?")
                     .font(.custom("Cormorant Garamond", size: 22))
                     .fixedSize(horizontal: false, vertical: true)
                     .multilineTextAlignment(.center)
