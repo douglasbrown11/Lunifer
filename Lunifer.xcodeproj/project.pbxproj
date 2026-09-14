@@ -60,12 +60,12 @@
 		};
 		A3CF238B2F61D1D400E6A310 /* LuniferTests */ = {
 			isa = PBXFileSystemSynchronizedRootGroup;
-			path = LuniferTests;
+			path = tests/LuniferTests;
 			sourceTree = "<group>";
 		};
 		A3CF23952F61D1D400E6A310 /* LuniferUITests */ = {
 			isa = PBXFileSystemSynchronizedRootGroup;
-			path = LuniferUITests;
+			path = tests/LuniferUITests;
 			sourceTree = "<group>";
 		};
 /* End PBXFileSystemSynchronizedRootGroup section */

@@ -88,20 +88,18 @@ final class LuniferNotificationDelegate: NSObject, UNUserNotificationCenterDeleg
                     // so a guard racing the schedule already sees the opt-in.
                     AppPreferencesStore.shared.setRestDayAlarmOptIn(for: finalAlarm)
 
-                    // Keep the wake reminder in sync with the adaptive alarm.
-                    await WakeNotification.shared.schedule(wakeDate: finalAlarm, answers: answers)
-
-                    await LuniferAlarm.shared.scheduleAlarm(
+                    guard await LuniferAlarm.shared.scheduleAlarm(
                         for: finalAlarm,
                         eventTitle: baseline.firstEvent?.title ?? "your first event",
                         routineMinutes: baseline.routineMinutes,
                         commuteMinutes: baseline.commuteMinutes
-                    )
+                    ) else { return }
+                    await WakeNotification.shared.schedule(wakeDate: finalAlarm, answers: answers)
                     wakeDate = finalAlarm
                 } else if let frozenWake {
                     // No saved answers — fall back to the pre-computed (non-adaptive) time.
                     AppPreferencesStore.shared.setRestDayAlarmOptIn(for: frozenWake)
-                    await LuniferAlarm.shared.scheduleAlarm(for: frozenWake)
+                    guard await LuniferAlarm.shared.scheduleAlarm(for: frozenWake) else { return }
                     wakeDate = frozenWake
                 } else {
                     print("⚠️ Rest-day wake action: no answers and missing wakeTimestamp")
