@@ -44,6 +44,7 @@ class LuniferAlarm: ObservableObject {
 
     static let shared = LuniferAlarm()
     private let manager = AlarmManager.shared
+    private var alarmMutation: Task<Bool, Never>?
 
     private init() {
         loadAddedAlarmIDs()
@@ -68,7 +69,12 @@ class LuniferAlarm: ObservableObject {
 
     /// True when the user has explicitly denied alarm permission.
     /// Used by the dashboard to drive the "must allow" alert loop.
-    var authorizationDenied: Bool { manager.authorizationState == .denied }
+    var authorizationDenied: Bool {
+        #if DEBUG
+        if UITestSupport.alarmPermissionDenied { return true }
+        #endif
+        return manager.authorizationState == .denied
+    }
 
     // ── Sound helper ──────────────────────────────────────────
     // Reads the user's sound picker selection from UserDefaults and
@@ -108,6 +114,12 @@ class LuniferAlarm: ObservableObject {
 
     func requestAuthorization() async {
        
+        #if DEBUG
+        if UITestSupport.alarmPermissionDenied {
+            isAuthorized = false
+            return
+        }
+        #endif
         switch manager.authorizationState {
 
         case .notDetermined:
@@ -150,25 +162,50 @@ class LuniferAlarm: ObservableObject {
     //   routineMinutes — how long the user's morning routine takes (from survey)
     //   commuteMinutes — how long their commute takes (from survey)
 
+    @discardableResult
     func scheduleAlarm(
         for date: Date,
         eventTitle: String = "your first event",
         routineMinutes: Int = 60,
         commuteMinutes: Int = 30
-    ) async {
+    ) async -> Bool {
+        let previous = alarmMutation
+        let mutation = Task { @MainActor in
+            _ = await previous?.value
+            return await self.replaceAlarm(for: date, eventTitle: eventTitle,
+                                           routineMinutes: routineMinutes, commuteMinutes: commuteMinutes)
+        }
+        alarmMutation = mutation
+        return await mutation.value
+    }
 
-        // Reset adaptive state so this new schedule becomes the reference point.
-        originalScheduledWakeTime = nil
-
+    private func replaceAlarm(for date: Date, eventTitle: String,
+                              routineMinutes: Int, commuteMinutes: Int) async -> Bool {
+        guard UserDefaults.standard.bool(forKey: AppPreferencesStore.Keys.luniferEnabled) else { return false }
         // Step 1: Make sure we have permission first
         // If we don't, ask for it. If user still says no, stop here.
-        if !isAuthorized {
+        if !isAuthorized || manager.authorizationState != .authorized || authorizationDenied {
             await requestAuthorization()
         }
-        guard isAuthorized else { return }
+        guard isAuthorized,
+              UserDefaults.standard.bool(forKey: AppPreferencesStore.Keys.luniferEnabled) else { return false }
 
-        // Step 2: Cancel any existing alarm so we don't have two alarms going off
-        await cancelAlarm()
+        // Read the system registry, including alarms recovered after a restart.
+        let existingAlarms: [Alarm]
+        do {
+            existingAlarms = try manager.alarms
+        } catch {
+            print("❌ Unable to read existing alarms: \(error.localizedDescription)")
+            return false
+        }
+        let addedIDs = Set(addedAlarmIDs.values)
+        let replacedIDs = existingAlarms.filter { !addedIDs.contains($0.id) }.map(\.id)
+        if scheduledWakeTime == nil {
+            scheduledWakeTime = existingAlarms.filter { !addedIDs.contains($0.id) }.compactMap {
+                if case .fixed(let date) = $0.schedule, date > Date() { return date }
+                return nil
+            }.min()
+        }
 
         // Step 3: Design what the alarm looks like when it fires
         // This creates the popup/banner the user sees on their lock screen
@@ -204,6 +241,9 @@ class LuniferAlarm: ObservableObject {
         // (as opposed to .relative which fires after a countdown)
         do {
             let alarmID = UUID()
+            #if DEBUG
+            try UITestSupport.rejectScheduleIfRequested()
+            #endif
             let _ = try await manager.schedule(
                 id: alarmID,            // A unique ID for this alarm — UUID generates a random one
                 configuration: .alarm(
@@ -216,16 +256,28 @@ class LuniferAlarm: ObservableObject {
                 )
             )
 
-            // If we got here without an error, the alarm was successfully scheduled
+            // AlarmKit confirmed the replacement. Only now retire the old alarms.
+            for oldID in replacedIDs {
+                do {
+                    try manager.cancel(id: oldID)
+                } catch {
+                    // Keeping a backup is safer than losing the confirmed replacement.
+                    print("❌ Failed to retire previous alarm: \(error.localizedDescription)")
+                }
+            }
+            activeAlarms = (try? manager.alarms) ?? activeAlarms
+            originalScheduledWakeTime = nil
             scheduledWakeTime = date
             print("✅ Alarm set for \(date.formatted(date: .omitted, time: .shortened))")
 
             // Log the scheduling event for the ML model
             AlarmBehaviourLogger.shared.logScheduled(for: date)
+            return true
 
         } catch {
             // Something went wrong — print the error for debugging in Xcode console
             print("❌ Failed to schedule alarm: \(error.localizedDescription)")
+            return false
         }
     }
 
@@ -636,11 +688,56 @@ class LuniferAlarm: ObservableObject {
         return decideAlarm(from: baseline, answers: answers)
     }
 
+    /// Recover the upcoming main alarm across cold launches.
+    /// User-added alarms must not prevent the main alarm from being refreshed.
+    private func pendingMainAlarmDate() -> Date? {
+        let now = Date()
+        if let pending = scheduledWakeTime,
+           pending > now {
+            return pending
+        }
+
+        // The in-memory wake time starts empty after a process restart.
+        // Read AlarmKit directly rather than waiting for the monitoring task.
+        let alarms = (try? manager.alarms) ?? activeAlarms
+        let addedIDs = Set(addedAlarmIDs.values)
+        let pending = alarms.compactMap { alarm -> Date? in
+            guard !addedIDs.contains(alarm.id),
+                  alarm.state != .alerting,
+                  case .fixed(let date) = alarm.schedule,
+                  date > now else { return nil }
+            return date
+        }.min()
+        if let pending {
+            activeAlarms = alarms
+            scheduledWakeTime = pending
+        }
+        return pending
+    }
+
+    private func pendingMainAlarmToday() -> Date? {
+        guard let pending = pendingMainAlarmDate(),
+              Calendar.current.isDateInToday(pending) else { return nil }
+        return pending
+    }
+
+    /// A rest day must not erase an alarm already set for the next wake day.
+    /// Validate the date against current settings so removed days still cancel.
+    private func isNextWakeDayAlarm(_ date: Date, answers: SurveyAnswers) -> Bool {
+        if AppPreferencesStore.shared.hasRestDayAlarmOptIn(for: date) { return true }
+        guard let nextDay = nextWakeDay(after: Date(), answers: answers) else { return false }
+        return Calendar.current.isDate(date, inSameDayAs: nextDay)
+    }
+
     @discardableResult
     func refreshTomorrowAlarm(answers: SurveyAnswers) async -> Date? {
         let defaults = UserDefaults.standard
         let luniferEnabled = defaults.object(forKey: AppPreferencesStore.Keys.luniferEnabled) as? Bool ?? true
         guard luniferEnabled else { return nil }
+
+        // Opening the app before today's alarm fires must not replace it with
+        // tomorrow's alarm, or cancel it because tomorrow is a rest day.
+        if let pending = pendingMainAlarmToday() { return pending }
 
         let calendar = Calendar.current
         if let pending = AppPreferencesStore.shared.pendingRestDayAlarmDate(), calendar.isDateInToday(pending) {
@@ -651,6 +748,9 @@ class LuniferAlarm: ObservableObject {
         let tomorrowID = weekdayIDs[calendar.component(.weekday, from: tomorrow) - 1]
         if !answers.wakeDays.contains(tomorrowID),
            !AppPreferencesStore.shared.hasRestDayAlarmOptIn(for: tomorrow) {
+            if let pending = pendingMainAlarmDate(), isNextWakeDayAlarm(pending, answers: answers) {
+                return pending
+            }
             AdaptiveAlarmStore.shared.clearPendingDecision()
             await cancelAlarm()
             WakeNotification.shared.cancel()
@@ -663,28 +763,44 @@ class LuniferAlarm: ObservableObject {
         guard !defaults.bool(forKey: AppPreferencesStore.Keys.overrideActive) else { return nil }
 
         let baseline = await resolveBaselineAlarmDate(answers: answers, targetDay: tomorrow)
+        let previousDecision = AdaptiveAlarmStore.shared.pendingDecision()
         let finalAlarm = decideAlarm(from: baseline, answers: answers)
-        await scheduleAlarm(for: finalAlarm, eventTitle: baseline.firstEvent?.title ?? "your first event", routineMinutes: baseline.routineMinutes, commuteMinutes: baseline.commuteMinutes)
+        guard await scheduleAlarm(for: finalAlarm, eventTitle: baseline.firstEvent?.title ?? "your first event", routineMinutes: baseline.routineMinutes, commuteMinutes: baseline.commuteMinutes) else {
+            restorePendingDecision(previousDecision)
+            return scheduledWakeTime
+        }
         await WakeNotification.shared.schedule(wakeDate: finalAlarm, answers: answers)
         return finalAlarm
     }
 
+    private func restorePendingDecision(_ decision: AdaptiveAlarmDecision?) {
+        if let decision {
+            AdaptiveAlarmStore.shared.savePendingDecision(decision)
+        } else {
+            AdaptiveAlarmStore.shared.clearPendingDecision()
+        }
+    }
+
     /// Schedules the next wake day's alarm so Lunifer keeps running without the
     /// user reopening the app. No-op when Lunifer is disabled or no upcoming
-    /// wake day exists. Called from stopAlarm() after the main alarm is dismissed.
+    /// wake day exists. Called when re-enabling Lunifer and after dismissing the main alarm.
     func scheduleNextWakeAlarm(answers: SurveyAnswers) async {
         guard UserDefaults.standard.bool(forKey: "luniferEnabled") else { return }
         guard let nextDay = nextWakeDay(after: Date(), answers: answers) else { return }
 
         let baseline = await resolveBaselineAlarmDate(answers: answers, targetDay: nextDay)
+        let previousDecision = AdaptiveAlarmStore.shared.pendingDecision()
         let finalAlarm = decideAlarm(from: baseline, answers: answers)
 
-        await scheduleAlarm(
+        guard await scheduleAlarm(
             for: finalAlarm,
             eventTitle: baseline.firstEvent?.title ?? "your first event",
             routineMinutes: baseline.routineMinutes,
             commuteMinutes: baseline.commuteMinutes
-        )
+        ) else {
+            restorePendingDecision(previousDecision)
+            return
+        }
 
         // Keep the wake-reminder chain alive for the newly scheduled day.
         await WakeNotification.shared.schedule(wakeDate: finalAlarm, answers: answers)
@@ -693,9 +809,9 @@ class LuniferAlarm: ObservableObject {
     // ─────────────────────────────────────────────────────────
     // SECTION 5: CANCELLING THE ALARM
     // ─────────────────────────────────────────────────────────
-    // Cancels the main Lunifer alarm. Called before scheduling a new
-    // alarm, when the user disables Lunifer, or when the adaptive
-    // engine reschedules.
+    // Cancels the main Lunifer alarm when the user disables Lunifer
+    // or the selected wake days no longer permit it. Replacement scheduling
+    // retires old alarms only after the new alarm is confirmed.
     //
     // IMPORTANT: This must NOT touch user-added alarms. activeAlarms
     // mirrors every AlarmKit alarm scheduled by this app, including the
@@ -707,15 +823,24 @@ class LuniferAlarm: ObservableObject {
     // visible on the dashboard.
 
     func cancelAlarm() async {
-        let preservedIDs = Set(addedAlarmIDs.values)
-        for alarm in activeAlarms where !preservedIDs.contains(alarm.id) {
-            do {
-                try manager.cancel(id: alarm.id)  // Tell AlarmKit to remove this alarm
-            } catch {
-                print("❌ Failed to cancel alarm: \(error.localizedDescription)")
+        let previous = alarmMutation
+        let mutation = Task { @MainActor in
+            _ = await previous?.value
+            let preservedIDs = Set(self.addedAlarmIDs.values)
+            let alarms = (try? self.manager.alarms) ?? self.activeAlarms
+            for alarm in alarms where !preservedIDs.contains(alarm.id) {
+                do {
+                    try self.manager.cancel(id: alarm.id)
+                } catch {
+                    print("❌ Failed to cancel alarm: \(error.localizedDescription)")
+                }
             }
+            self.activeAlarms = (try? self.manager.alarms) ?? self.activeAlarms
+            self.scheduledWakeTime = nil
+            return true
         }
-        scheduledWakeTime = nil  // Clear the displayed wake time in the UI
+        alarmMutation = mutation
+        _ = await mutation.value
     }
 
     // ─────────────────────────────────────────────────────────
@@ -925,6 +1050,9 @@ class LuniferAlarm: ObservableObject {
         // Only run while Lunifer is enabled
         guard UserDefaults.standard.bool(forKey: "luniferEnabled") else { return }
 
+        // Automatic checks leave today's upcoming alarm unchanged until it fires.
+        guard pendingMainAlarmToday() == nil else { return }
+
         // If the user has manually overridden the alarm, respect that choice and
         // make no further changes until the override clears after the alarm passes.
         guard !UserDefaults.standard.bool(forKey: "overrideActive") else {
@@ -955,6 +1083,11 @@ class LuniferAlarm: ObservableObject {
         guard wakeDays.contains(tomorrowID)
             || AppPreferencesStore.shared.hasRestDayAlarmOptIn(for: tomorrow2)
             || hasPendingTodayOptIn else {
+            if let answers = surveyAnswers,
+               let pending = pendingMainAlarmDate(),
+               isNextWakeDayAlarm(pending, answers: answers) {
+                return
+            }
             await cancelAlarm()
             return
         }
@@ -1047,7 +1180,7 @@ class LuniferAlarm: ObservableObject {
             let fmt = DateFormatter()
             fmt.dateFormat = "h:mm a"
             print("📅 Calendar pull: \(fmt.string(from: currentAlarm)) → \(fmt.string(from: latest))")
-            await scheduleAlarm(for: latest)
+            guard await scheduleAlarm(for: latest) else { return }
             AdaptiveAlarmStore.shared.updatePendingFinalAlarm(to: latest)
             return
         }
@@ -1096,7 +1229,7 @@ class LuniferAlarm: ObservableObject {
         // Preserve originalScheduledWakeTime across the internal reschedule —
         // scheduleAlarm() resets it, so save and restore it.
         let savedOriginal = originalScheduledWakeTime!
-        await scheduleAlarm(for: newTime)
+        guard await scheduleAlarm(for: newTime) else { return }
         AdaptiveAlarmStore.shared.updatePendingFinalAlarm(to: newTime)
         originalScheduledWakeTime = savedOriginal
     }

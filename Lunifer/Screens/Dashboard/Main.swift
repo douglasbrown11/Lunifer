@@ -74,6 +74,7 @@ struct AddedAlarm: Codable, Identifiable {
 
 struct LuniferMain: View {
     @Binding var answers: SurveyAnswers
+    @ObservedObject private var alarmManager = LuniferAlarm.shared
     @State private var showSettings = false
     @State private var showSound = false
     @State private var currentPage: Int = 1
@@ -84,6 +85,7 @@ struct LuniferMain: View {
     @AppStorage("overrideActive") private var overrideActive: Bool = false
     @AppStorage("overrideTimestamp") private var overrideTimestamp: Double = 0
     @AppStorage("luniferEnabled") private var luniferEnabled: Bool = true
+    @State private var isChangingAlarmEnablement = false
     @AppStorage("selectedAlarmSound") private var selectedAlarmSound: String = "DeafultAlarm.wav"
     @AppStorage("mainAlarmSnoozeMinutes") private var mainAlarmSnoozeMinutes: Int = 5
     @AppStorage(AppPreferencesStore.Keys.calculatedAlarmTimestamp) private var calculatedAlarmTimestamp: Double = 0
@@ -117,6 +119,17 @@ struct LuniferMain: View {
 
     private var isRunningPreview: Bool {
         ProcessInfo.processInfo.environment["XCODE_RUNNING_FOR_PREVIEWS"] == "1"
+    }
+
+    private var alarmToggleAccessibilityValue: String {
+        #if DEBUG
+        if UITestSupport.dashboardEnabled {
+            let count = alarmManager.activeAlarms.count
+            let status = count == 0 ? "No scheduled alarms" : count == 1 ? "Alarm scheduled" : "Multiple alarms scheduled"
+            return UITestSupport.didRejectSchedule ? "Replacement failed; " + status : status
+        }
+        #endif
+        return luniferEnabled ? "On" : "Off"
     }
 
     private func loadAddedAlarms() {
@@ -217,7 +230,8 @@ struct LuniferMain: View {
         let savedTimestamp = UserDefaults.standard.double(forKey: AppPreferencesStore.Keys.calculatedAlarmTimestamp)
         if savedTimestamp > 0 {
             let savedDate = Date(timeIntervalSince1970: savedTimestamp)
-            if calendar.isDate(savedDate, inSameDayAs: tomorrow) {
+            if calendar.isDate(savedDate, inSameDayAs: tomorrow)
+                || (savedDate > Date() && calendar.isDateInToday(savedDate)) {
                 return savedDate
             }
         }
@@ -271,10 +285,15 @@ struct LuniferMain: View {
         return count
     }
 
-    /// The dashboard represents tomorrow's schedule, so switch to the rest page
-    /// immediately whenever tomorrow is no longer a selected wake day.
+    /// Keep showing today's upcoming alarm until it fires, even if tomorrow
+    /// begins a rest period.
     private var isRestPeriodActive: Bool {
         guard luniferEnabled else { return false }
+        if let pending = alarmManager.scheduledWakeTime,
+           pending > Date(),
+           Calendar.current.isDateInToday(pending) {
+            return false
+        }
         return consecutiveRestDaysFromTomorrow > 0
     }
 
@@ -368,7 +387,13 @@ struct LuniferMain: View {
 
                 // PAGE 1: Alarm dashboard or rest screen
                 Group {
-                    if isRestPeriodActive {
+                    if showAlarmDeniedAlert && luniferEnabled {
+                        AlarmPermissionPage {
+                            if let url = URL(string: UIApplication.openSettingsURLString) {
+                                UIApplication.shared.open(url)
+                            }
+                        }
+                    } else if isRestPeriodActive {
                         restPage
                     } else {
                         alarmPage
@@ -496,6 +521,7 @@ struct LuniferMain: View {
             }
             isAlarmCalculating = false
 
+            checkAlarmAuthorization()
             await SleepTracker.shared.startTracking()
             // Pull Apple Watch sleep from HealthKit (authoritative nights) if connected.
             HealthKitManager.shared.refreshIfNeeded()
@@ -576,8 +602,24 @@ struct LuniferMain: View {
         // the next 5-minute timer tick.
         .onReceive(NotificationCenter.default.publisher(for: UIApplication.didBecomeActiveNotification)) { _ in
             guard !isRunningPreview else { return }
+            let wasDenied = showAlarmDeniedAlert
             checkAlarmAuthorization()
             checkMotionAuthorization()
+            if wasDenied && !showAlarmDeniedAlert && luniferEnabled {
+                Task { @MainActor in
+                    if overrideActive {
+                        await alarmManager.scheduleAlarm(for: overrideTime)
+                    } else {
+                        await alarmManager.scheduleNextWakeAlarm(answers: answers)
+                    }
+                    if let scheduled = alarmManager.scheduledWakeTime {
+                        resolvedAlarmDate = scheduled
+                        calculatedAlarmTimestamp = scheduled.timeIntervalSince1970
+                        await WakeNotification.shared.schedule(wakeDate: scheduled, answers: answers)
+                    }
+                    checkAlarmAuthorization()
+                }
+            }
             MorningRoutineEstimator.shared.refresh(answers: answers)
             // A morning phone pickup near the alarm is a strong wake signal — try to
             // finalize last night immediately so Sleep Insights updates on foreground.
@@ -589,15 +631,6 @@ struct LuniferMain: View {
         // Reload added alarms whenever stopAlarm() removes a one-shot or advances a repeating alarm.
         .onReceive(NotificationCenter.default.publisher(for: .luniferAddedAlarmModified)) { _ in
             loadAddedAlarms()
-        }
-        .alert("Alarm Access Required", isPresented: $showAlarmDeniedAlert) {
-            Button("Open Settings") {
-                if let url = URL(string: UIApplication.openSettingsURLString) {
-                    UIApplication.shared.open(url)
-                }
-            }
-        } message: {
-            Text("Lunifer needs Alarm access to wake you up. Please tap Open Settings and allow it under Alarms & Reminders.")
         }
         .alert("Motion & Fitness Access Required", isPresented: $showMotionDeniedAlert) {
             Button("Open Settings") {
@@ -638,6 +671,40 @@ struct LuniferMain: View {
         showAlarmDeniedAlert = LuniferAlarm.shared.authorizationDenied
     }
 
+    @MainActor
+    private func toggleAlarmEnablement() {
+        guard !isChangingAlarmEnablement else { return }
+        let enabled = !luniferEnabled
+        withAnimation(.easeInOut(duration: 0.5)) { luniferEnabled = enabled }
+        isChangingAlarmEnablement = true
+        Task { @MainActor in
+            defer { isChangingAlarmEnablement = false }
+            if enabled {
+                TurnBackOnNotification.shared.cancel()
+                // Re-enabling starts a fresh automatic schedule, not an old override.
+                overrideActive = false
+                overrideTimestamp = 0
+                isAlarmCalculating = true
+                defer { isAlarmCalculating = false }
+                await LuniferAlarm.shared.scheduleNextWakeAlarm(answers: answers)
+                if let scheduled = LuniferAlarm.shared.scheduledWakeTime {
+                    resolvedAlarmDate = scheduled
+                    calculatedAlarmTimestamp = scheduled.timeIntervalSince1970
+                } else {
+                    calculatedAlarmTimestamp = 0
+                }
+                checkAlarmAuthorization()
+            } else {
+                AdaptiveAlarmStore.shared.clearPendingDecision()
+                AppPreferencesStore.shared.clearRestDayAlarmOptIn()
+                await LuniferAlarm.shared.cancelAlarm()
+                WakeNotification.shared.cancel()
+                BatteryAlarmNotification.shared.cancelWarning()
+                await TurnBackOnNotification.shared.schedule()
+            }
+        }
+    }
+
     // Checks CoreMotion authorization and surfaces the alert if denied.
     // Called on first load and every time the app returns to the foreground
     // so the loop continues until the user grants access.
@@ -646,6 +713,7 @@ struct LuniferMain: View {
             showMotionDeniedAlert = false
             return
         }
+        guard !showAlarmDeniedAlert else { return }
         let status = CMMotionActivityManager.authorizationStatus()
         showMotionDeniedAlert = (status == .denied)
     }
@@ -763,7 +831,8 @@ struct LuniferMain: View {
                     } else {
                     // ── Alarm header — never moves ────────────
                     VStack(spacing: 12) {
-                        Text("TOMORROW'S ALARM")
+                        Text(Calendar.current.isDateInToday(overrideActive ? overrideTime : resolvedAlarmDate)
+                             ? "TODAY'S ALARM" : "TOMORROW'S ALARM")
                             .font(.custom("DM Sans", size: 11))
                             .foregroundColor(Color.white.opacity(0.35))
                             .kerning(2.5)
@@ -935,17 +1004,17 @@ struct LuniferMain: View {
                                 // Only shown when a manual override is active.
                                 if overrideActive {
                                     Button {
-                                        overrideActive = false
-                                        overrideTimestamp = 0
                                         Task {
-                                            await LuniferAlarm.shared.scheduleAlarm(
+                                            guard await LuniferAlarm.shared.scheduleAlarm(
                                                 for: calculatedAlarmDate,
                                                 eventTitle: CalendarManager.shared.firstEventTomorrow?.title ?? "your first event",
                                                 routineMinutes: answers.routine.auto ? 60 : answers.routine.hours * 60 + answers.routine.minutes,
                                                 commuteMinutes: (answers.lifestyle == "student" || answers.lifestyle == "commuter")
                                                     ? (answers.commute.auto ? (CommuteManager.shared.currentDurationMinutes > 0 ? CommuteManager.shared.currentDurationMinutes : 30) : answers.commute.hours * 60 + answers.commute.minutes)
                                                     : 0
-                                            )
+                                            ) else { return }
+                                            overrideActive = false
+                                            overrideTimestamp = 0
                                             await WakeNotification.shared.schedule(wakeDate: calculatedAlarmDate, answers: answers)
                                         }
                                         withAnimation(.easeInOut(duration: 0.3)) {
@@ -975,13 +1044,14 @@ struct LuniferMain: View {
                                     let diffSeconds = abs(pendingOverrideTime.timeIntervalSince(calculatedAlarmDate))
                                     if diffSeconds > 60 {
                                         // User chose a different time — commit the override.
-                                        overrideActive = true
-                                        overrideTimestamp = pendingOverrideTime.timeIntervalSince1970
-                                        overrideTime = pendingOverrideTime
+                                        let requestedTime = pendingOverrideTime
                                         Task {
+                                            guard await LuniferAlarm.shared.scheduleAlarm(for: requestedTime) else { return }
                                             AdaptiveAlarmStore.shared.clearPendingDecision()
-                                            await LuniferAlarm.shared.scheduleAlarm(for: pendingOverrideTime)
-                                            await WakeNotification.shared.schedule(wakeDate: pendingOverrideTime, answers: answers)
+                                            overrideActive = true
+                                            overrideTimestamp = requestedTime.timeIntervalSince1970
+                                            overrideTime = requestedTime
+                                            await WakeNotification.shared.schedule(wakeDate: requestedTime, answers: answers)
                                         }
                                     } else {
                                         // Picker is back near Lunifer's calculated time — clear any override.
@@ -1099,23 +1169,7 @@ struct LuniferMain: View {
 
             // ── Unified toggle button — travels from bottom to center ──
             if !alarmExpanded {
-                Button {
-                    withAnimation(.easeInOut(duration: 0.5)) { luniferEnabled.toggle() }
-                    if !luniferEnabled {
-                        Task {
-                            AdaptiveAlarmStore.shared.clearPendingDecision()
-                            // Drop any rest-day opt-in so an alarm the user opted into
-                            // isn't resurrected by the guards when Lunifer is re-enabled.
-                            AppPreferencesStore.shared.clearRestDayAlarmOptIn()
-                            await LuniferAlarm.shared.cancelAlarm()
-                            WakeNotification.shared.cancel()
-                            BatteryAlarmNotification.shared.cancelWarning()
-                            await TurnBackOnNotification.shared.schedule()
-                        }
-                    } else {
-                        TurnBackOnNotification.shared.cancel()
-                    }
-                } label: {
+                Button(action: toggleAlarmEnablement) {
                     HStack(spacing: 10) {
                         Image(systemName: luniferEnabled ? "moon.fill" : "moon.stars.fill")
                             .font(.system(size: luniferEnabled ? 13 : 15))
@@ -1140,6 +1194,9 @@ struct LuniferMain: View {
                                 : Color.white.opacity(0.25), lineWidth: luniferEnabled ? 1 : 1.5))
                     )
                 }
+                .disabled(isChangingAlarmEnablement)
+                .accessibilityIdentifier("lunifer.enabledToggle")
+                .accessibilityValue(alarmToggleAccessibilityValue)
                 .padding(.bottom, luniferEnabled ? 52 : 0)
                 .frame(maxWidth: .infinity, maxHeight: .infinity,
                        alignment: luniferEnabled ? .bottom : .center)
