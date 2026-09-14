@@ -47,6 +47,13 @@ struct ContentView: View {
         }
         .frame(maxWidth: .infinity, maxHeight: .infinity)
         .onAppear {
+            #if DEBUG
+            if let fixture = UITestSupport.dashboardAnswers() {
+                surveyAnswers = fixture
+                screen = .dashboard
+                return
+            }
+            #endif
             if authStateHandle == nil {
                 authStateHandle = Auth.auth().addStateDidChangeListener { _, user in
                     Task { @MainActor in
