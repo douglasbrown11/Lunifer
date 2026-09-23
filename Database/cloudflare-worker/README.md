@@ -1,6 +1,6 @@
 # Lunifer Cloudflare Worker
 
-This Worker hosts Lunifer's wearable integrations and APNs silent-push sender without requiring Firebase Blaze.
+This Worker hosts Lunifer's wearable integrations, commute routing proxy, and APNs silent-push sender without requiring Firebase Blaze.
 
 ## What it does
 
@@ -9,6 +9,7 @@ This Worker hosts Lunifer's wearable integrations and APNs silent-push sender wi
 - Fetches WHOOP sleep-need data
 - Stores per-user WHOOP token data in Cloudflare KV
 - Verifies Firebase ID tokens sent from the iOS app
+- Proxies authenticated commute-route requests to OpenRouteService without exposing the ORS API key in the app
 - Registers and removes authenticated APNs device tokens in KV
 - Runs hourly and sends one background push during each device's local 7 PM hour
 
@@ -22,6 +23,9 @@ This Worker hosts Lunifer's wearable integrations and APNs silent-push sender wi
 ```bash
 wrangler secret put WHOOP_CLIENT_ID
 wrangler secret put WHOOP_CLIENT_SECRET
+wrangler secret put OURA_CLIENT_ID
+wrangler secret put OURA_CLIENT_SECRET
+wrangler secret put ORS_API_KEY
 wrangler secret put APNS_PRIVATE_KEY
 wrangler secret put APNS_KEY_ID
 wrangler secret put APNS_TEAM_ID
@@ -43,13 +47,17 @@ Take the deployed Worker URL and replace:
 
 in:
 
-`Lunifer/Engine/WhoopManager.swift`
+`Lunifer/Engine/WhoopManager.swift`, `Lunifer/Engine/Wearables/OuraManager.swift`, and `Lunifer/Engine/CommuteManager.swift`
 
 ## Routes
 
 - `POST /whoop/exchange-code`
 - `POST /whoop/fetch-sleep-need`
 - `POST /whoop/disconnect`
+- `POST /oura/exchange-code`
+- `POST /oura/fetch-sleep`
+- `POST /oura/disconnect`
+- `POST /commute/route`
 - `POST /push/register`
 - `POST /push/unregister`
 
