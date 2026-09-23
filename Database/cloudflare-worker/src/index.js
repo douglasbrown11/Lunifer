@@ -5,6 +5,7 @@ const FIREBASE_CERTS_URL = "https://www.googleapis.com/service_accounts/v1/jwk/s
 const OURA_TOKEN_URL    = "https://api.ouraring.com/oauth/token";
 const OURA_SLEEP_URL    = "https://api.ouraring.com/v2/usercollection/sleep";
 const OURA_READINESS_URL = "https://api.ouraring.com/v2/usercollection/daily_readiness";
+const ORS_DIRECTIONS_URL = "https://api.openrouteservice.org/v2/directions";
 const TOKEN_REFRESH_BUFFER_MS = 5 * 60 * 1000;
 
 export default {
@@ -113,6 +114,11 @@ export default {
         const installationID = requiredString(body.installationID, "installationID");
         await env.WHOOP_TOKENS.delete(pushTokenKey(uid, installationID));
         return json({registered: false});
+      }
+
+      if (url.pathname === "/commute/route") {
+        const body = await request.json();
+        return json(await fetchCommuteRoute(body, env));
       }
 
       return json({ error: "Not found." }, 404);
@@ -398,6 +404,77 @@ async function ouraGet(url, accessToken) {
     throw httpError(response.status, `Oura request failed: ${await response.text()}`);
   }
   return response.json();
+}
+
+// ── Commute routing helpers ────────────────────────────────────
+
+async function fetchCommuteRoute(body, env) {
+  const apiKey = requiredString(env.ORS_API_KEY, "ORS_API_KEY");
+  const mode = requiredCommuteMode(body.mode);
+  const origin = requiredCoordinate(body.origin, "origin");
+  const destination = requiredCoordinate(body.destination, "destination");
+  const url = new URL(`${ORS_DIRECTIONS_URL}/${orsProfile(mode)}`);
+  url.searchParams.set("api_key", apiKey);
+  url.searchParams.set("start", `${origin.longitude},${origin.latitude}`);
+  url.searchParams.set("end", `${destination.longitude},${destination.latitude}`);
+
+  const response = await fetch(url.toString());
+  if (!response.ok) {
+    throw httpError(response.status, `ORS request failed: ${await response.text()}`);
+  }
+
+  const data = await response.json();
+  const first = Array.isArray(data?.features) ? data.features[0] : null;
+  const duration = first?.properties?.summary?.duration;
+  if (typeof duration !== "number" || !Number.isFinite(duration)) {
+    throw httpError(502, "ORS response missing route duration.");
+  }
+
+  const coordinates = Array.isArray(first?.geometry?.coordinates)
+    ? first.geometry.coordinates
+      .filter(pair => Array.isArray(pair) &&
+        pair.length >= 2 &&
+        pair.every(value => typeof value === "number" && Number.isFinite(value)))
+      .map(pair => [pair[0], pair[1]])
+    : [];
+
+  return {
+    durationSeconds: duration,
+    coordinates
+  };
+}
+
+function requiredCommuteMode(value) {
+  const mode = requiredString(value, "mode");
+  if (!["drive", "transit", "walk", "bike"].includes(mode)) {
+    throw httpError(400, "Invalid commute mode.");
+  }
+  return mode;
+}
+
+function orsProfile(mode) {
+  switch (mode) {
+    case "transit": return "public-transport";
+    case "walk": return "foot-walking";
+    case "bike": return "cycling-regular";
+    default: return "driving-car";
+  }
+}
+
+function requiredCoordinate(value, field) {
+  const latitude = value?.latitude;
+  const longitude = value?.longitude;
+  if (typeof latitude !== "number" ||
+      typeof longitude !== "number" ||
+      !Number.isFinite(latitude) ||
+      !Number.isFinite(longitude) ||
+      latitude < -90 ||
+      latitude > 90 ||
+      longitude < -180 ||
+      longitude > 180) {
+    throw httpError(400, `Invalid "${field}" coordinate.`);
+  }
+  return { latitude, longitude };
 }
 
 // ── WHOOP helpers ─────────────────────────────────────────────

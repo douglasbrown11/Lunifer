@@ -2,6 +2,7 @@ import Foundation
 import Combine
 import BackgroundTasks
 import CoreLocation
+import FirebaseAuth
 import MapKit
 
 // ─────────────────────────────────────────────────────────────
@@ -296,31 +297,12 @@ final class CommuteManager: ObservableObject {
     }
 
     // ── OpenRouteService routing ──────────────────────────────
-    // ORS supports driving, walking, cycling, and public transit —
-    // all four modes Lunifer needs. Free tier: 2,000 requests/day.
+    // ORS supports driving, walking, cycling, and public transit. The API key
+    // stays on Lunifer's authenticated Worker; the app only sends route inputs.
 
-    private static let orsAPIKey = "eyJvcmciOiI1YjNjZTM1OTc4NTExMTAwMDFjZjYyNDgiLCJpZCI6IjQ4MDcxZTA3YWFiODQ2YThhN2VlNDY0NDdmNDVkYWQ3IiwiaCI6Im11cm11cjY0In0="
-
-    /// Maps a Lunifer commute mode string to an ORS routing profile.
-    private static func orsProfile(for commuteMode: String) -> String {
-        switch commuteMode {
-        case "transit": return "public-transport"
-        case "walk":    return "foot-walking"
-        case "bike":    return "cycling-regular"
-        default:        return "driving-car"
-        }
-    }
-
-    /// Builds the ORS directions GET URL for a given mode and origin/destination.
-    private static func orsURL(mode: String,
-                               from origin: CLLocationCoordinate2D,
-                               to destination: CLLocationCoordinate2D) -> URL? {
-        let profile = orsProfile(for: mode)
-        let urlString = "https://api.openrouteservice.org/v2/directions/\(profile)"
-            + "?api_key=\(orsAPIKey)"
-            + "&start=\(origin.longitude),\(origin.latitude)"
-            + "&end=\(destination.longitude),\(destination.latitude)"
-        return URL(string: urlString)
+    private enum RoutingBackend {
+        static let baseURL = "https://lunifer-whoop.dougiebrown516.workers.dev"
+        static let routePath = "commute/route"
     }
 
     /// A routed result: travel time in minutes plus the road-following polyline
@@ -331,37 +313,47 @@ final class CommuteManager: ObservableObject {
         let coordinates: [CLLocationCoordinate2D]
     }
 
-    /// Requests a route from ORS and returns BOTH the travel time and the full
-    /// GeoJSON geometry. The ORS response already contains the road-following
-    /// polyline under `features[0].geometry.coordinates` (as [lon, lat] pairs) —
-    /// the duration path historically read only `summary.duration` and discarded
-    /// the rest; this parses both.
+    /// Requests a route through Lunifer's Worker and returns BOTH the travel time
+    /// and the road-following polyline. The Worker calls ORS with its server-side
+    /// key and returns coordinates as [lon, lat] pairs.
     static func fetchRoute(from origin: CLLocationCoordinate2D,
                            to destination: CLLocationCoordinate2D,
                            mode: String) async -> RouteResult? {
-        guard let url = orsURL(mode: mode, from: origin, to: destination) else { return nil }
+        guard let user = Auth.auth().currentUser,
+              let baseURL = URL(string: RoutingBackend.baseURL) else { return nil }
+
         do {
-            let (data, _) = try await URLSession.shared.data(from: url)
-            guard let json = try JSONSerialization.jsonObject(with: data) as? [String: Any],
-                  let features = json["features"] as? [[String: Any]],
-                  let first = features.first else { return nil }
+            let idToken = try await user.getIDToken()
+            var request = URLRequest(url: baseURL.appendingPathComponent(RoutingBackend.routePath))
+            request.httpMethod = "POST"
+            request.setValue("application/json", forHTTPHeaderField: "Content-Type")
+            request.setValue("Bearer \(idToken)", forHTTPHeaderField: "Authorization")
+            request.httpBody = try JSONSerialization.data(withJSONObject: [
+                "mode": mode,
+                "origin": [
+                    "latitude": origin.latitude,
+                    "longitude": origin.longitude
+                ],
+                "destination": [
+                    "latitude": destination.latitude,
+                    "longitude": destination.longitude
+                ]
+            ])
 
-            guard let properties = first["properties"] as? [String: Any],
-                  let summary = properties["summary"] as? [String: Any],
-                  let duration = summary["duration"] as? Double else { return nil }
+            let (data, response) = try await URLSession.shared.data(for: request)
+            guard let httpResponse = response as? HTTPURLResponse,
+                  (200..<300).contains(httpResponse.statusCode),
+                  let json = try JSONSerialization.jsonObject(with: data) as? [String: Any],
+                  let duration = json["durationSeconds"] as? Double else { return nil }
 
-            let coordinates: [CLLocationCoordinate2D] = {
-                guard let geometry = first["geometry"] as? [String: Any],
-                      let pairs = geometry["coordinates"] as? [[Double]] else { return [] }
-                return pairs.compactMap { pair in
-                    guard pair.count >= 2 else { return nil }
-                    return CLLocationCoordinate2D(latitude: pair[1], longitude: pair[0])
-                }
-            }()
+            let coordinates: [CLLocationCoordinate2D] = (json["coordinates"] as? [[Double]] ?? []).compactMap { pair in
+                guard pair.count >= 2 else { return nil }
+                return CLLocationCoordinate2D(latitude: pair[1], longitude: pair[0])
+            }
 
             return RouteResult(minutes: Int(duration / 60.0), coordinates: coordinates)
         } catch {
-            print("🚗 ORS routing error: \(error.localizedDescription)")
+            print("🚗 Commute routing error: \(error.localizedDescription)")
             return nil
         }
     }

@@ -54,6 +54,8 @@
 	<string>7167900619-kt1j2i37t8cvkuo9afdnvhro643f05th.apps.googleusercontent.com</string>
 	<key>FirebaseAppDelegateProxyEnabled</key>
 	<false/>
+	<key>FeedbackPulseAPIKey</key>
+	<string>$(FEEDBACK_PULSE_API_KEY)</string>
 	<key>ITSAppUsesNonExemptEncryption</key>
 	<false/>
 	<key>LSRequiresIPhoneOS</key>

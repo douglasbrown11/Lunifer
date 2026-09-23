@@ -73,16 +73,20 @@ struct LuniferApp: App {
     @StateObject private var calendarManager = CalendarManager()
 
     init() {
-        // Configure Feedback Pulse (powers the Submit Feedback screen). The fp_
-        // key is a public client ingestion key and is safe to embed. Debug builds
-        // report into the development environment so test feedback stays separate
-        // from real production feedback.
-        #if DEBUG
-        FeedbackPulse.configure(apiKey: "fp_qqrl3KrWH9d5hnJl7wDsTbDmFjr4jn0gPjTQZtCA8o0", environment: .development)
-        FeedbackPulse.shared.debugMode = true
-        #else
-        FeedbackPulse.configure(apiKey: "fp_qqrl3KrWH9d5hnJl7wDsTbDmFjr4jn0gPjTQZtCA8o0", environment: .production)
-        #endif
+        // Configure Feedback Pulse (powers the Submit Feedback screen). The
+        // ingestion key is supplied through Info.plist build configuration.
+        if let feedbackPulseAPIKey = Bundle.main.object(forInfoDictionaryKey: "FeedbackPulseAPIKey") as? String,
+           !feedbackPulseAPIKey.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty,
+           feedbackPulseAPIKey != "$(FEEDBACK_PULSE_API_KEY)" {
+            #if DEBUG
+            FeedbackPulse.configure(apiKey: feedbackPulseAPIKey, environment: .development)
+            FeedbackPulse.shared.debugMode = true
+            #else
+            FeedbackPulse.configure(apiKey: feedbackPulseAPIKey, environment: .production)
+            #endif
+        } else {
+            print("⚠️ Feedback Pulse API key is not configured.")
+        }
 
         // Register the background task handler for overnight sleep analysis.
         // iOS will call this handler when it wakes the app in the background.
