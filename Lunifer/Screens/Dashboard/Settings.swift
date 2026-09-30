@@ -521,10 +521,6 @@ struct AboutYouSettingsView: View {
     @ObservedObject private var microsoftCalendarService = MicrosoftCalendarService.shared
     @State private var editingField: String? = nil
     @State private var calendarConnectionRevision = 0
-    // Commute-type gate: shown when user switches to student/commuter from a non-commuter lifestyle
-    @State private var showCommuteTypeSheet = false
-    @State private var pendingLifestyle: String = ""
-    @State private var pendingCommuteMode: String = ""
     // Long-routine warning
     @State private var showLongRoutineAlert = false
     @State private var longRoutineTimeLabel = ""
@@ -532,10 +528,6 @@ struct AboutYouSettingsView: View {
     @State private var showCalendarDeniedAlert = false
     @State private var showCalendarNudge = false
     @State private var previousCalendarChoice: String? = nil
-
-    private var isCommuterUser: Bool {
-        answers.lifestyle == "student" || answers.lifestyle == "commuter"
-    }
 
     private var lifestyleLabel: String {
         switch answers.lifestyle {
@@ -657,12 +649,8 @@ struct AboutYouSettingsView: View {
                         immutableAgeRow
                         aboutYouRow(label: "Lifestyle", value: lifestyleLabel, field: "lifestyle")
                         aboutYouRow(label: "Calendar", value: calendarLabel, field: "calendar")
-                        if answers.lifestyle != "not_working" {
-                            aboutYouRow(label: "Morning Routine", value: routineLabel, field: "routine")
-                        }
-                        if isCommuterUser {
-                            aboutYouRow(label: "Commute Type", value: commuteModeLabel, field: "commuteMode")
-                        }
+                        aboutYouRow(label: "Morning Routine", value: routineLabel, field: "routine")
+                        aboutYouRow(label: "Commute Type", value: commuteModeLabel, field: "commuteMode")
                     }
                     .padding(.horizontal, 24)
                     .padding(.top, 8)
@@ -698,26 +686,6 @@ struct AboutYouSettingsView: View {
         .onChange(of: answers.commuteMode) { _, _ in
             answers.saveToDefaults()
             answers.saveToFirestore()
-        }
-        // ── Commute-type gate sheet ───────────────────────────────
-        .sheet(isPresented: $showCommuteTypeSheet) {
-            CommuteTypeRequiredSheet(selectedMode: $pendingCommuteMode) {
-                let wasNotWorking = answers.lifestyle == "not_working"
-                answers.lifestyle = pendingLifestyle
-                answers.commuteMode = pendingCommuteMode
-                // Restore routine default when upgrading from not_working
-                if wasNotWorking {
-                    answers.routine = TimeValue(hours: 1, minutes: 0, auto: false)
-                }
-                // onChange handlers on lifestyle/commuteMode/routine will persist the changes
-                showCommuteTypeSheet = false
-                // Collapse the lifestyle dropdown now that the selection is complete
-                editingField = nil
-            }
-            .interactiveDismissDisabled(true)
-            .presentationDetents([.fraction(0.58)])
-            .presentationDragIndicator(.hidden)
-            .presentationBackground(Color(red: 0.07, green: 0.04, blue: 0.15))
         }
         // ── Long routine warning ──────────────────────────────────
         .alert("Long Morning Routine", isPresented: $showLongRoutineAlert) {
@@ -924,26 +892,10 @@ struct AboutYouSettingsView: View {
                                 ("student", "Student"),
                                 ("commuter", "Commuter"),
                                 ("wfh", "Work From Home"),
-                                ("not_working", "Not Working")
                             ]
                             ForEach(lifestyleOptions, id: \.0) { id, title in
                                 Button {
-                                    let willBeCommuter = id == "student" || id == "commuter"
-                                    let isAlreadyCommuter = answers.lifestyle == "student" || answers.lifestyle == "commuter"
-                                    if willBeCommuter && !isAlreadyCommuter {
-                                        // Gate: require commute type before applying lifestyle change
-                                        pendingLifestyle = id
-                                        pendingCommuteMode = ""
-                                        showCommuteTypeSheet = true
-                                    } else {
-                                        let wasNotWorking = answers.lifestyle == "not_working"
-                                        answers.lifestyle = id
-                                        if id == "not_working" {
-                                            answers.routine = TimeValue(hours: 0, minutes: 0, auto: false)
-                                        } else if wasNotWorking {
-                                            answers.routine = TimeValue(hours: 1, minutes: 0, auto: false)
-                                        }
-                                    }
+                                    answers.lifestyle = id
                                 } label: {
                                     HStack {
                                         Text(title)
@@ -1855,125 +1807,6 @@ struct SettingsSection<Content: View>: View {
                 .foregroundColor(Color.white.opacity(0.35))
                 .kerning(2)
             content()
-        }
-    }
-}
-
-// ── MARK: Commute Type Required Sheet ─────────────────────────
-// Presented (non-dismissable) when the user switches to a commuter
-// lifestyle in Settings without a commute mode already selected.
-
-struct CommuteTypeRequiredSheet: View {
-    @Binding var selectedMode: String
-    let onConfirm: () -> Void
-
-    private let modes: [(id: String, icon: String, label: String)] = [
-        ("drive",   "car.fill",    "Drive"),
-        ("transit", "train.side.front.car", "Transit"),
-        ("walk",    "figure.walk", "Walk"),
-        ("bike",    "bicycle",     "Bike")
-    ]
-
-    var body: some View {
-        ZStack {
-            Color(red: 0.07, green: 0.04, blue: 0.15).ignoresSafeArea()
-
-            VStack(spacing: 0) {
-
-                // ── Header ────────────────────────────────────────
-                Text("How do you commute?")
-                    .font(.custom("Cormorant Garamond", size: 26).weight(.light))
-                    .foregroundColor(Color.white.opacity(0.95))
-                    .multilineTextAlignment(.center)
-                    .padding(.top, 36)
-                    .padding(.horizontal, 24)
-                    .padding(.bottom, 8)
-
-                Text("Lunifer will calculate your commute time automatically.")
-                    .font(.custom("DM Sans", size: 13))
-                    .foregroundColor(Color.white.opacity(0.4))
-                    .multilineTextAlignment(.center)
-                    .padding(.horizontal, 40)
-                    .padding(.bottom, 32)
-
-                // ── Transport mode grid ───────────────────────────
-                HStack(spacing: 10) {
-                    ForEach(modes, id: \.id) { mode in
-                        let selected = selectedMode == mode.id
-                        Button {
-                            withAnimation(.easeInOut(duration: 0.18)) {
-                                selectedMode = mode.id
-                            }
-                        } label: {
-                            VStack(spacing: 8) {
-                                Image(systemName: mode.icon)
-                                    .font(.system(size: 20, weight: .regular))
-                                    .foregroundColor(selected
-                                        ? Color.white.opacity(0.95)
-                                        : Color.white.opacity(0.3))
-                                Text(mode.label)
-                                    .font(.custom("DM Sans", size: 12))
-                                    .foregroundColor(selected
-                                        ? Color.white.opacity(0.85)
-                                        : Color.white.opacity(0.3))
-                            }
-                            .frame(maxWidth: .infinity)
-                            .frame(height: 68)
-                            .background(
-                                RoundedRectangle(cornerRadius: 12)
-                                    .fill(selected
-                                        ? Color(red: 0.627, green: 0.471, blue: 1.0).opacity(0.18)
-                                        : Color.white.opacity(0.03))
-                                    .overlay(
-                                        RoundedRectangle(cornerRadius: 12)
-                                            .stroke(selected
-                                                ? Color(red: 0.627, green: 0.471, blue: 1.0).opacity(0.65)
-                                                : Color.white.opacity(0.06),
-                                                lineWidth: 1.5)
-                                    )
-                            )
-                        }
-                        .buttonStyle(.plain)
-                        .animation(.easeInOut(duration: 0.15), value: selected)
-                    }
-                }
-                .padding(.horizontal, 24)
-
-                // ── Hint text ─────────────────────────────────────
-                if selectedMode.isEmpty {
-                    Text("Select a commute type above to continue.")
-                        .font(.custom("DM Sans", size: 13))
-                        .foregroundColor(Color.white.opacity(0.35))
-                        .padding(.top, 14)
-                        .transition(.opacity)
-                }
-
-                Spacer()
-
-                // ── Confirm button ────────────────────────────────
-                Button(action: onConfirm) {
-                    Text("Confirm →")
-                        .font(.custom("DM Sans", size: 15).weight(.medium))
-                        .foregroundColor(.white)
-                        .frame(maxWidth: .infinity)
-                        .frame(height: 52)
-                        .background(
-                            RoundedRectangle(cornerRadius: 14)
-                                .fill(LinearGradient(
-                                    colors: [
-                                        Color(red: 0.471, green: 0.314, blue: 0.863).opacity(0.9),
-                                        Color(red: 0.314, green: 0.196, blue: 0.706).opacity(0.9)
-                                    ],
-                                    startPoint: .topLeading,
-                                    endPoint: .bottomTrailing
-                                ))
-                                .opacity(selectedMode.isEmpty ? 0.35 : 1.0)
-                        )
-                }
-                .disabled(selectedMode.isEmpty)
-                .padding(.horizontal, 24)
-                .padding(.bottom, 36)
-            }
         }
     }
 }

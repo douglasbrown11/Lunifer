@@ -82,24 +82,25 @@ final class LuniferNotificationDelegate: NSObject, UNUserNotificationCenterDeleg
                     )
                     let finalAlarm = LuniferAlarm.shared.decideAlarm(from: baseline, answers: answers)
 
-                    // Mark this rest day as an explicit opt-in so the rest-day
-                    // cancel guards (dashboard load + checkAndAdaptAlarm) leave this
-                    // alarm in place instead of cancelling it. Set before scheduling
-                    // so a guard racing the schedule already sees the opt-in.
-                    AppPreferencesStore.shared.setRestDayAlarmOptIn(for: finalAlarm)
-
                     guard await LuniferAlarm.shared.scheduleAlarm(
                         for: finalAlarm,
                         eventTitle: baseline.firstEvent?.title ?? "your first event",
                         routineMinutes: baseline.routineMinutes,
                         commuteMinutes: baseline.commuteMinutes
-                    ) else { return }
+                    ) else {
+                        AppPreferencesStore.shared.clearRestDayAlarmOptIn()
+                        return
+                    }
+                    AppPreferencesStore.shared.setRestDayAlarmOptIn(for: finalAlarm)
                     await WakeNotification.shared.schedule(wakeDate: finalAlarm, answers: answers)
                     wakeDate = finalAlarm
                 } else if let frozenWake {
                     // No saved answers — fall back to the pre-computed (non-adaptive) time.
+                    guard await LuniferAlarm.shared.scheduleAlarm(for: frozenWake) else {
+                        AppPreferencesStore.shared.clearRestDayAlarmOptIn()
+                        return
+                    }
                     AppPreferencesStore.shared.setRestDayAlarmOptIn(for: frozenWake)
-                    guard await LuniferAlarm.shared.scheduleAlarm(for: frozenWake) else { return }
                     wakeDate = frozenWake
                 } else {
                     print("⚠️ Rest-day wake action: no answers and missing wakeTimestamp")

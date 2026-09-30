@@ -431,9 +431,9 @@ final class CommuteManager: ObservableObject {
     // ── Helpers ───────────────────────────────────────────────
 
     /// Extracts the commute duration in minutes from survey answers.
-    /// Returns 0 for non-commuter lifestyles.
+    /// Returns 0 until a commute has been configured.
     static func surveyDuration(from answers: SurveyAnswers) -> Int {
-        guard answers.lifestyle == "student" || answers.lifestyle == "commuter" else { return 0 }
+        guard answers.hasCommuteSetup else { return 0 }
         return answers.commute.auto
             ? 30
             : answers.commute.hours * 60 + answers.commute.minutes

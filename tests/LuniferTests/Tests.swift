@@ -12,7 +12,13 @@ import XCTest
 final class LuniferTests: XCTestCase {
     private let defaults = UserDefaults.standard
     private var savedDefaults: [String: Any] = [:]
-    private let keys = ["luniferEnabled", "overrideActive", "surveyAnswers", "restDayAlarmOptInDate"]
+    private let keys = [
+        "luniferEnabled",
+        "overrideActive",
+        "surveyAnswers",
+        "restDayAlarmOptInDate",
+        AppPreferencesStore.Keys.disabledPendingAlarmTimestamp
+    ]
 
     override func setUp() async throws {
         for key in keys {
@@ -33,6 +39,50 @@ final class LuniferTests: XCTestCase {
             }
         }
         LuniferAlarm.shared.scheduledWakeTime = nil
+    }
+
+    func testConfiguredCommuteAndRoutineApplyToEveryLifestyle() {
+        for lifestyle in ["student", "commuter", "wfh", "not_working"] {
+            var answers = SurveyAnswers()
+            answers.lifestyle = lifestyle
+            answers.commuteMode = "walk"
+            answers.commute = TimeValue(hours: 0, minutes: 20, auto: false)
+            answers.routine = TimeValue(hours: 0, minutes: 45, auto: false)
+            XCTAssertEqual(CommuteManager.surveyDuration(from: answers), 20)
+            XCTAssertEqual(LuniferAlarm.shared.routineCommuteBufferSeconds(answers: answers), 65 * 60)
+        }
+    }
+
+    func testExistingNonCommutersDoNotGainTravelBufferWithoutSetup() {
+        for lifestyle in ["wfh", "not_working"] {
+            var answers = SurveyAnswers()
+            answers.lifestyle = lifestyle
+            answers.routine = TimeValue(hours: 0, minutes: 0, auto: false)
+            XCTAssertEqual(CommuteManager.surveyDuration(from: answers), 0)
+            XCTAssertEqual(LuniferAlarm.shared.routineCommuteBufferSeconds(answers: answers), 0)
+        }
+    }
+
+    func testStaleAlarmDatesAreNotSchedulable() {
+        let now = Date()
+
+        XCTAssertFalse(LuniferAlarm.shared.isSchedulableAlarmDate(now.addingTimeInterval(-1), now: now))
+        XCTAssertFalse(LuniferAlarm.shared.isSchedulableAlarmDate(now.addingTimeInterval(30), now: now))
+        XCTAssertTrue(LuniferAlarm.shared.isSchedulableAlarmDate(now.addingTimeInterval(60), now: now))
+    }
+
+    func testDisabledPendingAlarmMemoryExpiresAfterAlarmTime() {
+        let futureAlarm = Date().addingTimeInterval(3600)
+        AppPreferencesStore.shared.disabledPendingAlarmDate = futureAlarm
+
+        XCTAssertEqual(
+            AppPreferencesStore.shared.disabledPendingAlarmDate?.timeIntervalSince1970.rounded(),
+            futureAlarm.timeIntervalSince1970.rounded()
+        )
+
+        AppPreferencesStore.shared.disabledPendingAlarmDate = Date().addingTimeInterval(-60)
+
+        XCTAssertNil(AppPreferencesStore.shared.disabledPendingAlarmDate)
     }
 
     private func upcomingAlarmToday() throws -> Date {

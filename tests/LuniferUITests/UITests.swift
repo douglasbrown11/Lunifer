@@ -80,6 +80,8 @@ final class LuniferUITests: XCTestCase {
         app.launch()
         XCTAssertTrue(toggle.waitForExistence(timeout: 15))
         XCTAssertTrue(waitForAlarmStatus("Replacement failed; Alarm scheduled", toggle: toggle), "The previous AlarmKit alarm must survive a failed replacement.")
+        XCTAssertTrue(app.otherElements["alarmRecovery.message"].waitForExistence(timeout: 10), "Users should see that the update failed while the old alarm remains set.")
+        XCTAssertTrue(app.buttons["alarmRecovery.retry"].exists, "Users should have a retry action for a generic scheduling failure.")
         app.terminate()
         app.launchArguments = ["--ui-test-dashboard"]
         app.launch()
