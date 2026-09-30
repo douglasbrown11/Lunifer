@@ -1,51 +1,14 @@
 # Lunifer daily alarm reliability
 
 Updated: September 14, 2026.
-This document records the fixes completed in this session and the remaining cases to audit or test.
+This document records the remaining cases to audit or test.
 An item marked **audit** is a possible failure path, not a reproduced bug or a promise that the platform behaves that way.
 The goal is a confirmed system alarm for the next eligible wake time, an honest dashboard, and recovery without silently losing a working alarm.
-
-## Completed fixes
-
-1. **Midnight boundary:** automatic dashboard refresh and adaptive checks preserve today's upcoming main alarm instead of replacing it with tomorrow's alarm.
-The dashboard continues displaying the preserved time, including when tomorrow is a rest day.
-2. **Rest-day gaps:** refresh preserves a main alarm already set for the next eligible wake day across intervening rest days.
-Removing that future wake day still cancels its alarm.
-3. **Re-enabling:** turning Lunifer back on immediately schedules the next eligible wake-day alarm instead of relying on a later reload or background refresh.
-The simulator exercise covers off → on → off with real AlarmKit registry state.
-4. **Replacement failure:** schedule and confirm the new main alarm before canceling the old main alarm.
-Recover existing alarms from the system registry after reopening, preserve user-added alarms, and serialize main-alarm scheduling/cancellation.
-When scheduling fails, retain the previous displayed wake time and pending adaptive decision rather than presenting the attempted update as successful.
-Dependent reminder and manual-edit paths check scheduling success before committing successful-update state.
-5. **Denied alarm permission:** show the “Alarm access is off” recovery page with an “Open Settings” button when denial is confirmed.
-Replace the home-page content so its controls cannot be used, while preserving swiping to Sleep Insights and back.
-Returning with permission restored attempts scheduling again.
-Other scheduling failures must not be described as permission denial without checking the actual authorization state.
-
-### Evidence and limitations
-
-Seven unit regression checks cover today's pending alarm, expired alarms, rest-day preservation, and removing a wake day.
-Simulator UI checks cover re-enabling, failed replacement after reopening, successful replacement without duplicates, blocked home controls, Sleep Insights navigation, and launching Settings.
-The denial test uses a DEBUG-only permission fixture; the replacement test injects a scheduling failure while retaining a real previously scheduled AlarmKit alarm.
-These checks do not prove physical-device alarm delivery, actual Settings permission restoration, background execution, reboot behavior, or an uninterrupted multi-day alarm chain.
-Physical-device permission recovery was explicitly deferred by the user.
-The commit verification passed seven unit regressions and all seven UI checks on the iPhone 17 Pro simulator with iOS 26.5.
-The first UI run exposed a page-navigation test swiping the horizontally scrolling Sleep Insights chart; the corrected non-chart paging gesture passed in the final UI run.
 
 ## Remaining cases: highest priority
 
 ### A. Scheduling and state integrity
 
-- **A1 — Generic failure visibility (open):** permission recovery is implemented, but registry errors, SDK scheduling errors, and other failures still need an honest user-facing status and recovery action.
-Preserve the working alarm, explain which time remains confirmed, and offer retry without claiming that Settings caused the failure.
-- **A2 — No existing alarm (audit):** a first launch, previously failed schedule, or system-side deletion leaves no main alarm to preserve.
-Repair scheduling from current settings on appropriate startup/foreground paths rather than exiting because an alarm is missing.
-- **A3 — No tomorrow alarm across rest days (audit):** preserving Monday's existing alarm does not prove that a missing Monday alarm will be created on Friday or Saturday.
-All repair paths should resolve the next eligible wake day, not only tomorrow.
-- **A4 — Same-day re-enable (audit):** `nextWakeDay(after:)` searches offsets 1 through 7 and therefore excludes today.
-Decide explicitly whether turning Lunifer on before today's eligible wake time should schedule today, then test that behavior.
-- **A5 — Duplicate cleanup failure (open):** if the new alarm succeeds but retiring the old alarm fails, both may remain scheduled.
-Retain safety, expose/reconcile duplicates, and retry cleanup without deleting the confirmed replacement.
 - **A6 — Registry read failure (audit):** cached `activeAlarms` or an in-memory wake time may disagree with the system when registry access fails.
 Keep confirmed and uncertain state distinguishable and retry reconciliation.
 - **A7 — Crash during replacement (audit):** terminate after new-alarm creation but before old-alarm retirement or local-state updates.
@@ -60,16 +23,12 @@ Recover identity without silently deleting independent alarms.
 
 ### B. Advancing to the next day
 
-- **B1 — Every dismissal surface (audit):** stop from the app, lock screen, banner, Dynamic Island, or system intent while the app is not already running.
-Each main-alarm dismissal must advance once to the next eligible wake day.
 - **B2 — Alarm never explicitly dismissed (audit):** leave an alarm ringing, let its system presentation change, or miss it entirely.
 Determine how the next alarm is created when the ordinary Stop path never runs.
 - **B3 — App terminated around Stop (audit):** stop the main alarm, then terminate during calendar/commute resolution or before scheduling completes.
 Use durable recovery state or another reliable repair trigger so the chain does not end silently.
 - **B4 — Missing answers during an intent (audit):** background relaunch lacks decoded survey answers or ready app services.
 Recover persisted settings or use a defined fallback and record that scheduling needs repair.
-- **B5 — Added alarm stops first (audit):** dismissing a user-added alarm must not clear the displayed main wake time or interfere with main-alarm advancement.
-Test one-shot and repeating added alarms together with a pending main alarm.
 - **B6 — Duplicate Stop events (audit):** the in-app Stop path and system intent both process the same alarm.
 Advancement, adaptive logging, override clearing, and rest-day consumption should be idempotent.
 - **B7 — Several days unopened (audit):** run through multiple wake days and rest days without reopening Lunifer.
@@ -112,8 +71,6 @@ Define which events qualify and test the selection behavior.
 Validate stale/missing history and ensure the resulting alarm is suitable for the target day.
 - **D4 — Commute/routine extremes (audit):** missing location, stale commute cache, negative/huge durations, or an event early enough to push waking into the previous date.
 Validate inputs and define cross-midnight scheduling rather than creating a past alarm.
-- **D5 — Calculation finishes after target time (audit):** time passes while async inputs are resolved, or the user selects a time already elapsed.
-Revalidate the final date immediately before scheduling and choose an explicit recovery policy.
 - **D6 — Adaptive drift (audit):** repeated sleep estimates or calendar pulls move the alarm earlier/later across checks or a restart.
 Preserve the reference time, enforce agreed bounds, respect the first obligation, and avoid repeated contradictory replacements.
 - **D7 — Corrupt or incomplete preferences (audit):** missing enabled defaults, malformed survey JSON, unknown weekdays, invalid clock values, and failed persistence.
@@ -133,8 +90,6 @@ Test calendar-day arithmetic rather than assuming every day is a fixed number of
 Define which explicit edits should cancel or replace today's pending alarm and test them separately from automatic refresh.
 - **E6 — Empty or restored wake-day selection (audit):** no selected wake days should leave no automatic main alarm; adding a day should repair scheduling immediately when enabled.
 Keep independently added alarms intact.
-- **E7 — Rest-day opt-in failure (audit):** an opt-in marker or adaptive decision is saved before a scheduling request fails.
-Roll back or reconcile those markers so later guards do not mistake intent for a confirmed alarm.
 - **E8 — Rest-day opt-in lifetime (audit):** opt-in is consumed, ignored, or reused after midnight, dismissal, missed firing, or timezone change.
 Apply it to one intended calendar day and advance correctly afterward.
 - **E9 — Manual override lifetime (audit):** overrides survive a crash, expire after firing, or apply to a rest day.
@@ -154,9 +109,6 @@ Keep separate sound/snooze metadata and avoid misclassifying the active alarm.
 Treat reminders as separate state and never imply that a reminder proves a native alarm exists.
 - **F5 — Recovery UI escape paths (audit):** home buttons, gestures, overlays, deep links, accessibility actions, or state restoration bypass the denied-permission page.
 Keep home controls unavailable while preserving intended Sleep Insights access.
-- **F6 — Page versus chart gestures (audit):** Sleep Insights contains a horizontally scrolling history chart that can consume a swipe intended to change pages.
-Verify paging from the non-chart region and chart scrolling independently.
-The simulator navigation test uses a non-chart swipe to avoid conflating those two interactions.
 - **F7 — Settings cannot open or permission remains denied (audit):** the Settings URL is unavailable, navigation fails, or the user returns without granting access.
 Keep recovery visible and avoid claiming permission or scheduling was restored.
 - **F8 — Recovery accessibility (audit):** large text, small screens, VoiceOver, and supported orientations hide or obstruct the Settings action or page navigation.

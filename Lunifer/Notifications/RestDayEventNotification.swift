@@ -62,7 +62,7 @@ final class RestDayEventNotification {
             ? 60
             : answers.routine.hours * 60 + answers.routine.minutes
         let commuteMinutes: Int
-        if answers.lifestyle == "student" || answers.lifestyle == "commuter" {
+        if answers.hasCommuteSetup {
             commuteMinutes = answers.commute.auto
                 ? 30
                 : answers.commute.hours * 60 + answers.commute.minutes

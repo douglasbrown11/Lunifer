@@ -16,6 +16,7 @@ final class AppPreferencesStore {
         static let overrideActive = "overrideActive"
         static let overrideTimestamp = "overrideTimestamp"
         static let calculatedAlarmTimestamp = "calculatedAlarmTimestamp"
+        static let disabledPendingAlarmTimestamp = "disabledPendingAlarmTimestamp"
 
         // Added alarms (stored as a JSON-encoded [AddedAlarm] array)
         static let addedAlarms = "addedAlarms"
@@ -88,6 +89,30 @@ final class AppPreferencesStore {
     func resetAlarmOverride() {
         defaults.set(false, forKey: Keys.overrideActive)
         defaults.removeObject(forKey: Keys.overrideTimestamp)
+    }
+
+    var disabledPendingAlarmDate: Date? {
+        get {
+            let timestamp = defaults.double(forKey: Keys.disabledPendingAlarmTimestamp)
+            guard timestamp > 0 else { return nil }
+            let date = Date(timeIntervalSince1970: timestamp)
+            guard date > Date() else {
+                clearDisabledPendingAlarm()
+                return nil
+            }
+            return date
+        }
+        set {
+            if let newValue, newValue > Date() {
+                defaults.set(newValue.timeIntervalSince1970, forKey: Keys.disabledPendingAlarmTimestamp)
+            } else {
+                clearDisabledPendingAlarm()
+            }
+        }
+    }
+
+    func clearDisabledPendingAlarm() {
+        defaults.removeObject(forKey: Keys.disabledPendingAlarmTimestamp)
     }
 
     // MARK: - Rest-day alarm opt-in

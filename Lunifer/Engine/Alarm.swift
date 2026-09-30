@@ -30,6 +30,11 @@ struct BaselineAlarmResolution {
     let firstEvent: CalendarEvent?
 }
 
+struct AlarmSchedulingFailure: Equatable {
+    let attemptedDate: Date
+    let confirmedDate: Date?
+}
+
 // ─────────────────────────────────────────────────────────────
 // SECTION 2: THE MAIN ALARM CLASS
 // ─────────────────────────────────────────────────────────────
@@ -55,6 +60,7 @@ class LuniferAlarm: ObservableObject {
     @Published var activeAlarms: [Alarm] = []       // List of currently scheduled alarms
     @Published var scheduledWakeTime: Date? = nil   // The time the next alarm is set for
     @Published var alertingAlarm: Alarm? = nil      // The alarm currently firing (nil = no alarm ringing)
+    @Published var lastSchedulingFailure: AlarmSchedulingFailure? = nil
 
     /// Snooze duration (minutes) for whichever alarm is currently alerting.
     /// Updated in startMonitoring() when an alarm transitions into the alerting state.
@@ -100,6 +106,7 @@ class LuniferAlarm: ObservableObject {
     /// Prevents Path A from waking the user at an unreasonably early hour just
     /// because they happened to fall asleep very early.
     private let maxAdaptivePullHours: Double = 2.0
+    private let minimumScheduleLeadTime: TimeInterval = 60
 
     // ─────────────────────────────────────────────────────────
     // SECTION 3: REQUESTING PERMISSION
@@ -169,6 +176,11 @@ class LuniferAlarm: ObservableObject {
         routineMinutes: Int = 60,
         commuteMinutes: Int = 30
     ) async -> Bool {
+        guard isSchedulableAlarmDate(date) else {
+            print("⚠️ Skipping stale alarm request for \(date.formatted(date: .omitted, time: .shortened))")
+            recordSchedulingFailure(attemptedDate: date)
+            return false
+        }
         let previous = alarmMutation
         let mutation = Task { @MainActor in
             _ = await previous?.value
@@ -181,6 +193,10 @@ class LuniferAlarm: ObservableObject {
 
     private func replaceAlarm(for date: Date, eventTitle: String,
                               routineMinutes: Int, commuteMinutes: Int) async -> Bool {
+        guard isSchedulableAlarmDate(date) else {
+            recordSchedulingFailure(attemptedDate: date)
+            return false
+        }
         guard UserDefaults.standard.bool(forKey: AppPreferencesStore.Keys.luniferEnabled) else { return false }
         // Step 1: Make sure we have permission first
         // If we don't, ask for it. If user still says no, stop here.
@@ -196,6 +212,7 @@ class LuniferAlarm: ObservableObject {
             existingAlarms = try manager.alarms
         } catch {
             print("❌ Unable to read existing alarms: \(error.localizedDescription)")
+            recordSchedulingFailure(attemptedDate: date)
             return false
         }
         let addedIDs = Set(addedAlarmIDs.values)
@@ -268,6 +285,7 @@ class LuniferAlarm: ObservableObject {
             activeAlarms = (try? manager.alarms) ?? activeAlarms
             originalScheduledWakeTime = nil
             scheduledWakeTime = date
+            lastSchedulingFailure = nil
             print("✅ Alarm set for \(date.formatted(date: .omitted, time: .shortened))")
 
             // Log the scheduling event for the ML model
@@ -277,8 +295,16 @@ class LuniferAlarm: ObservableObject {
         } catch {
             // Something went wrong — print the error for debugging in Xcode console
             print("❌ Failed to schedule alarm: \(error.localizedDescription)")
+            recordSchedulingFailure(attemptedDate: date)
             return false
         }
+    }
+
+    private func recordSchedulingFailure(attemptedDate: Date) {
+        lastSchedulingFailure = AlarmSchedulingFailure(
+            attemptedDate: attemptedDate,
+            confirmedDate: scheduledWakeTime
+        )
     }
 
     // ─────────────────────────────────────────────────────────
@@ -510,7 +536,7 @@ class LuniferAlarm: ObservableObject {
         let routine = answers.routine.auto
             ? 60
             : answers.routine.hours * 60 + answers.routine.minutes
-        let commute: Int = (answers.lifestyle == "student" || answers.lifestyle == "commuter")
+        let commute: Int = (answers.hasCommuteSetup)
             ? (answers.commute.auto
                 ? (CommuteManager.shared.currentDurationMinutes > 0
                     ? CommuteManager.shared.currentDurationMinutes
@@ -554,7 +580,7 @@ class LuniferAlarm: ObservableObject {
             ? 60
             : answers.routine.hours * 60 + answers.routine.minutes
         let commuteMinutes: Int
-        if answers.lifestyle == "student" || answers.lifestyle == "commuter" {
+        if answers.hasCommuteSetup {
             if answers.commute.auto {
                 let live = await CommuteManager.fetchLiveDuration(answers: answers)
                 // Cache so routineCommuteBufferSeconds() and the commute card can
@@ -721,12 +747,37 @@ class LuniferAlarm: ObservableObject {
         return pending
     }
 
+    func hasPendingMainAlarm() -> Bool {
+        pendingMainAlarmDate() != nil
+    }
+
     /// A rest day must not erase an alarm already set for the next wake day.
     /// Validate the date against current settings so removed days still cancel.
     private func isNextWakeDayAlarm(_ date: Date, answers: SurveyAnswers) -> Bool {
         if AppPreferencesStore.shared.hasRestDayAlarmOptIn(for: date) { return true }
         guard let nextDay = nextWakeDay(after: Date(), answers: answers) else { return false }
         return Calendar.current.isDate(date, inSameDayAs: nextDay)
+    }
+
+    func isSchedulableAlarmDate(_ date: Date, now: Date = Date()) -> Bool {
+        date.timeIntervalSince(now) >= minimumScheduleLeadTime
+    }
+
+    private func nextSchedulableAlarm(
+        answers: SurveyAnswers,
+        startingWith startDay: Date
+    ) async -> (baseline: BaselineAlarmResolution, finalAlarm: Date)? {
+        var day = Calendar.current.startOfDay(for: startDay)
+        for _ in 0..<8 {
+            let baseline = await resolveBaselineAlarmDate(answers: answers, targetDay: day)
+            let finalAlarm = decideAlarm(from: baseline, answers: answers)
+            if isSchedulableAlarmDate(finalAlarm) {
+                return (baseline, finalAlarm)
+            }
+            guard let nextDay = nextWakeDay(after: day, answers: answers) else { return nil }
+            day = nextDay
+        }
+        return nil
     }
 
     @discardableResult
@@ -762,9 +813,13 @@ class LuniferAlarm: ObservableObject {
         // settings change cannot leave an overridden AlarmKit alarm registered.
         guard !defaults.bool(forKey: AppPreferencesStore.Keys.overrideActive) else { return nil }
 
-        let baseline = await resolveBaselineAlarmDate(answers: answers, targetDay: tomorrow)
         let previousDecision = AdaptiveAlarmStore.shared.pendingDecision()
-        let finalAlarm = decideAlarm(from: baseline, answers: answers)
+        guard let candidate = await nextSchedulableAlarm(answers: answers, startingWith: tomorrow) else {
+            restorePendingDecision(previousDecision)
+            return scheduledWakeTime
+        }
+        let baseline = candidate.baseline
+        let finalAlarm = candidate.finalAlarm
         guard await scheduleAlarm(for: finalAlarm, eventTitle: baseline.firstEvent?.title ?? "your first event", routineMinutes: baseline.routineMinutes, commuteMinutes: baseline.commuteMinutes) else {
             restorePendingDecision(previousDecision)
             return scheduledWakeTime
@@ -788,9 +843,13 @@ class LuniferAlarm: ObservableObject {
         guard UserDefaults.standard.bool(forKey: "luniferEnabled") else { return }
         guard let nextDay = nextWakeDay(after: Date(), answers: answers) else { return }
 
-        let baseline = await resolveBaselineAlarmDate(answers: answers, targetDay: nextDay)
         let previousDecision = AdaptiveAlarmStore.shared.pendingDecision()
-        let finalAlarm = decideAlarm(from: baseline, answers: answers)
+        guard let candidate = await nextSchedulableAlarm(answers: answers, startingWith: nextDay) else {
+            restorePendingDecision(previousDecision)
+            return
+        }
+        let baseline = candidate.baseline
+        let finalAlarm = candidate.finalAlarm
 
         guard await scheduleAlarm(
             for: finalAlarm,
@@ -1114,7 +1173,7 @@ class LuniferAlarm: ObservableObject {
             routineMins = a.routine.auto
                 ? 60
                 : a.routine.hours * 60 + a.routine.minutes
-            if a.lifestyle == "student" || a.lifestyle == "commuter" {
+            if a.hasCommuteSetup {
                 if a.commute.auto {
                     // Prefer the live GPS-routed duration cached by CommuteManager;
                     // fall back to 30 min only if no live fetch has run yet.

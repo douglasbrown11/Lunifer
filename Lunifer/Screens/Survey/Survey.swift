@@ -26,6 +26,11 @@ struct SurveyAnswers: Codable {
     /// Transport mode for commute: "drive", "transit", "walk", or "bike"
     var commuteMode: String = ""
 
+    /// Existing commuters retain their setup; other users opt in by choosing a mode.
+    var hasCommuteSetup: Bool {
+        !commuteMode.isEmpty || lifestyle == "student" || lifestyle == "commuter"
+    }
+
     static func loadFromDefaults() -> SurveyAnswers? {
         SurveyAnswersStore.shared.loadFromDefaults()
     }
@@ -395,19 +400,9 @@ struct LuniferSurvey: View {
         // Calendar nudge
         @State private var showCalendarNudge = false
         
-        private var showCommute: Bool {
-            answers.lifestyle == "student" || answers.lifestyle == "commuter"
-        }
-        /// Morning routine step is skipped for users who are not working.
-        private var showRoutine: Bool {
-            answers.lifestyle != "not_working"
-        }
         private var totalSteps: Int {
-            // Calendar step (step 3) is skipped when pre-selected before sign-in
-            var count = skipCalendarStep ? 4 : 5
-            if showRoutine { count += 1 }
-            if showCommute { count += 1 }
-            return count
+            // Everyone configures their morning routine and commute.
+            skipCalendarStep ? 6 : 7
         }
         private var isLastStep: Bool { visualStep == totalSteps - 1 }
         
@@ -723,21 +718,9 @@ struct LuniferSurvey: View {
                         ("student",     "I am a student"),
                         ("wfh",         "I work from home"),
                         ("commuter",    "I commute to work sometimes or most days"),
-                        ("not_working", "I'm not working right now"),
                     ], id: \.0) { id, label in
                         OptionCard(isSelected: answers.lifestyle == id) {
-                            let previous = answers.lifestyle
                             answers.lifestyle = id
-                            // If switching TO not_working, zero out routine so the skipped
-                            // step doesn't silently subtract time from the alarm calculation.
-                            if id == "not_working" {
-                                answers.routine = TimeValue(hours: 0, minutes: 0, auto: false)
-                            }
-                            // If switching AWAY FROM not_working, restore the routine default
-                            // so the newly-visible step starts at a sensible value.
-                            if previous == "not_working" && id != "not_working" {
-                                answers.routine = TimeValue(hours: 0, minutes: 45, auto: false)
-                            }
                         } content: {
                             Text(label)
                                 .font(.custom("DM Sans", size: 14))
@@ -1177,7 +1160,7 @@ struct LuniferSurvey: View {
         /// Called by the primary button. Intercepts the routine step so the
         /// long-routine warning fires on "Done" rather than mid-scroll.
         private func checkRoutineBeforeContinue() {
-            if step == 5 && showRoutine && !answers.routine.auto && answers.routine.hours > 4 {
+            if step == 5 && !answers.routine.auto && answers.routine.hours > 4 {
                 let h = answers.routine.hours
                 let m = answers.routine.minutes
                 longRoutineTimeLabel = m > 0 ? "\(h) hours \(m) minutes" : "\(h) hours"
@@ -1324,9 +1307,7 @@ struct LuniferSurvey: View {
             // CommuteManager provides live MKDirections durations at runtime;
             // the stored hours/minutes values are only used as a fallback when
             // routing is unavailable.
-            if showCommute {
-                answers.commute = TimeValue(hours: 0, minutes: 30, auto: true)
-            }
+            answers.commute = TimeValue(hours: 0, minutes: 30, auto: true)
             let snapshot = answers
             Task { @MainActor in
                 saving    = true
@@ -1365,11 +1346,11 @@ struct LuniferSurvey: View {
                 _ = try? await UNUserNotificationCenter.current()
                     .requestAuthorization(options: [.alert, .sound, .badge])
 
-                // Request location access for commuters/students so CommuteManager
+                // Request location access for everyone configuring a commute so CommuteManager
                 // can perform live MKDirections routing. We await the user's response
                 // so we can detect if they chose something other than "Always Allow"
                 // and explain why the fuller permission is needed before proceeding.
-                if snapshot.lifestyle == "student" || snapshot.lifestyle == "commuter" {
+                if snapshot.hasCommuteSetup {
                     let status = await LocationManager.shared.requestAlwaysAuthorizationAsync()
                     if status != .authorizedAlways {
                         // Hold onFinish — show explanation alert first.

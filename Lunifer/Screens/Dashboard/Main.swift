@@ -132,6 +132,16 @@ struct LuniferMain: View {
         return luniferEnabled ? "On" : "Off"
     }
 
+    private var alarmSchedulingFailureMessage: String? {
+        guard alarmManager.lastSchedulingFailure != nil else { return nil }
+        if let confirmed = alarmManager.scheduledWakeTime ?? alarmManager.lastSchedulingFailure?.confirmedDate {
+            let formatter = DateFormatter()
+            formatter.dateFormat = "h:mm a"
+            return "Update failed. \(formatter.string(from: confirmed)) is still set."
+        }
+        return "Alarm update failed. Try again."
+    }
+
     private func loadAddedAlarms() {
         guard let data = UserDefaults.standard.data(forKey: "addedAlarms"),
               let decoded = try? JSONDecoder().decode([AddedAlarm].self, from: data)
@@ -305,15 +315,15 @@ struct LuniferMain: View {
 
     // ── Commute helpers ───────────────────────────────────────
 
-    private var isCommuterUser: Bool {
-        answers.lifestyle == "student" || answers.lifestyle == "commuter"
+    private var hasCommuteSetup: Bool {
+        answers.hasCommuteSetup
     }
 
     /// True after the alarm has fired and before the calculated leave time,
     /// on a day the user is scheduled to wake up.
     private var shouldShowCommuteCard: Bool {
         _ = ticker // re-evaluate each minute alongside the rest-period check
-        guard isCommuterUser else { return false }
+        guard hasCommuteSetup else { return false }
         guard answers.wakeDays.contains(weekdayID(for: Date())) else { return false }
         // Only show while the user is between waking up and their first event starting.
         // If there is no calendar event today, the card (and nudge) are not shown.
@@ -554,7 +564,7 @@ struct LuniferMain: View {
             // fetchEvents() was already called inside resolveAlarmDate(), so
             // firstEventTomorrow is populated. Use the event start as the arrival
             // target; fall back to wake time + buffer when no event is found.
-            if isCommuterUser && answers.wakeDays.contains(weekdayID(for: Date())) {
+            if hasCommuteSetup && answers.wakeDays.contains(weekdayID(for: Date())) {
                 let arrival = CalendarManager.shared.firstEventTomorrow?.startDate
                     ?? resolvedAlarmDate.addingTimeInterval(LuniferAlarm.shared.routineCommuteBufferSeconds(answers: answers))
                 CommuteManager.shared.startPolling(answers: answers, arrivalDate: arrival)
@@ -625,8 +635,23 @@ struct LuniferMain: View {
             // finalize last night immediately so Sleep Insights updates on foreground.
             // Independent of the alarm enable/override state, so it runs before the guard.
             Task { await SleepTracker.shared.confirmWakeFromMorningPickup() }
-            guard luniferEnabled && !overrideActive else { return }
-            Task { await LuniferAlarm.shared.checkAlarmAgainstCalendar() }
+            guard luniferEnabled else { return }
+            Task { @MainActor in
+                if !alarmManager.hasPendingMainAlarm() {
+                    if overrideActive {
+                        guard await alarmManager.scheduleAlarm(for: overrideTime) else { return }
+                        resolvedAlarmDate = overrideTime
+                        calculatedAlarmTimestamp = overrideTime.timeIntervalSince1970
+                        await WakeNotification.shared.schedule(wakeDate: overrideTime, answers: answers)
+                    } else if let refreshed = await alarmManager.refreshTomorrowAlarm(answers: answers) {
+                        resolvedAlarmDate = refreshed
+                        calculatedAlarmTimestamp = refreshed.timeIntervalSince1970
+                    }
+                    return
+                }
+                guard !overrideActive else { return }
+                await alarmManager.checkAlarmAgainstCalendar()
+            }
         }
         // Reload added alarms whenever stopAlarm() removes a one-shot or advances a repeating alarm.
         .onReceive(NotificationCenter.default.publisher(for: .luniferAddedAlarmModified)) { _ in
@@ -663,6 +688,22 @@ struct LuniferMain: View {
         isAlarmCalculating = false
     }
 
+    @MainActor
+    private func retryAlarmSchedulingFailure() async {
+        isAlarmCalculating = true
+        defer { isAlarmCalculating = false }
+        if overrideActive {
+            if await LuniferAlarm.shared.scheduleAlarm(for: overrideTime) {
+                await WakeNotification.shared.schedule(wakeDate: overrideTime, answers: answers)
+            }
+            return
+        }
+        if let refreshed = await LuniferAlarm.shared.refreshTomorrowAlarm(answers: answers) {
+            resolvedAlarmDate = refreshed
+            calculatedAlarmTimestamp = refreshed.timeIntervalSince1970
+        }
+    }
+
     private func checkAlarmAuthorization() {
         guard !isRunningPreview else {
             showAlarmDeniedAlert = false
@@ -681,12 +722,19 @@ struct LuniferMain: View {
             defer { isChangingAlarmEnablement = false }
             if enabled {
                 TurnBackOnNotification.shared.cancel()
-                // Re-enabling starts a fresh automatic schedule, not an old override.
+                let rememberedAlarm = AppPreferencesStore.shared.disabledPendingAlarmDate
                 overrideActive = false
                 overrideTimestamp = 0
                 isAlarmCalculating = true
                 defer { isAlarmCalculating = false }
-                await LuniferAlarm.shared.scheduleNextWakeAlarm(answers: answers)
+                if let rememberedAlarm,
+                   await LuniferAlarm.shared.scheduleAlarm(for: rememberedAlarm) {
+                    AppPreferencesStore.shared.clearDisabledPendingAlarm()
+                    await WakeNotification.shared.schedule(wakeDate: rememberedAlarm, answers: answers)
+                } else {
+                    AppPreferencesStore.shared.clearDisabledPendingAlarm()
+                    await LuniferAlarm.shared.scheduleNextWakeAlarm(answers: answers)
+                }
                 if let scheduled = LuniferAlarm.shared.scheduledWakeTime {
                     resolvedAlarmDate = scheduled
                     calculatedAlarmTimestamp = scheduled.timeIntervalSince1970
@@ -695,6 +743,7 @@ struct LuniferMain: View {
                 }
                 checkAlarmAuthorization()
             } else {
+                AppPreferencesStore.shared.disabledPendingAlarmDate = overrideActive ? overrideTime : alarmManager.scheduledWakeTime
                 AdaptiveAlarmStore.shared.clearPendingDecision()
                 AppPreferencesStore.shared.clearRestDayAlarmOptIn()
                 await LuniferAlarm.shared.cancelAlarm()
@@ -917,6 +966,44 @@ struct LuniferMain: View {
                             .padding(.top, 8)
                             .transition(.opacity)
                         }
+
+                        if !alarmExpanded, let alarmSchedulingFailureMessage {
+                            HStack(spacing: 10) {
+                                Image(systemName: "exclamationmark.triangle")
+                                    .font(.system(size: 12, weight: .regular))
+                                    .foregroundColor(Color(red: 0.95, green: 0.78, blue: 0.45))
+                                Text(alarmSchedulingFailureMessage)
+                                    .font(.custom("DM Sans", size: 12))
+                                    .foregroundColor(Color.white.opacity(0.68))
+                                    .fixedSize(horizontal: false, vertical: true)
+                                Spacer(minLength: 4)
+                                Button {
+                                    Task { await retryAlarmSchedulingFailure() }
+                                } label: {
+                                    Text("Try Again")
+                                        .font(.custom("DM Sans", size: 12))
+                                        .foregroundColor(Color.white.opacity(0.82))
+                                }
+                                .buttonStyle(.plain)
+                                .accessibilityLabel("Try Again")
+                                .accessibilityIdentifier("alarmRecovery.retry")
+                            }
+                            .padding(.horizontal, 12)
+                            .padding(.vertical, 10)
+                            .background(
+                                RoundedRectangle(cornerRadius: 10)
+                                    .fill(Color.white.opacity(0.06))
+                                    .overlay(
+                                        RoundedRectangle(cornerRadius: 10)
+                                            .stroke(Color.white.opacity(0.1), lineWidth: 1)
+                                    )
+                            )
+                            .padding(.top, 12)
+                            .accessibilityElement(children: .contain)
+                            .accessibilityLabel(alarmSchedulingFailureMessage)
+                            .accessibilityIdentifier("alarmRecovery.message")
+                            .transition(.opacity)
+                        }
                     }
                     .padding(.horizontal, 32)
 
@@ -1009,7 +1096,7 @@ struct LuniferMain: View {
                                                 for: calculatedAlarmDate,
                                                 eventTitle: CalendarManager.shared.firstEventTomorrow?.title ?? "your first event",
                                                 routineMinutes: answers.routine.auto ? 60 : answers.routine.hours * 60 + answers.routine.minutes,
-                                                commuteMinutes: (answers.lifestyle == "student" || answers.lifestyle == "commuter")
+                                                commuteMinutes: (answers.hasCommuteSetup)
                                                     ? (answers.commute.auto ? (CommuteManager.shared.currentDurationMinutes > 0 ? CommuteManager.shared.currentDurationMinutes : 30) : answers.commute.hours * 60 + answers.commute.minutes)
                                                     : 0
                                             ) else { return }
