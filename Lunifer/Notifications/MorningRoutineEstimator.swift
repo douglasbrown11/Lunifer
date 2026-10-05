@@ -11,11 +11,6 @@ import CoreMotion
 // time is meaningfully off.
 //
 // SCOPE (intentionally narrow):
-//   • Runs ONLY for "student" or "commuter" lifestyles. These are
-//     the only users with an observable end-of-routine event
-//     (departure), so they're the only ones we can measure.
-//     `configure(for:)` flips the estimator on/off whenever the
-//     lifestyle changes (e.g. in About You settings).
 //   • Samples are collected ONLY on the user's wake days — the days
 //     they've asked Lunifer to wake them. Non-wake-day mornings are
 //     ignored entirely.
@@ -45,7 +40,7 @@ import CoreMotion
 // to show it and the user taps to accept.
 //
 // ── Wiring (call sites, handled separately) ───────────────────
-//   • `configure(for:)`  → dashboard load + About You lifestyle change
+//   • `configure(for:)`  → dashboard load
 //   • `handleWakeDetected(at:answers:)` → SleepTracker wake / alarm Stop
 //   • `refresh(answers:)` → app-becomes-active + sleep background task
 //   • `recommendation(currentRoutineMinutes:)` → dashboard / settings UI
@@ -108,14 +103,11 @@ final class MorningRoutineEstimator: ObservableObject {
     }
 
     // ─────────────────────────────────────────────────────────
-    // MARK: - Enable / disable (lifestyle gating)
+    // MARK: - Enable / disable
     // ─────────────────────────────────────────────────────────
 
-    /// Turns estimation on for commuters/students and off for everyone
-    /// else. Call on dashboard load and whenever the lifestyle changes
-    /// in settings so the feature switches with the user's preference.
     func configure(for answers: SurveyAnswers) {
-        setEnabled(answers.lifestyle == "student" || answers.lifestyle == "commuter")
+        setEnabled(!answers.wakeDays.isEmpty)
     }
 
     func setEnabled(_ enabled: Bool) {
@@ -169,6 +161,8 @@ final class MorningRoutineEstimator: ObservableObject {
     // ─────────────────────────────────────────────────────────
 
     private func scanForDeparture(commuteMode: String) async {
+        let generation = BackgroundActivitySession.shared.generation
+        guard BackgroundActivitySession.shared.accepts(generation) else { return }
         guard CMMotionActivityManager.isActivityAvailable() else { return }
 
         let wakeTS = defaults.double(forKey: armedWakeKey)
@@ -183,6 +177,7 @@ final class MorningRoutineEstimator: ObservableObject {
 
         let now = Date()
         let activities = await queryMotionHistory(from: wakeTime, to: now)
+        guard BackgroundActivitySession.shared.accepts(generation) else { return }
 
         if let departure = firstSustainedDeparture(in: activities, mode: commuteMode, after: wakeTime) {
             let minutes = Int(departure.timeIntervalSince(wakeTime) / 60.0)

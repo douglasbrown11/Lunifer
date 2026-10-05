@@ -1,5 +1,7 @@
 const WHOOP_TOKEN_URL = "https://api.prod.whoop.com/oauth/oauth2/token";
 const WHOOP_CYCLE_URL = "https://api.prod.whoop.com/developer/v2/cycle";
+import { fetchSleepHistory } from "./sleep-history.mjs";
+
 const WHOOP_SLEEP_URL = "https://api.prod.whoop.com/developer/v2/activity/sleep";
 const FIREBASE_CERTS_URL = "https://www.googleapis.com/service_accounts/v1/jwk/securetoken@system.gserviceaccount.com";
 const OURA_TOKEN_URL    = "https://api.ouraring.com/oauth/token";
@@ -240,11 +242,12 @@ async function fetchAndPersistSleepNeed(env, uid) {
   const tokenData = await loadWhoopToken(env, uid);
   const refreshedTokenData = await refreshTokenIfNeeded(env, uid, tokenData);
 
-  const sleepCollection = await whoopGet(`${WHOOP_SLEEP_URL}?limit=7`, refreshedTokenData.accessToken);
-  const sleepRecords = (sleepCollection?.records || [])
+  const records = await fetchSleepHistory(WHOOP_SLEEP_URL,
+    url => whoopGet(url, refreshedTokenData.accessToken), "whoop");
+  const sleepRecords = records
     .map(normalizeWhoopSleepSession)
     .filter(Boolean);
-  const latestSleep = sleepCollection?.records?.find(record => record?.cycle_id);
+  const latestSleep = records.find(record => record?.cycle_id);
   const cycleId = latestSleep?.cycle_id;
   if (!cycleId) {
     throw httpError(404, "WHOOP returned no sleep sessions for this user.");
@@ -349,21 +352,18 @@ async function fetchAndPersistOuraSleep(env, uid) {
   const refreshedTokenData = await refreshOuraTokenIfNeeded(env, uid, tokenData);
   const accessToken       = refreshedTokenData.accessToken;
 
-  // Fetch last 7 days of sleep sessions
-  const today   = new Date().toISOString().split("T")[0];
-  const weekAgo = new Date(Date.now() - 7 * 24 * 60 * 60 * 1000).toISOString().split("T")[0];
-  const sleepData = await ouraGet(
-    `${OURA_SLEEP_URL}?start_date=${weekAgo}&end_date=${today}`,
-    accessToken
-  );
-  const sessions = (sleepData.data || [])
+  const records = await fetchSleepHistory(OURA_SLEEP_URL,
+    url => ouraGet(url, accessToken), "oura");
+  const sessions = records
     .map(normalizeOuraSleepSession)
     .filter(Boolean);
   if (sessions.length === 0) throw httpError(404, "Oura returned no sleep sessions.");
 
   // Average total_sleep_duration (seconds) over available sessions
-  const totalHours = sessions.reduce((sum, s) => sum + (s.durationHours || 0), 0);
-  const avgHours  = totalHours / sessions.length;
+  const recentSessions = sessions.filter(s => Date.parse(s.wakeTime) >= Date.now() - 7 * 86400000);
+  const recommendationSessions = recentSessions.length ? recentSessions : sessions;
+  const totalHours = recommendationSessions.reduce((sum, s) => sum + (s.durationHours || 0), 0);
+  const avgHours  = totalHours / recommendationSessions.length;
 
   // Fetch latest readiness score and add buffer if recovery is low
   let adjustment = 0;

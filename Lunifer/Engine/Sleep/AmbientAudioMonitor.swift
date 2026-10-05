@@ -23,7 +23,6 @@ final class AmbientAudioMonitor: ObservableObject {
     private let rollingWindow: TimeInterval = 10 * 60
     private let sampleInterval: TimeInterval = 5
     private let minimumSamplesForDecision = 6
-    private var lastAcceptedSampleDate: Date = .distantPast
 
     func start() {
         guard AVAudioSession.sharedInstance().recordPermission == .granted else {
@@ -41,11 +40,14 @@ final class AmbientAudioMonitor: ObservableObject {
             let input = engine.inputNode
             let format = input.outputFormat(forBus: 0)
             input.removeTap(onBus: 0)
+            let sampleGate = AudioSampleGate(interval: sampleInterval)
             input.installTap(onBus: 0, bufferSize: 4096, format: format) { [weak self] buffer, _ in
+                guard sampleGate.accept(at: ProcessInfo.processInfo.systemUptime) else { return }
                 guard let self else { return }
+                let sampledAt = Date()
                 let decibels = Self.decibels(from: buffer)
                 Task { @MainActor [weak self] in
-                    self?.record(decibels: decibels)
+                    self?.record(decibels: decibels, at: sampledAt)
                 }
             }
 
@@ -62,13 +64,11 @@ final class AmbientAudioMonitor: ObservableObject {
             engine.inputNode.removeTap(onBus: 0)
         }
         engine.stop()
+        try? AVAudioSession.sharedInstance().setActive(false, options: .notifyOthersOnDeactivation)
     }
 
-    private func record(decibels: Double) {
-        let now = Date()
-        guard now.timeIntervalSince(lastAcceptedSampleDate) >= sampleInterval else { return }
-        lastAcceptedSampleDate = now
-
+    private func record(decibels: Double, at now: Date) {
+        guard engine.isRunning else { return }
         samples.append(Sample(date: now, decibels: decibels))
         samples.removeAll { now.timeIntervalSince($0.date) > rollingWindow }
 
@@ -107,7 +107,7 @@ final class AmbientAudioMonitor: ObservableObject {
         }
     }
 
-    private static func decibels(from buffer: AVAudioPCMBuffer) -> Double {
+    nonisolated private static func decibels(from buffer: AVAudioPCMBuffer) -> Double {
         guard let channelData = buffer.floatChannelData,
               buffer.frameLength > 0 else {
             return -120

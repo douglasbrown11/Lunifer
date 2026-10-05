@@ -186,11 +186,13 @@ final class CalendarManager: ObservableObject {
         errorMessage = nil
 
         todayEvents = fetchEKEvents(from: todayStart, to: todayEnd)
+            .filter { !Self.isCanceled($0) }
             .map(mapToCalendarEvent)
             .sorted { $0.startDate < $1.startDate }
 
         // Upcoming: tomorrow → 7 days from today
         upcomingEvents = fetchEKEvents(from: todayEnd, to: upcomingEnd)
+            .filter { !Self.isCanceled($0) }
             .map(mapToCalendarEvent)
             .sorted { $0.startDate < $1.startDate }
 
@@ -297,6 +299,7 @@ final class CalendarManager: ObservableObject {
         var earliestPerDay: [String: Date] = [:]
 
         for event in fetchEKEvents(from: sixWeeksAgo, to: yesterday) {
+            guard !Self.isCanceled(event) else { continue }
             guard !event.isAllDay else { continue }
             // Skip meetings the user declined — they shouldn't shape the
             // historical "typical first event" pattern either.
@@ -365,5 +368,9 @@ final class CalendarManager: ObservableObject {
             return participant.participantStatus == .declined
         }
         return false
+    }
+
+    nonisolated static func isCanceled(_ event: EKEvent) -> Bool {
+        event.status == .canceled
     }
 }

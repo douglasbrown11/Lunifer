@@ -65,7 +65,11 @@ final class SleepFeatureCollector: ObservableObject {
 
     /// Call once when the app launches. Starts live listeners
     /// and loads any persisted state from before the app was suspended.
+    private var isCollecting = false
+
     func startCollecting() {
+        guard !isCollecting, !BackgroundActivitySession.shared.isStopped else { return }
+        isCollecting = true
         loadPersistedState()
         startMotionUpdates()
         startAmbientAudioUpdates()
@@ -85,6 +89,7 @@ final class SleepFeatureCollector: ObservableObject {
     }
 
     func stopCollecting() {
+        isCollecting = false
         motionActivityManager.stopActivityUpdates()
         ambientAudioMonitor.stop()
         refreshTimer?.invalidate()
@@ -225,6 +230,7 @@ final class SleepFeatureCollector: ObservableObject {
     }
 
     private func handleMotionUpdate(_ activity: CMMotionActivity) {
+        guard isCollecting else { return }
         let wasStationary = isStationary
         isStationary = activity.stationary
 
@@ -287,6 +293,7 @@ final class SleepFeatureCollector: ObservableObject {
     }
 
     private func recordInteraction() {
+        guard isCollecting else { return }
         let now = Date()
         trackingStore.recordInteraction(at: now)
         let log = loadInteractionLog()
@@ -314,6 +321,7 @@ final class SleepFeatureCollector: ObservableObject {
     // ─────────────────────────────────────────────────────────
 
     private func refreshDerivedFeatures() {
+        guard isCollecting else { return }
         let now = Date()
         let cal = Calendar.current
 

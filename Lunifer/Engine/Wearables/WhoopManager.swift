@@ -170,6 +170,8 @@ final class WhoopManager: NSObject, ObservableObject, ASWebAuthenticationPresent
     }
 
     func fetchSleepNeed() async throws {
+        let generation = BackgroundActivitySession.shared.generation
+        guard BackgroundActivitySession.shared.accepts(generation) else { return }
         let status: WhoopBackendStatusResponse = try await callBackend(
             path: Backend.fetchSleepNeedPath,
             payload: [:]
@@ -177,6 +179,7 @@ final class WhoopManager: NSObject, ObservableObject, ASWebAuthenticationPresent
         guard let hours = status.recommendedSleepHours, hours > 0 else {
             throw WhoopError.noData
         }
+        guard BackgroundActivitySession.shared.accepts(generation) else { return }
         apply(status: status)
     }
 

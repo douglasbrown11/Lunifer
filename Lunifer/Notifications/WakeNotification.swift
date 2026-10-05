@@ -70,7 +70,10 @@ final class WakeNotification {
 
         // ── Permission check ──────────────────────────────────
         let center   = UNUserNotificationCenter.current()
+        let generation = BackgroundActivitySession.shared.generation
+        guard BackgroundActivitySession.shared.accepts(generation) else { return }
         let settings = await center.notificationSettings()
+        guard BackgroundActivitySession.shared.accepts(generation) else { return }
         guard settings.authorizationStatus == .authorized ||
               settings.authorizationStatus == .provisional else {
             print("⏭️ Wake reminder skipped — notifications not authorised")
@@ -108,6 +111,10 @@ final class WakeNotification {
 
         do {
             try await center.add(request)
+            if !BackgroundActivitySession.shared.accepts(generation) {
+                center.removePendingNotificationRequests(withIdentifiers: [request.identifier])
+                center.removeDeliveredNotifications(withIdentifiers: [request.identifier])
+            }
             print("🌙 Wake reminder scheduled for \(f.string(from: notifyAt)) " +
                   "(bedtime \(bedtimeStr), wake \(wakeStr))")
         } catch {

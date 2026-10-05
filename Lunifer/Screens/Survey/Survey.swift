@@ -17,18 +17,16 @@ struct TimeValue: Codable, Equatable {
 
 struct SurveyAnswers: Codable {
     var age: String        = "2000-01-01"
-    var lifestyle: String? = nil
     var wakeDays: [String] = ["mon", "tue", "wed", "thu", "fri"]
     var calendar: String?  = nil
     var sleep   = TimeValue(hours: 8, minutes: 0,  auto: false)
     var routine = TimeValue(hours: 0, minutes: 45, auto: false)
-    var commute = TimeValue(hours: 0, minutes: 30, auto: true)
+    var commute = TimeValue(hours: 0, minutes: 0, auto: true)
     /// Transport mode for commute: "drive", "transit", "walk", or "bike"
-    var commuteMode: String = ""
+    var commuteMode: String = "drive"
 
-    /// Existing commuters retain their setup; other users opt in by choosing a mode.
     var hasCommuteSetup: Bool {
-        !commuteMode.isEmpty || lifestyle == "student" || lifestyle == "commuter"
+        !commuteMode.isEmpty
     }
 
     static func loadFromDefaults() -> SurveyAnswers? {
@@ -70,7 +68,7 @@ private struct SurveyStepDots: View {
     }
 }
 
-// ── MARK: Option card (lifestyle + calendar) ─────────────────
+// ── MARK: Option card ────────────────────────────────────────
 
 struct OptionCard<Content: View>: View {
     let isSelected: Bool
@@ -358,10 +356,12 @@ struct LuniferSurvey: View {
         private var skipCalendarStep: Bool { !preSelectedCalendar.isEmpty }
 
         /// Maps the raw step index to a visual index for the progress dots,
-        /// accounting for the skipped calendar step when applicable.
+        /// accounting for the skipped calendar step.
         private var visualStep: Int {
-            guard skipCalendarStep, step > 3 else { return step }
-            return step - 1
+            var visual = step
+            if step > 1 { visual -= 1 }
+            if skipCalendarStep && step > 3 { visual -= 1 }
+            return visual
         }
 
         @EnvironmentObject private var calendarManager: CalendarManager
@@ -401,23 +401,19 @@ struct LuniferSurvey: View {
         @State private var showCalendarNudge = false
         
         private var totalSteps: Int {
-            // Everyone configures their morning routine and commute.
-            skipCalendarStep ? 6 : 7
+            skipCalendarStep ? 4 : 5
         }
         private var isLastStep: Bool { visualStep == totalSteps - 1 }
         
         private var canNext: Bool {
             switch step {
             case 0: return !answers.age.isEmpty
-            case 1: return answers.lifestyle != nil
             case 2: return !answers.wakeDays.isEmpty
             case 3: return answers.calendar  != nil
             case 4: // sleep step — wearable selected must complete its fetch before continuing
                 if whoopSelected { return whoopRecommendedHours != nil }
                 if ouraSelected  { return ouraRecommendedHours  != nil }
                 return true
-            case 6: // commute step — only requires a transport mode selection
-                return !answers.commuteMode.isEmpty
             default: return true
             }
         }
@@ -635,12 +631,10 @@ struct LuniferSurvey: View {
         private var stepContent: some View {
             switch step {
             case 0: stepAge
-            case 1: stepLifestyle
             case 2: stepWakeDays
             case 3: stepCalendar
             case 4: stepSleep
             case 5: stepRoutine
-            case 6: stepCommute
             default: EmptyView()
             }
         }
@@ -699,42 +693,6 @@ struct LuniferSurvey: View {
                 answers.age = formatter.string(from: birthdayDate)
             }
         }
-        
-        
-        // Step 1 — Lifestyle - Commute or Not question
-        private var stepLifestyle: some View {
-            VStack(alignment: .center, spacing: 0) {
-                Text("Which of these best describes you?")
-                    .font(.custom("Cormorant Garamond", size: 22))
-                    .fixedSize(horizontal: false, vertical: true)
-                    .multilineTextAlignment(.center)
-                    .fontWeight(.light)
-                    .foregroundColor(Color.white.opacity(0.95))
-                    .frame(maxWidth: .infinity, alignment: .center)
-                    .padding(.bottom, 20)
-
-                VStack(spacing: 10) {
-                    ForEach([
-                        ("student",     "I am a student"),
-                        ("wfh",         "I work from home"),
-                        ("commuter",    "I commute to work sometimes or most days"),
-                    ], id: \.0) { id, label in
-                        OptionCard(isSelected: answers.lifestyle == id) {
-                            answers.lifestyle = id
-                        } content: {
-                            Text(label)
-                                .font(.custom("DM Sans", size: 14))
-                                .foregroundColor(answers.lifestyle == id
-                                                 ? Color.white.opacity(0.95)
-                                                 : Color.white.opacity(0.7))
-                        }
-                    }
-                }
-                .padding(.bottom, 24)
-                .padding(.horizontal, 40)
-            }
-        }
-
         // Step 2 — Wake-up days
         private var stepWakeDays: some View {
             let weekdays = [
@@ -1075,86 +1033,6 @@ struct LuniferSurvey: View {
                 .padding(.horizontal, 40)
             }
         }
-        
-        // Step 6 — Commute mode (student / commuter only)
-        // Duration is no longer asked — CommuteManager calculates it live via
-        // MKDirections and falls back to 30 minutes when routing is unavailable.
-        private var stepCommute: some View {
-            VStack(alignment: .center, spacing: 0) {
-                Text("How do you commute?")
-                    .font(.custom("Cormorant Garamond", size: 22))
-                    .fixedSize(horizontal: false, vertical: true)
-                    .multilineTextAlignment(.center)
-                    .fontWeight(.light)
-                    .foregroundColor(Color.white.opacity(0.95))
-                    .frame(maxWidth: .infinity, alignment: .center)
-                    .padding(.bottom, 8)
-
-                Text("Lunifer will calculate and alert you about your commute when you add locations to your calendar events")
-                    .font(.custom("DM Sans", size: 13))
-                    .fontWeight(.light)
-                    .foregroundColor(Color.white.opacity(0.4))
-                    .multilineTextAlignment(.center)
-                    .lineSpacing(4)
-                    .frame(maxWidth: .infinity, alignment: .center)
-                    .padding(.bottom, 20)
-                    .padding(.horizontal, 34)
-
-                // ── Transport mode icons ─────────────────────
-                HStack(spacing: 0) {
-                    ForEach([
-                        ("drive",   "car.fill"),
-                        ("transit", "train.side.front.car"),
-                        ("walk",    "figure.walk"),
-                        ("bike",    "bicycle")
-                    ], id: \.0) { mode, icon in
-                        let selected = answers.commuteMode == mode
-                        Button {
-                            withAnimation(.easeInOut(duration: 0.2)) {
-                                answers.commuteMode = mode
-                            }
-                        } label: {
-                            Image(systemName: icon)
-                                .font(.system(size: 16, weight: .regular))
-                                .foregroundColor(selected
-                                    ? Color.white.opacity(0.95)
-                                    : Color.white.opacity(0.3))
-                                .frame(maxWidth: .infinity)
-                                .frame(height: 40)
-                                .background(
-                                    RoundedRectangle(cornerRadius: 10)
-                                        .fill(selected
-                                            ? Color(red: 0.627, green: 0.471, blue: 1.0).opacity(0.25)
-                                            : Color.clear)
-                                )
-                        }
-                        .buttonStyle(.plain)
-                    }
-                }
-                .padding(.horizontal, 40)
-                .padding(.bottom, 14)
-
-                // ── Live dashboard preview ───────────────────
-                // Shows what the commute card looks like once the user has
-                // locations on their calendar events. Uses a baked walking sample
-                // rendered through the same MKMapSnapshotter path as the real card.
-                CommutePreviewCard(mode: "walk")
-                    .padding(.horizontal, 40)
-                    .padding(.bottom, 6)
-
-                if answers.commuteMode.isEmpty {
-                    Text("Select a commute type above to continue.")
-                        .font(.custom("DM Sans", size: 13))
-                        .foregroundColor(Color.white.opacity(0.35))
-                        .padding(.top, 4)
-                        .padding(.horizontal, 40)
-                        .transition(.opacity)
-                }
-
-                Spacer().frame(height: 24)
-            }
-        }
-        
         // ── MARK: Navigation ─────────────────────────────────────
 
         /// Called by the primary button. Intercepts the routine step so the
@@ -1184,8 +1062,10 @@ struct LuniferSurvey: View {
                     requestMicrophonePermission()
                 }
             }
-            // Skip the calendar step when it was pre-selected before sign-in
-            if skipCalendarStep && step == 2 {
+            if step == 0 {
+                step = 2
+            } else if skipCalendarStep && step == 2 {
+                // Skip the calendar step when it was pre-selected before sign-in.
                 step = 4
             } else {
                 step += 1
@@ -1197,6 +1077,8 @@ struct LuniferSurvey: View {
                 // Skip back over the calendar step when it was pre-selected
                 if skipCalendarStep && step == 4 {
                     step = 2
+                } else if step == 2 {
+                    step = 0
                 } else {
                     step -= 1
                 }
@@ -1296,18 +1178,19 @@ struct LuniferSurvey: View {
         }
 
         // ── MARK: Firestore save ─────────────────────────────────
-        // Mirrors handleFinish() in luniferSurvey.jsx exactly
         
         private func handleFinish() {
             guard Auth.auth().currentUser?.uid != nil else {
                 saveError = "Not signed in. Please sign in and try again."
                 return
             }
-            // Always persist commute as auto-mode with the 30-min cold-start default.
-            // CommuteManager provides live MKDirections durations at runtime;
-            // the stored hours/minutes values are only used as a fallback when
-            // routing is unavailable.
-            answers.commute = TimeValue(hours: 0, minutes: 30, auto: true)
+            // Always persist commute as auto-mode with a zero fallback.
+            // CommuteManager adds travel time only when it can route to a
+            // calendar event location.
+            answers.commute = TimeValue(hours: 0, minutes: 0, auto: true)
+            if answers.commuteMode.isEmpty {
+                answers.commuteMode = "drive"
+            }
             let snapshot = answers
             Task { @MainActor in
                 saving    = true
@@ -1371,7 +1254,7 @@ struct LuniferSurvey: View {
     
 // ── MARK: Commute preview card ───────────────────────────────
 // The dashboard commute card as it appears once the user has locations on
-// their calendar events. Shown inside the survey's commute step so people see
+// their calendar events.
 // the payoff during onboarding. The map is a baked sample route (there is no
 // real event yet) rendered through the same snapshotter as the live card; the
 // duration/leave-by are representative walking sample values. The selectable

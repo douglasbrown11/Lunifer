@@ -65,7 +65,19 @@ final class BatteryAlarmNotification {
 
     // ── Lifecycle ─────────────────────────────────────────────
 
+    private var isMonitoring = false
+
+    func stopMonitoring() {
+        isMonitoring = false
+        NotificationCenter.default.removeObserver(self, name: UIDevice.batteryStateDidChangeNotification, object: nil)
+        NotificationCenter.default.removeObserver(self, name: UIDevice.batteryLevelDidChangeNotification, object: nil)
+        UIDevice.current.isBatteryMonitoringEnabled = false
+        cancelWarning()
+    }
+
     func startMonitoring() {
+        guard !isMonitoring, !BackgroundActivitySession.shared.isStopped else { return }
+        isMonitoring = true
         UIDevice.current.isBatteryMonitoringEnabled = true
 
         NotificationCenter.default.addObserver(
@@ -97,6 +109,7 @@ final class BatteryAlarmNotification {
     // ── Core check ────────────────────────────────────────────
 
     func checkAndWarnIfNeeded() async {
+        guard !BackgroundActivitySession.shared.isStopped else { return }
         // Respect the user's notification preference
         guard UserDefaults.standard.object(forKey: "batteryAlertEnabled") as? Bool != false else { return }
 
@@ -309,7 +322,10 @@ final class BatteryAlarmNotification {
         alarmLabel: String?
     ) async {
         let center   = UNUserNotificationCenter.current()
+        let generation = BackgroundActivitySession.shared.generation
+        guard BackgroundActivitySession.shared.accepts(generation) else { return }
         let settings = await center.notificationSettings()
+        guard BackgroundActivitySession.shared.accepts(generation) else { return }
 
         guard settings.authorizationStatus == .authorized ||
               settings.authorizationStatus == .provisional else { return }
@@ -345,6 +361,10 @@ final class BatteryAlarmNotification {
 
         do {
             try await center.add(request)
+            if !BackgroundActivitySession.shared.accepts(generation) {
+                center.removePendingNotificationRequests(withIdentifiers: [request.identifier])
+                center.removeDeliveredNotifications(withIdentifiers: [request.identifier])
+            }
             print("🔋 Battery warning sent — \(batteryPct)% now, projected \(Int(projectedLevel * 100))% at \(alarmString)")
         } catch {
             print("❌ Battery warning failed: \(error.localizedDescription)")

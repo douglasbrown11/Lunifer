@@ -432,6 +432,7 @@ struct LuniferSettings: View {
         // ── Delete the auth account ───────────────────────────────
         do {
             try await user.delete()
+            await AccountDataManager.shared.stopAllBackgroundActivity()
             clearLocalAccountData()
             isDeletingAccount = false
             dismiss()
@@ -500,6 +501,7 @@ struct LuniferSettings: View {
                 // in during the same session would silently re-import Apple Watch sleep.
                 HealthKitManager.shared.disconnect()
                 try Auth.auth().signOut()
+                await AccountDataManager.shared.stopAllBackgroundActivity()
                 AccountDataManager.shared.clearLocalSessionDataOnSignOut()
                 dismiss()
             } catch {
@@ -528,16 +530,6 @@ struct AboutYouSettingsView: View {
     @State private var showCalendarDeniedAlert = false
     @State private var showCalendarNudge = false
     @State private var previousCalendarChoice: String? = nil
-
-    private var lifestyleLabel: String {
-        switch answers.lifestyle {
-        case "student": return "Student"
-        case "commuter": return "Commuter"
-        case "wfh": return "Work From Home"
-        case "not_working": return "Not Working"
-        default: return "Not set"
-        }
-    }
 
     private var calendarLabel: String {
         switch answers.calendar {
@@ -647,7 +639,6 @@ struct AboutYouSettingsView: View {
                 ScrollView(showsIndicators: false) {
                     VStack(spacing: 10) {
                         immutableAgeRow
-                        aboutYouRow(label: "Lifestyle", value: lifestyleLabel, field: "lifestyle")
                         aboutYouRow(label: "Calendar", value: calendarLabel, field: "calendar")
                         aboutYouRow(label: "Morning Routine", value: routineLabel, field: "routine")
                         aboutYouRow(label: "Commute Type", value: commuteModeLabel, field: "commuteMode")
@@ -669,12 +660,6 @@ struct AboutYouSettingsView: View {
             }
         }
         .toolbar(.hidden, for: .navigationBar)
-        .onChange(of: answers.lifestyle) { _, _ in
-            answers.saveToDefaults()
-            answers.saveToFirestore()
-            // Turn morning-routine estimation on/off with the lifestyle change.
-            MorningRoutineEstimator.shared.configure(for: answers)
-        }
         .onChange(of: answers.calendar) { _, _ in
             answers.saveToDefaults()
             answers.saveToFirestore()
@@ -886,48 +871,6 @@ struct AboutYouSettingsView: View {
 
                 Group {
                     switch field {
-                    case "lifestyle":
-                        VStack(spacing: 8) {
-                            let lifestyleOptions: [(String, String)] = [
-                                ("student", "Student"),
-                                ("commuter", "Commuter"),
-                                ("wfh", "Work From Home"),
-                            ]
-                            ForEach(lifestyleOptions, id: \.0) { id, title in
-                                Button {
-                                    answers.lifestyle = id
-                                } label: {
-                                    HStack {
-                                        Text(title)
-                                            .font(.custom("DM Sans", size: 14))
-                                            .foregroundColor(answers.lifestyle == id ? Color.white.opacity(0.95) : Color.white.opacity(0.7))
-                                        Spacer()
-                                        if answers.lifestyle == id {
-                                            Image(systemName: "checkmark")
-                                                .font(.system(size: 12, weight: .medium))
-                                                .foregroundColor(Color(red: 0.627, green: 0.471, blue: 1.0))
-                                        }
-                                    }
-                                    .padding(.horizontal, 14)
-                                    .padding(.vertical, 12)
-                                    .background(
-                                        RoundedRectangle(cornerRadius: 10)
-                                            .fill(Color.white.opacity(0.03))
-                                            .overlay(
-                                                RoundedRectangle(cornerRadius: 10)
-                                                    .stroke(
-                                                        answers.lifestyle == id
-                                                        ? Color(red: 0.627, green: 0.471, blue: 1.0).opacity(0.55)
-                                                        : Color.white.opacity(0.06),
-                                                        lineWidth: 1
-                                                    )
-                                            )
-                                    )
-                                }
-                                .buttonStyle(.plain)
-                            }
-                        }
-
                     case "calendar":
                         VStack(spacing: 8) {
                             Text("Which calendar should Lunifer check?")
@@ -2337,7 +2280,6 @@ struct FeedbackSettingsView: View {
     LuniferSettings(answers: .constant({
         var answers = SurveyAnswers()
         answers.age = "21"
-        answers.lifestyle = "commuter"
         return answers
     }()))
 }

@@ -141,6 +141,8 @@ final class OuraManager: NSObject, ObservableObject, ASWebAuthenticationPresenta
     // MARK: - Fetch sleep recommendation
 
     func fetchSleepRecommendation() async throws {
+        let generation = BackgroundActivitySession.shared.generation
+        guard BackgroundActivitySession.shared.accepts(generation) else { return }
         let status: OuraBackendStatusResponse = try await callBackend(
             path: Backend.fetchSleepPath,
             payload: [:]
@@ -148,6 +150,7 @@ final class OuraManager: NSObject, ObservableObject, ASWebAuthenticationPresenta
         guard let hours = status.recommendedSleepHours, hours > 0 else {
             throw OuraError.noData
         }
+        guard BackgroundActivitySession.shared.accepts(generation) else { return }
         apply(status: status)
     }
 

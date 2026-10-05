@@ -63,7 +63,7 @@ Try to avoid mechanisms that asks the user to manually provide data — this inc
 - `Engine/Alarm.swift`: AlarmKit scheduling / monitoring
 - `Engine/AdaptiveAlarm/*`: adaptive-alarm context building, smooth contextual bandit offset scoring, safety-window types, reward scoring, and local decision/outcome storage
 - `Engine/CommuteManager.swift`: live commute routing, 5-minute polling, background refresh, and duration persistence
-- `Notifications/MorningRoutineEstimator.swift`: passively estimates actual morning routine length (wake → departure) for `student`/`commuter` lifestyles only, on wake days only. Uses CoreMotion historical activity to detect departure, stores a rolling window (20) of wake-day samples, and recommends a routine change only when the median of ≥12 samples differs from the manual `answers.routine` by more than 10 minutes. Never overwrites the manual value on its own — produces a `RoutineRecommendation` via `recommendation(currentRoutineMinutes:)` for the UI to act on. Now wired in: `configure(for:)` is called on dashboard load (`Main.swift` `.task`) and on lifestyle change (`AboutYouSettingsView` `onChange(of: answers.lifestyle)`) so it toggles on/off with lifestyle; `handleWakeDetected(at:answers:)` is called from all three `SleepTracker` wake paths (retro, live, manual); `refresh(answers:)` is called on app-active (`Main.swift` `didBecomeActive`) and from the sleep background task; `clearStoredData()` (nonisolated static) is called from `AccountDataManager.clearLocalSessionDataOnSignOut()`. `handleWakeDetected`/`refresh` call `configure(for:)` internally so collection still works on a cold background relaunch. Its UserDefaults keys are self-contained in the file (same pattern as `SleepTrackingStore`/`AdaptiveAlarmStore`), not in `AppPreferencesStore.Keys`. **Remaining:** no UI yet surfaces the recommendation (nothing calls `recommendation(...)` / writes an accepted value into `answers.routine`).
+- `Notifications/MorningRoutineEstimator.swift`: passively estimates actual morning routine length (wake → departure) on wake days only. Uses CoreMotion historical activity to detect departure, stores a rolling window (20) of wake-day samples, and recommends a routine change only when the median of ≥12 samples differs from the manual `answers.routine` by more than 10 minutes. Never overwrites the manual value on its own — produces a `RoutineRecommendation` via `recommendation(currentRoutineMinutes:)` for the UI to act on. Now wired in: `configure(for:)` is called on dashboard load (`Main.swift` `.task`); `handleWakeDetected(at:answers:)` is called from all three `SleepTracker` wake paths (retro, live, manual); `refresh(answers:)` is called on app-active (`Main.swift` `didBecomeActive`) and from the sleep background task; `clearStoredData()` (nonisolated static) is called from `AccountDataManager.clearLocalSessionDataOnSignOut()`. `handleWakeDetected`/`refresh` call `configure(for:)` internally so collection still works on a cold background relaunch. Its UserDefaults keys are self-contained in the file (same pattern as `SleepTrackingStore`/`AdaptiveAlarmStore`), not in `AppPreferencesStore.Keys`. **Remaining:** no UI yet surfaces the recommendation (nothing calls `recommendation(...)` / writes an accepted value into `answers.routine`).
 - `Engine/Wearables/WhoopManager.swift`: WHOOP OAuth + sleep-need fetch / refresh logic
 - `Engine/Wearables/OuraManager.swift`: Oura Ring OAuth + sleep-need fetch / refresh logic
 - `Engine/Wearables/HealthKitManager.swift`: reads Apple Watch sleep from HealthKit (`sleepAnalysis`) and records nights via `SleepHistoryManager.recordNight(..., source: .wearable)`. It is a **measured-sleep data source only**, NOT a recommendation source — it does NOT plug into `WearableRecommendationStore`, so the target "recommended hours" still comes from the existing age-based / manual engine. `@MainActor` singleton (`HealthKitManager.shared`) with `connect()` / `disconnect()` / `refreshIfNeeded()` / `importRecentSleep()`. Unlike the network-bound WHOOP/Oura refreshers, `refreshIfNeeded()` has **no staleness gate** — HealthKit reads are local/cheap, so it re-reads on every dashboard / Sleep Insights open (a reentrancy guard, `isImporting`, prevents overlapping reads in one session) so last night's sleep appears as soon as the user opens the app in the morning. Keeps its own `healthKitConnected` flag (HealthKit hides read-auth status). Apple Watch sleep is retrospective (written after wake), so it improves completed-night accuracy, not live detection. Requires the HealthKit capability, both `NSHealthShareUsageDescription` and `NSHealthUpdateUsageDescription` in `Info.plist`, and the `com.apple.developer.healthkit` entitlement — App Store validation requires both purpose strings even though Lunifer requests read-only HealthKit access, and the capability must also be enabled on the App ID in the Apple Developer portal. Cleared on sign-out via `HealthKitManager.clearStoredData()` in `AccountDataManager`. Refreshed on dashboard `.task` and `SleepInsights.onAppear`. Connected from `SleepAndWearablesSettingsView`'s "Wearables" section, in the same card list as WHOOP and Oura (no separate "Sleep Tracking" section anymore). **Apple Watch is now subject to the one-wearable-at-a-time rule** alongside WHOOP and Oura: its Connect button checks `whoopConnected`/`ouraConnected` and shows the "Only One Wearable at a Time" alert if either is connected, and the WHOOP/Oura connect handlers likewise check `healthKitConnected`. So at most one of {Apple Watch, WHOOP, Oura} can be connected at a time — the user must disconnect the current one first. (Enforced only in `SleepAndWearablesSettingsView`'s connect handlers; the survey only offers WHOOP/Oura, which already deselect each other.)
@@ -105,22 +105,20 @@ Try to avoid mechanisms that asks the user to manually provide data — this inc
 ## Survey Status
 `SurveyAnswers` currently contains:
 - `age`
-- `lifestyle`
 - `wakeDays`
 - `calendar`
 - `sleep`
 - `routine`
 - `commute`
-- `commuteMode` — `"drive"`, `"transit"`, `"walk"`, or `"bike"` (**default `""` — no mode selected by default**)
+- `commuteMode` — `"drive"`, `"transit"`, `"walk"`, or `"bike"` (**default `"drive"`**)
 
 Current survey step order in `Survey.swift`:
 1. Age
-2. Lifestyle
-3. Wake days
-4. Calendar
-5. Sleep duration / WHOOP sleep recommendation
-6. Morning routine duration, skipped for `not_working` — manual entry only; defaults to 45 minutes, and the "let Lunifer figure this out" auto toggle has been removed (Lunifer does not learn routine duration)
-7. Commute transport mode (drive/transit/walk/bike), only for `student` or `commuter` — duration is NOT asked; CommuteManager provides live OpenRouteService (ORS) routing with 30-min fallback
+2. Wake days
+3. Calendar
+4. Sleep duration / WHOOP sleep recommendation
+5. Morning routine duration — manual entry only; defaults to 45 minutes, and the "let Lunifer figure this out" auto toggle has been removed.
+Lunifer assumes commute support is available for everyone and adds commute time only when `CommuteManager` can route to a real calendar event location.
 
 Notes:
 - `wakeDays` defaults to `["mon", "tue", "wed", "thu", "fri"]`
@@ -129,42 +127,38 @@ Notes:
 - Initial survey completion writes the full onboarding payload through `SurveyAnswersStore.saveInitialProfile(_:)`
 - `saveInitialProfile` uses `setData(data, merge: true)` so it upserts rather than replacing an existing document
 - If `commuteMode` is empty at save time, Firestore payload writes `"drive"` as the fallback to avoid storing an empty string
-- Incremental settings sync writes `age`, `lifestyle`, `wakeDays`, `calendar`, `routine`, `commute`, `commuteMode`, and `updatedAt`
+- Incremental settings sync writes `age`, `wakeDays`, `calendar`, `routine`, `commute`, `commuteMode`, and `updatedAt`
 - Incremental settings sync now includes the `sleep` payload — `syncProfile(_:)` in `SurveyAnswersStore` was updated to write `sleep.hours`, `sleep.minutes`, and `sleep.auto` alongside the other fields
-
-### canNext Validation (Step 7 — Commute)
-`canNext` for the commute step (case 6) only requires `!answers.commuteMode.isEmpty`. No duration or location permission check — CommuteManager handles routing at runtime.
-
-The step hint text shows "Select a commute type above to continue." when no mode has been chosen yet.
 
 ### handleFinish — Local-First Save Pattern
 `handleFinish()` in `Survey.swift` uses a local-first, non-blocking approach:
 1. Guard: must be signed in
-2. If `showCommute`, stamps `answers.commute = TimeValue(hours: 0, minutes: 30, auto: true)` so commute is always live-routed
+2. Stamps `answers.commute = TimeValue(hours: 0, minutes: 0, auto: true)` so unrouted commute contributes no buffer
 3. Captures a local snapshot of `answers`
 4. On `@MainActor`, sets `saving = true`, calls `snapshot.saveToDefaults()` immediately, and flips `surveyCompleted = true`
 5. Fires a background `Task` to push to Firestore via `SurveyAnswersStore.shared.saveInitialProfile(snapshot)`
 6. Firestore failures are non-fatal (`print` only) — the user always proceeds regardless of network
 7. Requests AlarmKit authorization via `LuniferAlarm.shared.requestAuthorization()`
 8. Requests standard `UNUserNotificationCenter` authorization for alerts/sounds/badges
-9. If the user is a `student` or `commuter`, requests `LocationManager.shared.requestAlwaysAuthorization()`
+9. Requests `LocationManager.shared.requestAlwaysAuthorization()` when commute setup is enabled
 10. Calls `onFinish?(snapshot)` after the local save / permission sequence
 
 ## Location Permission Flow
 Current behavior in `Survey.swift`:
 - Location is not requested mid-survey
-- At the end of onboarding, `handleFinish()` requests `Always` authorization only when lifestyle is `student` or `commuter`
+- At the end of onboarding, `handleFinish()` requests `Always` authorization when commute setup is enabled
 - `LocationManager.requestCurrentLocation()` later works with either `.authorizedAlways` or `.authorizedWhenInUse`, but the onboarding request itself asks for `Always`
 - There is currently no custom denied/upgrade alert flow for location inside the survey; the code relies on the system prompt and later Settings changes
 
 ## Location
 Home and work location tracking have been removed from the app. There is no saved home or work location anywhere in the codebase.
 
-The commute routing origin is always the user's live GPS fix (`LocationManager.shared.currentCoordinate`). If no GPS fix is available, routing falls back to the survey/default commute duration.
+The commute routing origin is always the user's live GPS fix (`LocationManager.shared.currentCoordinate`).
+If no GPS fix or routable calendar event location is available, routing falls back to 0 minutes.
 
 Commute buffer:
 - `LuniferAlarm.resolveBaselineAlarmDate(answers:targetDay:)` fetches live commute duration via `CommuteManager.fetchLiveDuration(answers:)` when `commute.auto == true` and caches the result in `CommuteManager.shared.currentDurationMinutes`
-- `LuniferAlarm.routineCommuteBufferSeconds(answers:)` reads this cached value for synchronous callers; falls back to 30 min before the first live fetch
+- `LuniferAlarm.routineCommuteBufferSeconds(answers:)` reads this cached value for synchronous callers; falls back to 0 min until a live route exists
 - Commute polling interval is 5 minutes (foreground Timer and BGAppRefreshTask both use 5-min windows)
 
 ## Dashboard Status
@@ -182,7 +176,7 @@ Commute buffer:
   - `LuniferAlarm.shared.startAdaptiveRescheduling()`
   - `WakeNotification.shared.schedule(...)`
   - `LuniferAlarm.shared.requestAuthorization()`
-  - commute polling for commuter users when today is a wake day
+  - commute polling when today is a wake day
   - rest-day early-event notification checks via `RestDayEventNotification.shared.scheduleIfNeeded(...)`
   - the first-run coach-mark walkthrough via `WalkthroughController.shared.start()` at the end of `.task`, gated on `!hasSeenWalkthrough && !isRestPeriodActive` (so it only runs once, and only when the alarm page — not the rest page — is showing). `LuniferMain` also hosts the dashboard/insights overlay (`.walkthroughHost([.dashboard, .insights])`) and drives the page swipe for the active step via `.onChange(of: walkthrough.currentStep)`. See `Screens/Intro/Walkthrough.swift`.
 - Stores enable / disable state with `@AppStorage("luniferEnabled")`
@@ -296,12 +290,9 @@ Sound playback is implemented in `AlarmScreen.swift` via `AVFoundation`. When th
 
 `AboutYouSettingsView` (the "My Profile" screen) currently supports editing:
 - Age
-- Lifestyle
 - Calendar
-- Morning Routine (hidden for `not_working` lifestyle; uses `TimeScalePicker` bound to `answers.routine`, manual-only — passed `showAutoToggle: false` so there is no auto/learn option)
-- Commute Type (drive/transit/walk/bike; shown only for `student` or `commuter` lifestyle; bound to `answers.commuteMode`)
-
-When the user changes their lifestyle **to** `"student"` or `"commuter"` from any non-commuter value (`"wfh"` or `"not_working"`), `AboutYouSettingsView` intercepts the tap and instead opens `CommuteTypeRequiredSheet` (a non-dismissable `.sheet` with `.interactiveDismissDisabled(true)`). The sheet shows the same four transport-mode tiles (drive/transit/walk/bike) used in the survey's commute step. The user cannot exit the sheet without selecting a mode and tapping "Confirm →". On confirm, `answers.lifestyle` and `answers.commuteMode` are set together and persisted via their `onChange` handlers. State variables `showCommuteTypeSheet`, `pendingLifestyle`, and `pendingCommuteMode` on `AboutYouSettingsView` drive this flow. Switching between `"student"` and `"commuter"` (both already commuter users) skips the sheet and updates lifestyle directly.
+- Morning Routine (uses `TimeScalePicker` bound to `answers.routine`, manual-only — passed `showAutoToggle: false` so there is no auto/learn option)
+- Commute Type (drive/transit/walk/bike; bound to `answers.commuteMode`)
 
 `SleepAndWearablesSettingsView` currently supports:
 - Viewing and editing the optimal sleep duration (moved from `SleepInsights`)
@@ -314,7 +305,7 @@ When the user changes their lifestyle **to** `"student"` or `"commuter"` from an
 `SleepInsights` now shows a subtle "Adjust in Settings" link that opens the Sleep & Wearables screen as a sheet. The "change" button and inline `SleepEditSheet` have been removed from `SleepInsights`. `SleepEditSheet` is now a non-private struct so it can be used from both files.
 
 Behavior notes:
-- Age, lifestyle, and calendar changes are saved locally and synced through the survey/store layer
+- Age and calendar changes are saved locally and synced through the survey/store layer
 - Wake days are editable in a dedicated screen and sync through `answers.saveToDefaults()` / `answers.saveToFirestore()`
 - Notifications screen (`NotificationsSettingsView`) has a master `allNotificationsEnabled` toggle plus **three visible individual toggles**: `batteryAlertEnabled` ("Battery Alert"), `wakeReminderEnabled` ("Alarm Set Alert"), and `commuteReminderEnabled` ("Commute Reminder"). A fourth reminder, `restDayReminderEnabled` ("Rest Day Reminder"), is **NOT shown as a row** — its toggle UI was removed, but the `@AppStorage("restDayReminderEnabled")` key still exists and is still flipped on/off by the master toggle's `onChange` alongside the other three. Turning the master off flips all four (including rest-day) off and cancels their pending notifications (`WakeNotification`/`CommuteNotification`/`BatteryAlarmNotification`/`RestDayEventNotification`); turning it back on re-enables all four. So the master toggle controls every notification the app sends, not just the three visible ones. **Note:** `allNotificationsEnabled` and `restDayReminderEnabled` are raw `@AppStorage` string keys and are NOT centralized in `AppPreferencesStore.Keys` (unlike the other three). `RestDayEventNotification.scheduleIfNeeded` gates on both `restDayReminderEnabled` and `allNotificationsEnabled`.
 - Sleep duration changes are saved locally and to Firestore through `answers.saveToDefaults()` / `answers.saveToFirestore()`
@@ -589,8 +580,7 @@ Both managers use `https://lunifer-whoop.dougiebrown516.workers.dev` as `Backend
 - `AppPreferencesStore.Keys.commuteReminderEnabled` added alongside battery and wake reminder keys.
 - `NotificationsSettingsView` in `Settings.swift` now has a third toggle row for the commute reminder, which calls `CommuteNotification.shared.cancelAll()` when disabled.
 - `Main.swift`:
-  - `isCommuterUser` — true when lifestyle is `"student"` or `"commuter"`
-  - `shouldShowCommuteCard` — true when: user is a commuter, today is a wake day, `CalendarManager.shared.firstEventToday` exists, and current time is between alarm fire time and that event's `startDate`. `firstEventToday` mirrors `firstEventTomorrow`'s filtering (earliest non-all-day, non-declined event today), so a declined meeting or an all-day entry never anchors the card. Card is never shown if there are no qualifying calendar events today. `CommuteStatusCard.hasRoutingDestination` also reads `firstEventToday?.location`.
+  - `shouldShowCommuteCard` — true when: today is a wake day, `CalendarManager.shared.firstEventToday` exists, and current time is between alarm fire time and that event's `startDate`. `firstEventToday` mirrors `firstEventTomorrow`'s filtering (earliest non-all-day, non-declined event today), so a declined meeting or an all-day entry never anchors the card. Card is never shown if there are no qualifying calendar events today. `CommuteStatusCard.hasRoutingDestination` also reads `firstEventToday?.location`.
   - Commute polling started in `.task` via `CommuteManager.shared.startPolling(answers:arrivalDate:)`; arrival target is `CalendarManager.shared.firstEventTomorrow?.startDate` when available, otherwise `resolvedAlarmDate + LuniferAlarm.shared.routineCommuteBufferSeconds(answers:)`
   - **Commute takeover:** when `shouldShowCommuteCard` is true, `CommuteStatusCard` (defined in `CommuteDashboard.swift`) **replaces** the calculated-alarm header in the central slot of `alarmPage` rather than sitting below it. While it shows, the entire alarm header — `TOMORROW'S ALARM` label, the tappable alarm time, and the bedtime → wake row — plus its expandable dropdown are hidden (the header/dropdown are wrapped in an `if shouldShowCommuteCard { CommuteStatusCard } else { …header… }` in `Main.swift`). **Added alarms still render below** the commute card (their `!addedAlarms.isEmpty && !alarmExpanded` gate is unaffected), as does the top bar and the Turn Lunifer off control. Because `shouldShowCommuteCard` re-evaluates every minute via the `ticker`, the dashboard returns to the normal alarm header automatically once the commute window closes (first event has started / no longer a qualifying morning). The top positioning spacer uses a smaller height (`geo.size.height * 0.16`) during takeover so the taller map card sits well.
 
@@ -602,18 +592,17 @@ Both managers use `https://lunifer-whoop.dougiebrown516.workers.dev` as `Backend
   1. **Calendar event location** — if `CalendarManager.shared.firstEventTomorrow?.location` is non-empty, geocode it with `CLGeocoder` and route to that address. Handles variable destinations automatically.
   2. **Survey/default fallback** — the stored commute duration, used when no destination or origin coordinates are available.
 - Routing is performed via the authenticated Cloudflare Worker route `/commute/route`, which calls the **OpenRouteService (ORS) HTTP API** (`https://api.openrouteservice.org/v2/directions/{profile}`) with server-side `ORS_API_KEY`. The iOS app no longer stores the ORS key; `CommuteManager.fetchRoute(from:to:mode:)` sends the Firebase ID token plus origin/destination coordinates and commute mode to the Worker. The Worker maps `answers.commuteMode`: `"drive"` → `driving-car`, `"transit"` → `public-transport`, `"walk"` → `foot-walking`, `"bike"` → `cycling-regular` (ORS supports cycling directly), then returns duration seconds plus the road-following coordinate pairs. **MapKit is imported in `CommuteManager.swift`** now for route-map rendering types; routing itself is still ORS-backed, not MKDirections. `CommuteManager.fetchRoute(from:to:mode:)` parses BOTH the duration and coordinates into a `RouteResult`; `routeMinutes` now just returns `fetchRoute(...)?.minutes`, and `routeForSnapshot(destinationAddress:mode:)` resolves the GPS origin + geocoded destination + ORS geometry for the map card (straight origin→dest fallback when ORS returns no geometry). NOTE: several doc comments still say "MKDirections" — those are stale; the implementation is ORS-backed through the Worker. Stale "MKDirections" comments appear in `CommuteManager.swift`, `Survey.swift` (steps' comments + `handleFinish`), and `CommuteDashboard.swift`. Also stale: `App.swift`'s comment says the commute background task fires "~every 10 minutes" — the actual foreground timer and BG window are both 5 minutes.
-- **Survey commute step** (`stepCommute` in `Survey.swift`) now shows a fixed walking `CommutePreviewCard` — the dashboard commute card with a real ORS foot-walking sample route (`CommuteRouteMap(source: .sample)`) and label "`47 min to 270 Park Ave`" (from `CommuteRouteSample.durationMinutes`/`.destinationName`) with a centered `Leave by 7:38 AM` and the walking icon — so users see the payoff during onboarding. The selectable commute modes still control the user's saved `commuteMode`; only the illustrative card preview is fixed to walking. The step's top subtitle is "Lunifer will calculate and alert you about your commute when you add locations to your calendar events"; there is no descriptive caption below the preview (the pre-existing "Select a commute type above to continue." validation hint remains, shown only when no mode is selected).
 - Delta detection, leave-reminder notification, and persistence all operate on the returned duration automatically, with a delta alert threshold of ±5 minutes
 - `CommuteManager` imports `Foundation`, `Combine`, `BackgroundTasks`, `CoreLocation`, `FirebaseAuth`, and `MapKit`; routing is done over `URLSession` against Lunifer's authenticated Worker `/commute/route`, which calls ORS using server-side `ORS_API_KEY`, and addresses are geocoded with `CLGeocoder`
 - `CalendarEvent.location` (`String?`) was already present in the model and mapped from `EKEvent.location` — no changes to `CalendarManager` were needed
 
 Routing and arrival target:
 - `resolveAlarmDate()` fetches live commute duration via `CommuteManager.fetchLiveDuration(answers:)` when `commute.auto == true`, caching the result in `CommuteManager.shared.currentDurationMinutes` for sync callers
-- `LuniferAlarm.routineCommuteBufferSeconds(answers:)` reads `CommuteManager.shared.currentDurationMinutes` when auto-commute is on; falls back to 30 min on cold start (before any live fetch)
+- `LuniferAlarm.routineCommuteBufferSeconds(answers:)` reads `CommuteManager.shared.currentDurationMinutes` when auto-commute is on; falls back to 0 min until a live route exists
 - `startPolling(arrivalDate:)` is passed `CalendarManager.shared.firstEventTomorrow?.startDate` when available, falling back to `resolvedAlarmDate + LuniferAlarm.shared.routineCommuteBufferSeconds(answers:)`
 
 ## Known Gaps
-- `Notifications/MorningRoutineEstimator.swift` is wired for data collection and lifestyle on/off, but **no UI surfaces its recommendation yet**. The remaining work is a dashboard/settings prompt that calls `recommendation(currentRoutineMinutes:)`, shows the suggested median when non-nil, and on accept writes the value into `answers.routine` (then calls `acknowledgeAcceptedRecommendation()`), or on decline calls `dismissRecommendation(suggestedMinutes:)`.
+- `Notifications/MorningRoutineEstimator.swift` is wired for data collection, but **no UI surfaces its recommendation yet**. The remaining work is a dashboard/settings prompt that calls `recommendation(currentRoutineMinutes:)`, shows the suggested median when non-nil, and on accept writes the value into `answers.routine` (then calls `acknowledgeAcceptedRecommendation()`), or on decline calls `dismissRecommendation(suggestedMinutes:)`.
 - `SurveyAnswers` and `TimeValue` still live inside `Survey.swift` instead of a dedicated model file
 - `AlarmBehaviourLogger` stores `scheduledWakeTime` locally when an alarm is scheduled, then writes `dismissed` and `woke_before_alarm` inference documents to Firestore and enriches training rows with adaptive reward fields when a pending decision exists. The bandit currently trains from `AdaptiveAlarmStore` local outcomes, not by replaying the Firestore `alarmInferences` collection back down to the device. However, those local outcomes DO round-trip to Firestore on their own: `AdaptiveAlarmStore.saveOutcomes(...)` mirrors the full outcomes array to `users/{uid}/adaptiveData/outcomes` (a JSON-string field), and `AdaptiveAlarmStore.loadFromFirestore()` (called after sign-in from `ContentView`) merges the remote set back into local storage (dedup by id, newest 120 kept). So adaptive training data survives reinstall / device change even though the bandit never reads `alarmInferences` directly. Snooze frequency is intentionally excluded from adaptive reward training.
 
@@ -639,7 +628,7 @@ All six iOS permission prompts are requested during the survey. None are deferre
 | 3 | Microphone | "Allow Lunifer to access the microphone?" | Survey step 4 → 5 — requested immediately after the brief CoreMotion prompt trigger completes. Used by `AmbientAudioMonitor` for live ambient-volume sleep-onset guarding; audio is reduced to derived volume/activity values and is not stored | `Survey.swift` `advance()` via `requestMicrophonePermission()` |
 | 4 | AlarmKit | AlarmKit system sheet | End of survey — `handleFinish()`, after local save | `Survey.swift` `handleFinish()` via `LuniferAlarm.shared.requestAuthorization()` |
 | 5 | Notifications (UNUserNotificationCenter) | "Allow Lunifer to send you notifications?" | End of survey — `handleFinish()`, immediately after AlarmKit. Required for WakeNotification, BatteryAlarmNotification, CommuteNotification, and RestDayEventNotification — none of these fire without it | `Survey.swift` `handleFinish()` |
-| 6 | Location (Always) | "Allow Lunifer to always use your location?" | End of survey — `handleFinish()`, after notifications. Only requested when lifestyle is `student` or `commuter` | `Survey.swift` `handleFinish()` via `LocationManager.shared.requestAlwaysAuthorizationAsync()` |
+| 6 | Location (Always) | "Allow Lunifer to always use your location?" | End of survey — `handleFinish()`, after notifications. Requested when commute setup is enabled | `Survey.swift` `handleFinish()` via `LocationManager.shared.requestAlwaysAuthorizationAsync()` |
 
 **Notes:**
 - `LuniferAlarm.shared.requestAuthorization()` requests AlarmKit permission only — it is completely separate from `UNUserNotificationCenter` and does not satisfy notification permission.

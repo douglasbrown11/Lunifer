@@ -119,17 +119,20 @@ final class HealthKitManager: ObservableObject {
 
     // MARK: - Import
 
-    /// Reads the last 7 days of sleep from HealthKit (Apple Watch source),
+    /// Reads up to the last 8 weeks of sleep from HealthKit (Apple Watch source),
     /// groups samples into nights, and records each as a wearable-priority entry.
     func importRecentSleep() async {
+        let generation = BackgroundActivitySession.shared.generation
+        guard BackgroundActivitySession.shared.accepts(generation) else { return }
         guard isAvailable, !isImporting else { return }
         isImporting = true
         defer { isImporting = false }
 
         let end = Date()
-        guard let start = Calendar.current.date(byAdding: .day, value: -7, to: end) else { return }
+        guard let start = Calendar.current.date(byAdding: .day, value: -56, to: end) else { return }
 
         let samples = await fetchAsleepSamples(from: start, to: end)
+        guard BackgroundActivitySession.shared.accepts(generation) else { return }
         guard !samples.isEmpty else { return }
 
         for night in Self.groupIntoNights(samples) {

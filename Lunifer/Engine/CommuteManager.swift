@@ -44,10 +44,10 @@ import MapKit
 //
 // ── Routing ───────────────────────────────────────────────────
 // refreshDuration() calls fetchLiveDuration(), which issues an
-// async MKDirections request from the user's live GPS position.
-// Falls back to the survey-entered duration when no GPS fix is
-// available. The delta detection, notification, and persistence
-// plumbing all operate on the returned value.
+// async route request from the user's live GPS position to a calendar
+// event location. Falls back to zero when no routable event location is
+// available. The delta detection, notification, and persistence plumbing
+// all operate on the returned value.
 
 @MainActor
 final class CommuteManager: ObservableObject {
@@ -67,7 +67,7 @@ final class CommuteManager: ObservableObject {
     /// True once the first real MKDirections route (GPS + calendar event
     /// location) has been obtained. Suppresses leave-reminder and delta-alert
     /// notifications until a routable destination is confirmed, so the user
-    /// is never notified based solely on the 30-minute survey fallback.
+    /// is never notified based solely on the zero fallback.
     private var hasLiveRoute: Bool = false
 
     // ── Persisted state keys (UserDefaults) ───────────────────
@@ -121,6 +121,7 @@ final class CommuteManager: ObservableObject {
     /// Begins commute monitoring for a given arrival deadline.
     /// Safe to call multiple times — stops any existing polling first.
     func startPolling(answers: SurveyAnswers, arrivalDate: Date) {
+        guard !BackgroundActivitySession.shared.isStopped else { return }
         let duration = Self.surveyDuration(from: answers)
 
         // Persist state so the background task handler can read it
@@ -140,7 +141,7 @@ final class CommuteManager: ObservableObject {
         LocationManager.shared.requestCurrentLocation()
 
         // Do NOT schedule a leave reminder here — the duration at this point
-        // is the 30-minute survey fallback. The reminder is scheduled in
+        // is the zero fallback. The reminder is scheduled in
         // refreshDuration() only after a real GPS + calendar-event route
         // has been obtained.
 
@@ -189,6 +190,8 @@ final class CommuteManager: ObservableObject {
     /// If no routable destination is available (no GPS fix or no event location),
     /// currentDurationMinutes is left unchanged and no notifications fire.
     private func refreshDuration(answers: SurveyAnswers) async {
+        let generation = BackgroundActivitySession.shared.generation
+        guard BackgroundActivitySession.shared.accepts(generation) else { return }
         // Auto-stop once the user should have left
         let leave = arrivalDate.addingTimeInterval(-Double(currentDurationMinutes) * 60)
         guard Date() < leave else {
@@ -200,6 +203,7 @@ final class CommuteManager: ObservableObject {
         // calendar event location to route to — the survey fallback is not
         // returned here so notifications are never triggered by placeholder data.
         if let routedMinutes = await Self.fetchLiveDurationIfRoutable(answers: answers) {
+        guard BackgroundActivitySession.shared.accepts(generation) else { return }
             let delta = routedMinutes - previousDurationMinutes
 
             if hasLiveRoute && abs(delta) >= 5 {
@@ -226,8 +230,7 @@ final class CommuteManager: ObservableObject {
             }
         } else {
             // No routable destination yet. Keep currentDurationMinutes at the
-            // survey fallback so the alarm buffer stays accurate, but do not
-            // send any notifications.
+            // zero fallback and do not send any notifications.
             print("🚗 No routable destination — commute notification suppressed")
         }
 
@@ -235,16 +238,15 @@ final class CommuteManager: ObservableObject {
     }
 
     /// Fetches a live commute duration using a two-step priority chain.
-    /// Origin is always the user's live GPS fix; falls back to survey value if unavailable.
+    /// Origin is always the user's live GPS fix; falls back to zero if unavailable.
     ///
     /// 1. Calendar event location — if tomorrow's first event has a location
     ///    string, geocode it and route to that address. Handles variable
     ///    destinations automatically with no extra user input.
-    /// 2. Survey fallback — the manually entered commute time, used when no
-    ///    destination coordinates are available.
+    /// 2. Zero fallback — used when no destination coordinates are available.
     static func fetchLiveDuration(answers: SurveyAnswers) async -> Int {
         // Origin: live GPS fix from LocationManager (user's actual position).
-        // Falls back to survey value if location permission is denied or no fix available.
+        // Falls back to zero if location permission is denied or no fix is available.
         guard let originCoord = LocationManager.shared.currentCoordinate else {
             return surveyDuration(from: answers)
         }
@@ -260,14 +262,14 @@ final class CommuteManager: ObservableObject {
             }
         }
 
-        // Step 2: Survey fallback
+        // Step 2: Zero fallback
         return surveyDuration(from: answers)
     }
 
-    /// Like fetchLiveDuration, but returns nil instead of the survey fallback
+    /// Like fetchLiveDuration, but returns nil instead of the zero fallback
     /// when no real GPS + calendar-event route can be computed. Used by
     /// refreshDuration() to decide whether to send commute notifications —
-    /// the user should never be notified based on the 30-minute placeholder.
+    /// the user should never be notified based on placeholder data.
     private static func fetchLiveDurationIfRoutable(answers: SurveyAnswers) async -> Int? {
         guard let originCoord = LocationManager.shared.currentCoordinate else {
             return nil   // No GPS fix — cannot route
@@ -399,6 +401,10 @@ final class CommuteManager: ObservableObject {
     /// from UserDefaults because in-memory properties may have been wiped if
     /// the app was suspended and relaunched by the OS.
     private func handleBackgroundTask(_ task: BGAppRefreshTask) async {
+        guard Auth.auth().currentUser != nil, !BackgroundActivitySession.shared.isStopped else {
+            task.setTaskCompleted(success: true)
+            return
+        }
         // Reschedule first so the chain continues even if we exit early
         scheduleBackgroundRefresh()
 
@@ -430,12 +436,13 @@ final class CommuteManager: ObservableObject {
 
     // ── Helpers ───────────────────────────────────────────────
 
-    /// Extracts the commute duration in minutes from survey answers.
-    /// Returns 0 until a commute has been configured.
+    /// Extracts the fallback commute duration in minutes from survey answers.
+    /// Auto commute falls back to 0 so travel time is added only after routing
+    /// to a calendar event location succeeds.
     static func surveyDuration(from answers: SurveyAnswers) -> Int {
         guard answers.hasCommuteSetup else { return 0 }
         return answers.commute.auto
-            ? 30
+            ? 0
             : answers.commute.hours * 60 + answers.commute.minutes
     }
 }

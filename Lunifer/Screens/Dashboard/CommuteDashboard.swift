@@ -20,7 +20,6 @@ import UIKit
 //
 // Visibility is controlled by LuniferMain.shouldShowCommuteCard.
 // The card is shown only when:
-//   • The user's lifestyle is "student" or "commuter"
 //   • Today is a scheduled wake day
 //   • The current time is between alarm fire and first event start
 //   • CalendarManager has at least one event today
@@ -308,15 +307,15 @@ struct CommuteStatusCard: View {
         return firstComponent.isEmpty ? routingAddress : firstComponent
     }
 
-    /// Live commute duration. Prefers the cached MKDirections result from
-    /// CommuteManager when auto-mode is on; falls back to the survey value.
+    /// Live commute duration. Prefers the cached routed result from
+    /// CommuteManager when auto-mode is on; falls back to zero until routed.
     private var commuteMinutes: Int {
         if answers.commute.auto && CommuteManager.shared.currentDurationMinutes > 0 {
             return CommuteManager.shared.currentDurationMinutes
         }
         return answers.commute.auto
-            ? 30
-            : answers.commute.hours * 60 + answers.commute.minutes
+            ? CommuteManager.surveyDuration(from: answers)
+            : CommuteManager.surveyDuration(from: answers)
     }
 
     /// Leave time = alarm time + morning routine duration.
@@ -418,7 +417,6 @@ struct LuniferCommuteDashboard: View {
 
     private var previewAnswers: SurveyAnswers = {
         var a = SurveyAnswers()
-        a.lifestyle   = "commuter"
         a.commuteMode = "drive"
         a.commute     = TimeValue(hours: 0, minutes: 28, auto: true)
         a.routine     = TimeValue(hours: 0, minutes: 45, auto: false)

@@ -37,6 +37,7 @@ final class CommuteNotification {
     /// Schedules a "leave soon" reminder 15 minutes before leaveTime.
     /// Replaces any existing leave reminder.
     func scheduleLeaveReminder(leaveTime: Date) {
+        guard !BackgroundActivitySession.shared.isStopped else { return }
         guard isEnabled else {
             cancelLeaveReminder()
             return
@@ -86,6 +87,7 @@ final class CommuteNotification {
     ///   - newLeaveTime: The updated leave-by time derived from the new duration.
     ///   - didIncrease:  true if traffic got heavier, false if it cleared.
     func scheduleDeltaAlert(newLeaveTime: Date, didIncrease: Bool) {
+        guard !BackgroundActivitySession.shared.isStopped else { return }
         guard isEnabled else { return }
 
         let f = DateFormatter()

@@ -29,7 +29,10 @@ final class TurnBackOnNotification {
     /// so calling this multiple times safely resets the countdown.
     func schedule() async {
         let center   = UNUserNotificationCenter.current()
+        let generation = BackgroundActivitySession.shared.generation
+        guard BackgroundActivitySession.shared.accepts(generation) else { return }
         let settings = await center.notificationSettings()
+        guard BackgroundActivitySession.shared.accepts(generation) else { return }
         guard settings.authorizationStatus == .authorized ||
               settings.authorizationStatus == .provisional else {
             print("⏭️ Re-engagement notification skipped — notifications not authorised")
@@ -60,6 +63,10 @@ final class TurnBackOnNotification {
 
         do {
             try await center.add(request)
+            if !BackgroundActivitySession.shared.accepts(generation) {
+                center.removePendingNotificationRequests(withIdentifiers: [request.identifier])
+                center.removeDeliveredNotifications(withIdentifiers: [request.identifier])
+            }
             print("💤 Re-engagement notification scheduled — fires in 7 days")
         } catch {
             print("❌ Re-engagement notification failed to schedule: \(error.localizedDescription)")

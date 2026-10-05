@@ -258,6 +258,7 @@ final class MicrosoftCalendarService: NSObject, ObservableObject, ASWebAuthentic
     // MARK: - Mapping
 
     private static func mapToCalendarEvent(_ event: GraphEvent) -> CalendarEvent? {
+        guard event.isCancelled != true else { return nil }
         guard let startStr = event.start?.dateTime,
               let start = parseGraphDate(startStr) else { return nil }
         let end = event.end?.dateTime.flatMap(parseGraphDate) ?? start
@@ -323,6 +324,7 @@ private struct GraphEvent: Decodable {
     let id: String?
     let subject: String?
     let isAllDay: Bool?
+    let isCancelled: Bool?
     let start: GraphDateTime?
     let end: GraphDateTime?
     let location: GraphLocation?

@@ -17,6 +17,9 @@ final class AppPreferencesStore {
         static let overrideTimestamp = "overrideTimestamp"
         static let calculatedAlarmTimestamp = "calculatedAlarmTimestamp"
         static let disabledPendingAlarmTimestamp = "disabledPendingAlarmTimestamp"
+        static let pendingReplacementAlarmTimestamp = "pendingReplacementAlarmTimestamp"
+        static let pendingStopRescheduleTimestamp = "pendingStopRescheduleTimestamp"
+        static let finalizedMainAlarmTimestamp = "finalizedMainAlarmTimestamp"
 
         // Added alarms (stored as a JSON-encoded [AddedAlarm] array)
         static let addedAlarms = "addedAlarms"
@@ -113,6 +116,71 @@ final class AppPreferencesStore {
 
     func clearDisabledPendingAlarm() {
         defaults.removeObject(forKey: Keys.disabledPendingAlarmTimestamp)
+    }
+
+    var pendingReplacementAlarmDate: Date? {
+        get {
+            let timestamp = defaults.double(forKey: Keys.pendingReplacementAlarmTimestamp)
+            guard timestamp > 0 else { return nil }
+            let date = Date(timeIntervalSince1970: timestamp)
+            guard date > Date() else {
+                clearPendingReplacementAlarm()
+                return nil
+            }
+            return date
+        }
+        set {
+            if let newValue, newValue > Date() {
+                defaults.set(newValue.timeIntervalSince1970, forKey: Keys.pendingReplacementAlarmTimestamp)
+            } else {
+                clearPendingReplacementAlarm()
+            }
+        }
+    }
+
+    func clearPendingReplacementAlarm() {
+        defaults.removeObject(forKey: Keys.pendingReplacementAlarmTimestamp)
+    }
+
+    var hasPendingStopReschedule: Bool {
+        defaults.double(forKey: Keys.pendingStopRescheduleTimestamp) > 0
+    }
+
+    func markPendingStopReschedule(at date: Date = Date()) {
+        defaults.set(date.timeIntervalSince1970, forKey: Keys.pendingStopRescheduleTimestamp)
+    }
+
+    func clearPendingStopReschedule() {
+        defaults.removeObject(forKey: Keys.pendingStopRescheduleTimestamp)
+    }
+
+    var finalizedMainAlarmDate: Date? {
+        get {
+            let timestamp = defaults.double(forKey: Keys.finalizedMainAlarmTimestamp)
+            guard timestamp > 0 else { return nil }
+            let date = Date(timeIntervalSince1970: timestamp)
+            guard date > Date() else {
+                clearFinalizedMainAlarm()
+                return nil
+            }
+            return date
+        }
+        set {
+            if let newValue, newValue > Date() {
+                defaults.set(newValue.timeIntervalSince1970, forKey: Keys.finalizedMainAlarmTimestamp)
+            } else {
+                clearFinalizedMainAlarm()
+            }
+        }
+    }
+
+    func isMainAlarmFinalized(for alarmDate: Date, calendar: Calendar = .current) -> Bool {
+        guard let finalizedMainAlarmDate else { return false }
+        return calendar.isDate(finalizedMainAlarmDate, inSameDayAs: alarmDate)
+    }
+
+    func clearFinalizedMainAlarm() {
+        defaults.removeObject(forKey: Keys.finalizedMainAlarmTimestamp)
     }
 
     // MARK: - Rest-day alarm opt-in

@@ -120,7 +120,10 @@ final class CalendarNudgeNotification {
 
         // Permission check.
         let center   = UNUserNotificationCenter.current()
+        let generation = BackgroundActivitySession.shared.generation
+        guard BackgroundActivitySession.shared.accepts(generation) else { return }
         let settings = await center.notificationSettings()
+        guard BackgroundActivitySession.shared.accepts(generation) else { return }
         guard settings.authorizationStatus == .authorized ||
               settings.authorizationStatus == .provisional else {
             print("⏭️ Calendar nudge skipped — notifications not authorised")
@@ -157,6 +160,10 @@ final class CalendarNudgeNotification {
         )
         do {
             try await center.add(request)
+            if !BackgroundActivitySession.shared.accepts(generation) {
+                center.removePendingNotificationRequests(withIdentifiers: [request.identifier])
+                center.removeDeliveredNotifications(withIdentifiers: [request.identifier])
+            }
             // Mark this empty streak as nudged so we don't send again until a
             // calendar event drives the alarm at least once more.
             defaults.set(true, forKey: Self.sentThisStreakKey)
