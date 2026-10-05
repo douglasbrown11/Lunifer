@@ -126,12 +126,11 @@ Lunifer/
 New users complete a short survey that captures:
 
 1. **Age** (birthday) — used for age-based sleep baseline when no wearable is connected
-2. **Lifestyle** — student, commuter, or work from home
-3. **Wake days** — which days Lunifer should set an alarm
-4. **Calendar** — Apple, Google, Outlook, or none
-5. **Sleep target** — manual hours or automatic
-6. **Morning routine** — preparation time, asked for every lifestyle
-7. **Commute** — transport mode, asked for every lifestyle; duration comes from live routing
+2. **Wake days** — which days Lunifer should set an alarm
+3. **Calendar** — Apple, Google, Outlook, or none
+4. **Sleep target** — manual hours or automatic
+5. **Morning routine** — preparation time
+6. **Commute** — transport mode; duration is zero until live routing can use a calendar event location
 
 Survey answers are saved locally and synced to Firestore.
 They drive every alarm calculation.

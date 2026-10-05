@@ -26,9 +26,15 @@ final class SilentPushManager {
 
     func refreshTomorrowAlarm() async -> Bool {
         guard Auth.auth().currentUser != nil,
+              Self.isLuniferEnabled,
               let answers = SurveyAnswersStore.shared.loadFromDefaults() else { return false }
-        _ = await LuniferAlarm.shared.refreshTomorrowAlarm(answers: answers)
-        return true
+        guard let refreshed = await LuniferAlarm.shared.refreshTomorrowAlarm(answers: answers) else { return false }
+        AppPreferencesStore.shared.finalizedMainAlarmDate = refreshed
+        return Self.isLuniferEnabled
+    }
+
+    private static var isLuniferEnabled: Bool {
+        UserDefaults.standard.object(forKey: AppPreferencesStore.Keys.luniferEnabled) as? Bool ?? true
     }
 
     static func clearStoredData() {

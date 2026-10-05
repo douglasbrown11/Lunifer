@@ -142,6 +142,10 @@ struct LuniferMain: View {
         return "Alarm update failed. Try again."
     }
 
+    static func shouldScheduleWakeReminder(luniferEnabled: Bool, alarmAuthorized: Bool, confirmedAlarmDate: Date?) -> Bool {
+        luniferEnabled && alarmAuthorized && confirmedAlarmDate != nil
+    }
+
     private func loadAddedAlarms() {
         guard let data = UserDefaults.standard.data(forKey: "addedAlarms"),
               let decoded = try? JSONDecoder().decode([AddedAlarm].self, from: data)
@@ -468,6 +472,15 @@ struct LuniferMain: View {
             SoundSettingsView()
         }
         .task {
+            guard !Task.isCancelled else { return }
+            #if DEBUG
+            guard Auth.auth().currentUser != nil || UITestSupport.dashboardAnswers() != nil || isRunningPreview else { return }
+            #else
+            guard Auth.auth().currentUser != nil else { return }
+            #endif
+            BackgroundActivitySession.shared.resume()
+            Task { await LuniferAlarm.shared.startMonitoring() }
+            UIApplication.shared.registerForRemoteNotifications()
             // Restore persisted override time, or clear it if the alarm has already passed.
             if overrideActive && overrideTimestamp > 0 {
                 let savedTime = Date(timeIntervalSince1970: overrideTimestamp)
@@ -517,38 +530,54 @@ struct LuniferMain: View {
             // when running inside the Xcode preview canvas.
             guard !isRunningPreview else { return }
 
-            // Enable morning-routine estimation for commuters/students (no-op otherwise).
+            // Enable morning-routine estimation for wake-day users.
             MorningRoutineEstimator.shared.configure(for: answers)
+
+            let alarmAuthorized: Bool
+            if luniferEnabled {
+                await LuniferAlarm.shared.requestAuthorization()
+                checkAlarmAuthorization()
+                alarmAuthorized = LuniferAlarm.shared.isAuthorized && !showAlarmDeniedAlert
+            } else {
+                checkAlarmAuthorization()
+                alarmAuthorized = false
+            }
 
             // Resolve the alarm date before starting any services so that the
             // wake notification and commute polling all use the same target.
             let tomorrow = Calendar.current.date(byAdding: .day, value: 1, to: Calendar.current.startOfDay(for: Date())) ?? Date()
-            if let refreshed = await LuniferAlarm.shared.refreshTomorrowAlarm(answers: answers) {
-                resolvedAlarmDate = refreshed
-                calculatedAlarmTimestamp = refreshed.timeIntervalSince1970
-            } else if overrideActive {
+            if alarmAuthorized, let refreshed = await LuniferAlarm.shared.refreshTomorrowAlarm(answers: answers) {
+                if luniferEnabled {
+                    resolvedAlarmDate = refreshed
+                    calculatedAlarmTimestamp = refreshed.timeIntervalSince1970
+                }
+            } else if alarmAuthorized, overrideActive {
                 resolvedAlarmDate = await LuniferAlarm.shared.resolveAlarmDate(answers: answers, targetDay: tomorrow)
             }
             isAlarmCalculating = false
 
-            checkAlarmAuthorization()
+            guard !Task.isCancelled, !BackgroundActivitySession.shared.isStopped else { return }
             await SleepTracker.shared.startTracking()
+            guard !Task.isCancelled, !BackgroundActivitySession.shared.isStopped else { return }
             // Pull Apple Watch sleep from HealthKit (authoritative nights) if connected.
             HealthKitManager.shared.refreshIfNeeded()
             BatteryAlarmNotification.shared.startMonitoring()
             LuniferAlarm.shared.startAdaptiveRescheduling()
             // Use the override time for the notification when a manual override is active,
             // so the notification matches what the dashboard actually displays.
-            let wakeForNotification = overrideActive ? overrideTime : calculatedAlarmDate
-            await WakeNotification.shared.schedule(wakeDate: wakeForNotification, answers: answers)
+            let wakeForNotification = LuniferAlarm.shared.scheduledWakeTime
+            if LuniferMain.shouldScheduleWakeReminder(
+                luniferEnabled: luniferEnabled,
+                alarmAuthorized: alarmAuthorized,
+                confirmedAlarmDate: wakeForNotification
+            ), let wakeForNotification {
+                await WakeNotification.shared.schedule(wakeDate: wakeForNotification, answers: answers)
+            }
             await BirthdayNotification.shared.schedule(answers: answers)
             // Nudge the user to keep their calendar populated if no calendar event
             // has driven the alarm in over 7 wake days (resolveAlarmDate above has
             // already recorded any event usage for tomorrow).
             await CalendarNudgeNotification.shared.checkAndNudgeIfNeeded(answers: answers)
-            // Request alarm authorization — waits for the user to respond
-            await LuniferAlarm.shared.requestAuthorization()
-
             checkAlarmAuthorization()
 
             if !luniferEnabled || overrideActive {
@@ -560,7 +589,7 @@ struct LuniferMain: View {
             try? await Task.sleep(nanoseconds: 500_000_000)
             checkMotionAuthorization()
 
-            // Start commute monitoring on scheduled wake days for commuters/students.
+            // Start commute monitoring on scheduled wake days.
             // fetchEvents() was already called inside resolveAlarmDate(), so
             // firstEventTomorrow is populated. Use the event start as the arrival
             // target; fall back to wake time + buffer when no event is found.
@@ -617,11 +646,13 @@ struct LuniferMain: View {
             checkMotionAuthorization()
             if wasDenied && !showAlarmDeniedAlert && luniferEnabled {
                 Task { @MainActor in
+                    guard luniferEnabled else { return }
                     if overrideActive {
                         await alarmManager.scheduleAlarm(for: overrideTime)
                     } else {
                         await alarmManager.scheduleNextWakeAlarm(answers: answers)
                     }
+                    guard luniferEnabled else { return }
                     if let scheduled = alarmManager.scheduledWakeTime {
                         resolvedAlarmDate = scheduled
                         calculatedAlarmTimestamp = scheduled.timeIntervalSince1970
@@ -637,13 +668,16 @@ struct LuniferMain: View {
             Task { await SleepTracker.shared.confirmWakeFromMorningPickup() }
             guard luniferEnabled else { return }
             Task { @MainActor in
+                guard luniferEnabled else { return }
                 if !alarmManager.hasPendingMainAlarm() {
                     if overrideActive {
                         guard await alarmManager.scheduleAlarm(for: overrideTime) else { return }
+                        guard luniferEnabled else { return }
                         resolvedAlarmDate = overrideTime
                         calculatedAlarmTimestamp = overrideTime.timeIntervalSince1970
                         await WakeNotification.shared.schedule(wakeDate: overrideTime, answers: answers)
                     } else if let refreshed = await alarmManager.refreshTomorrowAlarm(answers: answers) {
+                        guard luniferEnabled else { return }
                         resolvedAlarmDate = refreshed
                         calculatedAlarmTimestamp = refreshed.timeIntervalSince1970
                     }
@@ -675,8 +709,10 @@ struct LuniferMain: View {
     private func refreshAlarmAfterWakeDayChange() async {
         isAlarmCalculating = !isTomorrowRestDay
         if let refreshed = await LuniferAlarm.shared.refreshTomorrowAlarm(answers: answers) {
-            resolvedAlarmDate = refreshed
-            calculatedAlarmTimestamp = refreshed.timeIntervalSince1970
+            if luniferEnabled {
+                resolvedAlarmDate = refreshed
+                calculatedAlarmTimestamp = refreshed.timeIntervalSince1970
+            }
         } else if isTomorrowRestDay {
             calculatedAlarmTimestamp = 0
             // Removing the day also ends any manual override for that alarm;
@@ -694,11 +730,13 @@ struct LuniferMain: View {
         defer { isAlarmCalculating = false }
         if overrideActive {
             if await LuniferAlarm.shared.scheduleAlarm(for: overrideTime) {
+                guard luniferEnabled else { return }
                 await WakeNotification.shared.schedule(wakeDate: overrideTime, answers: answers)
             }
             return
         }
         if let refreshed = await LuniferAlarm.shared.refreshTomorrowAlarm(answers: answers) {
+            guard luniferEnabled else { return }
             resolvedAlarmDate = refreshed
             calculatedAlarmTimestamp = refreshed.timeIntervalSince1970
         }
@@ -746,6 +784,7 @@ struct LuniferMain: View {
                 AppPreferencesStore.shared.disabledPendingAlarmDate = overrideActive ? overrideTime : alarmManager.scheduledWakeTime
                 AdaptiveAlarmStore.shared.clearPendingDecision()
                 AppPreferencesStore.shared.clearRestDayAlarmOptIn()
+                AppPreferencesStore.shared.clearPendingStopReschedule()
                 await LuniferAlarm.shared.cancelAlarm()
                 WakeNotification.shared.cancel()
                 BatteryAlarmNotification.shared.cancelWarning()
@@ -1096,10 +1135,13 @@ struct LuniferMain: View {
                                                 for: calculatedAlarmDate,
                                                 eventTitle: CalendarManager.shared.firstEventTomorrow?.title ?? "your first event",
                                                 routineMinutes: answers.routine.auto ? 60 : answers.routine.hours * 60 + answers.routine.minutes,
-                                                commuteMinutes: (answers.hasCommuteSetup)
-                                                    ? (answers.commute.auto ? (CommuteManager.shared.currentDurationMinutes > 0 ? CommuteManager.shared.currentDurationMinutes : 30) : answers.commute.hours * 60 + answers.commute.minutes)
-                                                    : 0
+                                                commuteMinutes: answers.commute.auto
+                                                    ? (CommuteManager.shared.currentDurationMinutes > 0
+                                                        ? CommuteManager.shared.currentDurationMinutes
+                                                        : CommuteManager.surveyDuration(from: answers))
+                                                    : CommuteManager.surveyDuration(from: answers)
                                             ) else { return }
+                                            guard luniferEnabled else { return }
                                             overrideActive = false
                                             overrideTimestamp = 0
                                             await WakeNotification.shared.schedule(wakeDate: calculatedAlarmDate, answers: answers)
@@ -1134,6 +1176,7 @@ struct LuniferMain: View {
                                         let requestedTime = pendingOverrideTime
                                         Task {
                                             guard await LuniferAlarm.shared.scheduleAlarm(for: requestedTime) else { return }
+                                            guard luniferEnabled else { return }
                                             AdaptiveAlarmStore.shared.clearPendingDecision()
                                             overrideActive = true
                                             overrideTimestamp = requestedTime.timeIntervalSince1970
@@ -2298,7 +2341,7 @@ struct LuniferDebugView: View {
             baselineStep = "Step 1 — Calendar event"
         } else if CalendarManager.shared.typicalFirstEventTime(forWeekday: wd) != nil {
             baselineStep = "Step 2 — Historical event pattern"
-        } else if SleepHistoryStore.shared.averageWakeTime(forWeekday: wd) != nil {
+        } else if SleepHistoryStore.shared.medianWakeTime(forWeekday: wd) != nil {
             baselineStep = "Step 3 — Historical wake average"
         } else {
             baselineStep = "Step 4 — 8 AM fallback"
@@ -2522,7 +2565,6 @@ private struct LuniferMainPreview: View {
     @State private var answers: SurveyAnswers = {
         var a = SurveyAnswers()
         a.age = "28"
-        a.lifestyle = "commuter"
         a.wakeDays = ["sun", "mon", "tue", "wed", "thu", "fri", "sat"]
         a.calendar = "apple"
         a.routine = TimeValue(hours: 0, minutes: 45, auto: false)
@@ -2563,4 +2605,3 @@ struct LuniferMain_Previews: PreviewProvider {
         }
     }
 }
-

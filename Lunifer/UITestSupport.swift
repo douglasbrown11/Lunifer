@@ -11,11 +11,24 @@ enum UITestSupport {
     }
 
     static var didRejectSchedule = false
+    static var forceScheduleFailure = false
+    static var forceAlarmRegistryReadFailure = false
+    static var alarmRefreshDelayNanoseconds: UInt64 = 0
 
     static func rejectScheduleIfRequested() throws {
-        guard ProcessInfo.processInfo.arguments.contains("--ui-test-fail-scheduling") else { return }
+        guard forceScheduleFailure || ProcessInfo.processInfo.arguments.contains("--ui-test-fail-scheduling") else { return }
         didRejectSchedule = true
         throw NSError(domain: "LuniferUITest", code: 1)
+    }
+
+    static func rejectAlarmRegistryReadIfRequested() throws {
+        guard forceAlarmRegistryReadFailure else { return }
+        throw NSError(domain: "LuniferUITest", code: 2)
+    }
+
+    static func pauseAlarmRefreshIfRequested() async {
+        guard alarmRefreshDelayNanoseconds > 0 else { return }
+        try? await Task.sleep(nanoseconds: alarmRefreshDelayNanoseconds)
     }
 
     static func dashboardAnswers() -> SurveyAnswers? {

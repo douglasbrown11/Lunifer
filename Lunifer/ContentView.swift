@@ -75,6 +75,7 @@ struct ContentView: View {
                                   screen != .intro,
                                   screen != .calendarChoice,
                                   screen != .auth {
+                            await AccountDataManager.shared.stopAllBackgroundActivity()
                             screen = .intro
                         }
                     }
@@ -101,9 +102,6 @@ struct ContentView: View {
             if !completed, Auth.auth().currentUser == nil {
                 screen = .intro
             }
-        }
-        .task {
-            await LuniferAlarm.shared.startMonitoring()
         }
         // Alarm screen slides up over whatever screen is currently showing
         .fullScreenCover(isPresented: Binding(

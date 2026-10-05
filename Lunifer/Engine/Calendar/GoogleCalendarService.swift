@@ -239,6 +239,8 @@ final class GoogleCalendarService: NSObject, ObservableObject, CalendarEventSour
         _ event: GoogleEvent,
         calendarTitle: String
     ) -> CalendarEvent? {
+        guard !isCanceled(event.status) else { return nil }
+
         let isAllDay = event.start?.date != nil
         guard let start = event.start?.resolvedDate,
               let end = event.end?.resolvedDate ?? event.start?.resolvedDate else { return nil }
@@ -261,6 +263,10 @@ final class GoogleCalendarService: NSObject, ObservableObject, CalendarEventSour
             notes: event.description,
             isDeclinedByUser: declined
         )
+    }
+
+    static func isCanceled(_ status: String?) -> Bool {
+        status?.lowercased() == "cancelled"
     }
 
     // MARK: - Presentation
@@ -300,6 +306,7 @@ private struct GoogleCalendarListEntry: Decodable {
 private struct GoogleEvent: Decodable {
     let id: String?
     let iCalUID: String?
+    let status: String?
     let summary: String?
     let location: String?
     let description: String?

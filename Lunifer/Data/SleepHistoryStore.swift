@@ -157,8 +157,8 @@ final class SleepHistoryStore {
         }
     }
 
-    /// Returns the average wake time (hour, minute) for the given weekday
-    /// across all stored sleep history entries that have a recorded wake time.
+    /// Returns the median wake time (hour, minute) for the given weekday
+    /// across recorded wake times within the last 10 weeks.
     ///
     /// Used as the second fallback in the alarm calculation when no calendar
     /// event or historical calendar pattern is available. Because this is the
@@ -170,22 +170,26 @@ final class SleepHistoryStore {
     /// (first couple of weeks) so the hardcoded 8 AM fallback applies instead.
     ///
     /// - Parameter weekday: Calendar.current weekday component (1 = Sunday … 7 = Saturday).
-    func averageWakeTime(forWeekday weekday: Int) -> (hour: Int, minute: Int)? {
+    func medianWakeTime(forWeekday weekday: Int, now: Date = Date()) -> (hour: Int, minute: Int)? {
         let cal = Calendar.current
+        guard let cutoff = cal.date(byAdding: .weekOfYear, value: -10, to: now) else { return nil }
 
         let wakeDates: [Date] = loadRawEntries().compactMap { dict in
             let wakeTS = dict["wake"] as? Double ?? 0
             guard wakeTS > 0 else { return nil }
             return Date(timeIntervalSince1970: wakeTS)
-        }.filter { cal.component(.weekday, from: $0) == weekday }
+        }.filter { $0 >= cutoff && $0 <= now && cal.component(.weekday, from: $0) == weekday }
 
         guard wakeDates.count >= 2 else { return nil }
 
-        let totalMinutes = wakeDates.reduce(0) { sum, date in
-            sum + cal.component(.hour, from: date) * 60 + cal.component(.minute, from: date)
-        }
-        let avgMinutes = totalMinutes / wakeDates.count
-        return (hour: avgMinutes / 60, minute: avgMinutes % 60)
+        let minutes = wakeDates.map { date in
+            cal.component(.hour, from: date) * 60 + cal.component(.minute, from: date)
+        }.sorted()
+        let middle = minutes.count / 2
+        let medianMinutes = minutes.count.isMultiple(of: 2)
+            ? (minutes[middle - 1] + minutes[middle]) / 2
+            : minutes[middle]
+        return (hour: medianMinutes / 60, minute: medianMinutes % 60)
     }
 
     func clearLocalData() {

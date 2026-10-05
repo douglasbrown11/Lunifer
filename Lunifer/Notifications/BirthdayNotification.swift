@@ -42,7 +42,10 @@ final class BirthdayNotification {
 
         // Permission check
         let center   = UNUserNotificationCenter.current()
+        let generation = BackgroundActivitySession.shared.generation
+        guard BackgroundActivitySession.shared.accepts(generation) else { return }
         let settings = await center.notificationSettings()
+        guard BackgroundActivitySession.shared.accepts(generation) else { return }
         guard settings.authorizationStatus == .authorized ||
               settings.authorizationStatus == .provisional else {
             print("⏭️ Birthday notification skipped — notifications not authorised")
@@ -81,6 +84,10 @@ final class BirthdayNotification {
 
         do {
             try await center.add(request)
+            if !BackgroundActivitySession.shared.accepts(generation) {
+                center.removePendingNotificationRequests(withIdentifiers: [request.identifier])
+                center.removeDeliveredNotifications(withIdentifiers: [request.identifier])
+            }
             print("🎂 Birthday notification scheduled for \(birthdayComps.month ?? 0)/\(birthdayComps.day ?? 0) at 10:00 AM (yearly)")
         } catch {
             print("❌ Birthday notification failed to schedule: \(error.localizedDescription)")

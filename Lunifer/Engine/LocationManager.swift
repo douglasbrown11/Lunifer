@@ -20,6 +20,12 @@ final class LocationManager: NSObject, ObservableObject {
         authorizationStatus = manager.authorizationStatus
     }
 
+    func stop() {
+        manager.stopUpdatingLocation()
+        manager.stopMonitoringSignificantLocationChanges()
+        currentCoordinate = nil
+    }
+
     func requestAlwaysAuthorization() {
         manager.requestAlwaysAuthorization()
     }
@@ -57,6 +63,7 @@ final class LocationManager: NSObject, ObservableObject {
     /// has not granted at least whenInUse authorization. The result is
     /// published on `currentCoordinate` once the fix arrives.
     func requestCurrentLocation() {
+        guard !BackgroundActivitySession.shared.isStopped else { return }
         let status = manager.authorizationStatus
         guard status == .authorizedAlways || status == .authorizedWhenInUse else { return }
         manager.requestLocation()
@@ -81,6 +88,7 @@ extension LocationManager: CLLocationManagerDelegate {
     func locationManager(_ manager: CLLocationManager, didUpdateLocations locations: [CLLocation]) {
         guard let location = locations.last else { return }
         DispatchQueue.main.async { [weak self] in
+            guard !BackgroundActivitySession.shared.isStopped else { return }
             self?.currentCoordinate = location.coordinate
         }
     }

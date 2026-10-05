@@ -44,6 +44,7 @@ final class RestDayEventNotification {
     ///   - answers: Survey answers used to derive the wake time
     ///              (routine + commute offset from event start).
     func scheduleIfNeeded(event: CalendarEvent, answers: SurveyAnswers) {
+        guard !BackgroundActivitySession.shared.isStopped else { return }
         // Respect the user's notification preference
         guard UserDefaults.standard.object(forKey: "restDayReminderEnabled") as? Bool != false else { return }
         guard UserDefaults.standard.object(forKey: "allNotificationsEnabled") as? Bool != false else { return }
@@ -64,8 +65,8 @@ final class RestDayEventNotification {
         let commuteMinutes: Int
         if answers.hasCommuteSetup {
             commuteMinutes = answers.commute.auto
-                ? 30
-                : answers.commute.hours * 60 + answers.commute.minutes
+                ? CommuteManager.surveyDuration(from: answers)
+                : CommuteManager.surveyDuration(from: answers)
         } else {
             commuteMinutes = 0
         }

@@ -9,28 +9,8 @@ The goal is a confirmed system alarm for the next eligible wake time, an honest 
 
 ### A. Scheduling and state integrity
 
-- **A6 — Registry read failure (audit):** cached `activeAlarms` or an in-memory wake time may disagree with the system when registry access fails.
-Keep confirmed and uncertain state distinguishable and retry reconciliation.
-- **A7 — Crash during replacement (audit):** terminate after new-alarm creation but before old-alarm retirement or local-state updates.
-On restart, identify the intended main alarm, safely reconcile duplicates, and recover its metadata.
-- **A8 — Competing updates (audit):** foreground refresh, silent push, adaptive calculation, manual edit, permission recovery, and the enable toggle overlap.
-The serialized main mutation is implemented, but stale calculations and post-await reminder/UI writes still need race testing.
-Disabling must remain authoritative after every suspension point.
-- **A9 — Cancellation failure (audit):** disabling or removing a wake day fails to cancel its system alarm.
-Do not display “no alarm” as a confirmed fact if an alarm remains; reconcile and retry cancellation.
-- **A10 — Added-alarm identity loss (audit):** missing or corrupt logical-ID mappings can misclassify a user-added alarm as the main alarm.
-Recover identity without silently deleting independent alarms.
-
 ### B. Advancing to the next day
 
-- **B2 — Alarm never explicitly dismissed (audit):** leave an alarm ringing, let its system presentation change, or miss it entirely.
-Determine how the next alarm is created when the ordinary Stop path never runs.
-- **B3 — App terminated around Stop (audit):** stop the main alarm, then terminate during calendar/commute resolution or before scheduling completes.
-Use durable recovery state or another reliable repair trigger so the chain does not end silently.
-- **B4 — Missing answers during an intent (audit):** background relaunch lacks decoded survey answers or ready app services.
-Recover persisted settings or use a defined fallback and record that scheduling needs repair.
-- **B6 — Duplicate Stop events (audit):** the in-app Stop path and system intent both process the same alarm.
-Advancement, adaptive logging, override clearing, and rest-day consumption should be idempotent.
 - **B7 — Several days unopened (audit):** run through multiple wake days and rest days without reopening Lunifer.
 Verify actual system alarms each day rather than relying on dashboard state or a single successful launch.
 
@@ -38,22 +18,6 @@ Verify actual system alarms each day rather than relying on dashboard state or a
 
 ### C. Execution, permissions, and service availability
 
-- **C1 — Background refresh not delivered (audit):** silent push or scheduled background work is delayed, rejected, expires, or never arrives.
-Keep an already confirmed alarm and ensure the daily chain does not require an exact overnight callback.
-- **C2 — Background expiration (audit):** execution ends during calendar lookup, commute lookup, or alarm scheduling.
-Persist enough state to retry safely and never cancel a working alarm in preparation for unfinished work.
-- **C3 — Push registration/service failure (audit):** token rotation, notification permission changes, backend outages, account mismatch, or invalid push configuration prevents refresh.
-Audit token lifecycle and distinguish a scheduled alarm from unavailable refresh capability.
-- **C4 — Offline or slow network (audit):** calendar sync, location/commute lookup, or backend access times out.
-Bound waits and use a defined local fallback so scheduling is not held indefinitely.
-- **C5 — Permission changes while suspended (audit):** revoke or restore alarm access while Lunifer is backgrounded or during a scheduling attempt.
-Check current authorization, reconcile actual alarms, and avoid stale recovery UI.
-- **C6 — Calendar/location/motion access denied (audit):** loss of an input permission prevents ideal calculation.
-Use and explain the appropriate fallback without treating it as alarm permission denial.
-- **C7 — First-run authorization undecided (audit):** dismiss, delay, or decline the authorization prompt during onboarding or re-enabling.
-Do not claim an alarm exists until the system confirms it.
-- **C8 — Fresh install, update, reinstall, or restore (audit):** settings, system alarms, and persisted alarm-ID mappings do not survive together.
-Audit migration, defaults, orphan cleanup, account switching, sign-out, and recovery.
 - **C9 — Device conditions (device verification):** force quit, reboot, prolonged shutdown, battery depletion, low-power conditions, and first unlock.
 Measure actual delivery and next-day recovery on supported iPhones; document platform limitations without promising unavailable execution.
 - **C10 — Alarm presentation and sound (device verification):** locked screen, silent mode, Focus, volume settings, audio accessories, custom sound assets, and overlapping alarms.
@@ -63,10 +27,6 @@ Fail visibly and provide a defined fallback or clear requirement when native ala
 
 ### D. Calendar and wake-time calculation
 
-- **D1 — Event added, moved, deleted, or synced late (audit):** the first qualifying event changes after the alarm was calculated.
-Apply the agreed freeze policy for today's pending alarm and update future alarms without silently losing coverage.
-- **D2 — Event selection (audit):** all-day, canceled, declined, recurring, overlapping, overnight, and timezone-specific events compete with the actual first obligation.
-Define which events qualify and test the selection behavior.
 - **D3 — Fallback chain quality (audit):** no live event leads to historical event patterns, historical wake averages, or the default wake time.
 Validate stale/missing history and ensure the resulting alarm is suitable for the target day.
 - **D4 — Commute/routine extremes (audit):** missing location, stale commute cache, negative/huge durations, or an event early enough to push waking into the previous date.

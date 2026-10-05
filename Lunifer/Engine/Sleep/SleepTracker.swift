@@ -2,6 +2,7 @@ import Foundation
 import Combine
 import SwiftUI
 import BackgroundTasks
+import FirebaseAuth
 
 // ─────────────────────────────────────────────────────────────
 // SleepTracker (Background-Safe)
@@ -72,17 +73,24 @@ final class SleepTracker: ObservableObject {
     /// Called once at app launch. Starts foreground tracking,
     /// runs retroactive analysis for any missed overnight period,
     /// and schedules the next background task.
+    private(set) var isTracking = false
+
     func startTracking() async {
+        guard !isTracking, !BackgroundActivitySession.shared.isStopped else { return }
+        isTracking = true
+        let generation = BackgroundActivitySession.shared.generation
         featureCollector.startCollecting()
 
         // Run retroactive analysis for the overnight period we missed
         await runRetroactiveAnalysis()
+        guard BackgroundActivitySession.shared.accepts(generation), isTracking else { return }
 
         // A deliberate phone pickup in the morning near the alarm is a near-certain
         // "the user is awake now" signal. Finalize last night immediately so Sleep
         // Insights updates the moment the app is opened, rather than waiting for the
         // passive state machine to confirm a wake (which is slow right after waking).
         await confirmWakeFromMorningPickup()
+        guard BackgroundActivitySession.shared.accepts(generation), isTracking else { return }
 
         // Start the foreground prediction timer
         predictionTimer = Timer.scheduledTimer(
@@ -99,10 +107,13 @@ final class SleepTracker: ObservableObject {
 
         // Run an initial live prediction after a short delay
         try? await Task.sleep(nanoseconds: 5_000_000_000)
+        guard BackgroundActivitySession.shared.accepts(generation), isTracking else { return }
         runLivePrediction()
     }
 
     func stopTracking() {
+        isTracking = false
+        BGTaskScheduler.shared.cancel(taskRequestWithIdentifier: Self.backgroundTaskID)
         featureCollector.stopCollecting()
         predictionTimer?.invalidate()
         predictionTimer = nil
@@ -129,6 +140,7 @@ final class SleepTracker: ObservableObject {
     /// iOS decides exactly when to run it, but we request it
     /// during the overnight window for best results.
     func scheduleBackgroundTask() {
+        guard Auth.auth().currentUser != nil, !BackgroundActivitySession.shared.isStopped else { return }
         let request = BGProcessingTaskRequest(identifier: Self.backgroundTaskID)
 
         // No earliestBeginDate — iOS can run this immediately
@@ -148,6 +160,11 @@ final class SleepTracker: ObservableObject {
 
     /// Called by iOS when the background task fires.
     private func handleBackgroundTask(_ task: BGProcessingTask) async {
+        let generation = BackgroundActivitySession.shared.generation
+        guard Auth.auth().currentUser != nil, !BackgroundActivitySession.shared.isStopped else {
+            task.setTaskCompleted(success: true)
+            return
+        }
         // Schedule the next one before we do work
         scheduleBackgroundTask()
 
@@ -159,6 +176,11 @@ final class SleepTracker: ObservableObject {
 
         // Run the retroactive analysis
         await runRetroactiveAnalysis()
+
+        guard BackgroundActivitySession.shared.accepts(generation) else {
+            task.setTaskCompleted(success: true)
+            return
+        }
 
         // Check battery while we're awake — warn user if phone
         // won't last until their alarm
@@ -186,6 +208,8 @@ final class SleepTracker: ObservableObject {
     /// Analyzes the period since the last analysis (or last 12 hours)
     /// by querying CoreMotion and interaction logs retroactively.
     func runRetroactiveAnalysis() async {
+        let generation = BackgroundActivitySession.shared.generation
+        guard BackgroundActivitySession.shared.accepts(generation) else { return }
         let now = Date()
 
         // Figure out where to start: last analysis time or 12 hours ago
@@ -210,6 +234,7 @@ final class SleepTracker: ObservableObject {
             from: analysisStart,
             to: now
         )
+        guard BackgroundActivitySession.shared.accepts(generation) else { return }
 
         // Step through the missed period in 5-minute increments,
         // reconstructing features and running predictions at each step
@@ -354,6 +379,8 @@ final class SleepTracker: ObservableObject {
     /// open / foreground; it no-ops outside the morning window, without an onset, or
     /// once it has already recorded a wake today.
     func confirmWakeFromMorningPickup() async {
+        let generation = BackgroundActivitySession.shared.generation
+        guard BackgroundActivitySession.shared.accepts(generation) else { return }
         let now = Date()
 
         // Dedupe — at most one morning-pickup wake per calendar day.
@@ -365,6 +392,7 @@ final class SleepTracker: ObservableObject {
 
         // Resolve last night's onset from the full model (with fallbacks).
         guard let onset = await resolveOnsetForMorningWake(now: now) else { return }
+        guard BackgroundActivitySession.shared.accepts(generation) else { return }
 
         let duration = now.timeIntervalSince(onset) / 3600.0
         guard duration >= 3.0, duration <= 12.0 else { return }
@@ -505,6 +533,7 @@ final class SleepTracker: ObservableObject {
     // ─────────────────────────────────────────────────────────
 
     private func runLivePrediction() {
+        guard isTracking, !BackgroundActivitySession.shared.isStopped else { return }
         let features = featureCollector.currentFeatures()
         let prediction = model.predict(features: features)
 

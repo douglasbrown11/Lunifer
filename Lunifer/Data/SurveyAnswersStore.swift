@@ -26,7 +26,6 @@ final class SurveyAnswersStore {
 
         let data: [String: Any] = [
             "age": answers.age,
-            "lifestyle": answers.lifestyle ?? "",
             "wakeDays": answers.wakeDays,
             "calendar": answers.calendar ?? "",
             "sleep": [
@@ -70,7 +69,6 @@ final class SurveyAnswersStore {
 
         let data: [String: Any] = [
             "age": answers.age,
-            "lifestyle": answers.lifestyle ?? "",
             "wakeDays": answers.wakeDays,
             "calendar": answers.calendar ?? "",
             "sleep": [
@@ -123,9 +121,6 @@ final class SurveyAnswersStore {
             // Legacy format: plain integer age — keep as-is; SleepDurationModel
             // handles both formats via its Int fallback path.
             answers.age = String(legacyAge)
-        }
-        if let lifestyle = data["lifestyle"] as? String, !lifestyle.isEmpty {
-            answers.lifestyle = lifestyle
         }
         if let wakeDays = data["wakeDays"] as? [String], !wakeDays.isEmpty {
             answers.wakeDays = wakeDays
