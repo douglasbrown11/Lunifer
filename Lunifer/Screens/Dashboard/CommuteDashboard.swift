@@ -280,6 +280,7 @@ struct CommuteStatusCard: View {
     let answers: SurveyAnswers
     /// The resolved Lunifer alarm time for today, used to derive the leave-by time.
     let alarmDate: Date
+    @ObservedObject private var commuteManager = CommuteManager.shared
 
     /// True when CommuteManager has a real destination to route to — a
     /// location string on today's first calendar event.
@@ -311,7 +312,7 @@ struct CommuteStatusCard: View {
     /// CommuteManager when auto-mode is on; falls back to zero until routed.
     private var commuteMinutes: Int {
         if answers.commute.auto && CommuteManager.shared.currentDurationMinutes > 0 {
-            return CommuteManager.shared.currentDurationMinutes
+            return CommuteManager.commuteMinutesForAlarmMath(CommuteManager.shared.currentDurationMinutes)
         }
         return answers.commute.auto
             ? CommuteManager.surveyDuration(from: answers)
@@ -382,6 +383,20 @@ struct CommuteStatusCard: View {
                             .font(.custom("DM Sans", size: 13))
                             .foregroundColor(Color.white.opacity(0.40))
                             .frame(maxWidth: .infinity, alignment: .center)
+
+                        if commuteManager.ignoredCommuteMinutes != nil {
+                            HStack(alignment: .firstTextBaseline, spacing: 8) {
+                                Image(systemName: "location.slash")
+                                    .font(.system(size: 13, weight: .light))
+                                    .foregroundColor(Color(red: 0.95, green: 0.78, blue: 0.45))
+                                Text("Route looks unusual. Alarm ignored commute time.")
+                                    .font(.custom("DM Sans", size: 12))
+                                    .foregroundColor(Color.white.opacity(0.52))
+                                    .fixedSize(horizontal: false, vertical: true)
+                            }
+                            .frame(maxWidth: .infinity, alignment: .center)
+                            .padding(.top, 4)
+                        }
                     }
                 }
                 .padding(.horizontal, 60)

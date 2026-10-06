@@ -39,31 +39,6 @@ struct LuniferButtonStyle: ButtonStyle {
 }
 
 
-// ── MARK: Progress Dots ─────────────────────────────────────
-
-struct ProgressDots: View {
-    let total: Int
-    let current: Int
-    let onTap: (Int) -> Void
-
-    var body: some View {
-        HStack(spacing: 8) {
-            ForEach(0..<total, id: \.self) { i in
-                Capsule()
-                    .fill(i == current
-                          ? Color(red: 0.706, green: 0.588, blue: 0.902).opacity(0.6)
-                          : Color(red: 0.627, green: 0.510, blue: 0.824).opacity(0.2))
-                    // The active dot is wider (20pt) than inactive dots (4pt)
-                    // to show which screen you're on
-                    .frame(width: i == current ? 20 : 4, height: 4)
-                    .animation(.easeInOut(duration: 0.4), value: current)
-                    .onTapGesture { onTap(i) }
-            }
-        }
-    }
-}
-
-
 // ── MARK: Screen 0 — Splash ─────────────────────────────────
 
 struct SplashScreen: View {
@@ -105,58 +80,10 @@ struct SplashScreen: View {
     }
 }
 
-
-// ── MARK: Screen 1 — Problem ────────────────────────────────
-
-struct ProblemScreen: View {
-    let onNext: () -> Void
-
-    var body: some View {
-        VStack(spacing: 0) {
-
-            // Spacer pushes the text block down from the top of the screen
-            Spacer()
-
-            Text("The last thing you need before bed is one more thing to do")
-                .font(.custom("Cormorant Garamond", size: 22))
-                .italic()
-                .fontWeight(.light)
-                .foregroundColor(Color(red: 0.878, green: 0.847, blue: 1.0))
-                .multilineTextAlignment(.center)
-                .lineSpacing(3)
-                .kerning(0.5)
-                .minimumScaleFactor(0.8)
-                .padding(.horizontal, 48)
-                .padding(.bottom, 14)
-
-            Text("After a long day, setting your alarm should be the least of your worries. Lunifer takes care of it — quietly and intelligently.")
-                .font(.custom("DM Sans", size: 13))
-                .fontWeight(.light)
-                .foregroundColor(Color(red: 0.706, green: 0.627, blue: 0.863).opacity(0.5))
-                .multilineTextAlignment(.center)
-                .lineSpacing(5)
-                .frame(maxWidth: .infinity)
-                .padding(.bottom, 20)
-                .padding(.horizontal, 42)
-
-            Spacer()
-
-            LuniferButton(title: "Continue", action: onNext)
-                .padding(.bottom, 52)
-        }
-        .padding(.horizontal, 24)
-        .frame(maxWidth: .infinity, maxHeight: .infinity)
-    }
-}
-
-
 // ── MARK: Root Intro View ───────────────────────────────────
 
 struct LuniferIntro: View {
     var onFinish: () -> Void = {}
-
-    @State private var screen: Int = 0
-    private let totalScreens = 2
 
     var body: some View {
         // ZStack layers the background, screen content, and progress dots
@@ -164,50 +91,9 @@ struct LuniferIntro: View {
         ZStack {
             LuniferBackground()
 
-            // Inner ZStack holds whichever screen is currently active.
-            // Only one screen is visible at a time — SwiftUI animates between them.
-            ZStack {
-                if screen == 0 {
-                    SplashScreen(onNext: next)
-                        // asymmetric transition: new screen slides in from below,
-                        // old screen slides out above
-                        .transition(.asymmetric(
-                            insertion: .opacity.combined(with: .offset(y: 20)),
-                            removal: .opacity.combined(with: .offset(y: -20))
-                        ))
-                }
-                if screen == 1 {
-                    ProblemScreen(onNext: onFinish)
-                        .transition(.asymmetric(
-                            insertion: .opacity.combined(with: .offset(y: 20)),
-                            removal: .opacity.combined(with: .offset(y: -20))
-                        ))
-                }
-            }
-            .animation(.easeInOut(duration: 0.8), value: screen)
-
-            // Progress dots are layered on top of everything in a separate VStack.
-            // Spacer() pushes them to the very bottom of the screen.
-            // They float above the screen content without affecting its layout.
-            VStack {
-                Spacer()
-                ProgressDots(total: totalScreens, current: screen, onTap: goTo)
-                    // 40pt from the bottom of the safe area keeps the dots
-                    // visible and clear of the home indicator on newer iPhones
-                    .padding(.bottom, 40)
-            }
+            SplashScreen(onNext: onFinish)
         }
         .frame(maxWidth: .infinity, maxHeight: .infinity)
-    }
-
-    private func next() {
-        if screen < totalScreens - 1 {
-            screen += 1
-        }
-    }
-
-    private func goTo(_ index: Int) {
-        screen = index
     }
 }
 

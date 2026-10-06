@@ -151,7 +151,6 @@ struct LuniferSignin: View {
     @State private var mode: SigninMode = .create
     @State private var email = ""
     @State private var password = ""
-    @State private var agreedToTerms: Bool = false
 
     private var canSubmit: Bool { !email.isEmpty && password.count >= 6 }
 
@@ -161,7 +160,7 @@ struct LuniferSignin: View {
         let base    = Font.custom("DM Sans", size: 12)
         let muted   = Color.white.opacity(0.35)
         let accent  = Color(red: 0.627, green: 0.471, blue: 1.0).opacity(0.85)
-        var s   = AttributedString("By continuing, you agree to our "); s.font = base;   s.foregroundColor = muted
+        var s   = AttributedString("By signing in, you agree to our "); s.font = base;   s.foregroundColor = muted
         var tos = AttributedString("Terms of Service");                  tos.font = base; tos.foregroundColor = accent; tos.link = tosURL
         var and = AttributedString(" and ");                             and.font = base; and.foregroundColor = muted
         var pp  = AttributedString("Privacy Policy");                   pp.font = base;  pp.foregroundColor = accent;  pp.link = ppURL
@@ -258,7 +257,6 @@ struct LuniferSignin: View {
                                 email: email,
                                 password: password,
                                 mode: mode,
-                                agreedToTerms: agreedToTerms,
                                 onSignedIn: onSignedIn
                             )
                         } label: {
@@ -312,7 +310,7 @@ struct LuniferSignin: View {
                     // any third-party login is offered.
                     if showAppleButton {
                         Button {
-                            backend.handleAppleSignIn(agreedToTerms: agreedToTerms, onSignedIn: onSignedIn)
+                            backend.handleAppleSignIn(onSignedIn: onSignedIn)
                         } label: {
                             HStack(spacing: 10) {
                                 AppleLogoView()
@@ -344,7 +342,7 @@ struct LuniferSignin: View {
                     // ── Google button ────────────────────────
                     if showGoogleButton {
                         Button {
-                            backend.handleGoogleSignIn(calendarChoice: calendarChoice, agreedToTerms: agreedToTerms, onSignedIn: onSignedIn)
+                            backend.handleGoogleSignIn(calendarChoice: calendarChoice, onSignedIn: onSignedIn)
                         } label: {
                             HStack(spacing: 10) {
                                 GoogleLogoView()
@@ -366,7 +364,7 @@ struct LuniferSignin: View {
                     // ── Outlook button ───────────────────────
                     if showOutlookButton {
                         Button {
-                            backend.handleMicrosoftSignIn(calendarChoice: calendarChoice, agreedToTerms: agreedToTerms, onSignedIn: onSignedIn)
+                            backend.handleMicrosoftSignIn(calendarChoice: calendarChoice, onSignedIn: onSignedIn)
                         } label: {
                             HStack(spacing: 10) {
                                 MicrosoftLogoView()
@@ -387,25 +385,25 @@ struct LuniferSignin: View {
 
                     // ── Toggle mode (only meaningful when email sign-in is available) ──
                     if showEmailSection {
-                    HStack(spacing: 4) {
-                        Text(mode == .signIn
-                             ? "Don't have an account?"
-                             : "Already have an account?")
-                            .font(.custom("DM Sans", size: 14))
-                            .foregroundColor(Color.white.opacity(0.3))
-
-                        Button {
-                            withAnimation(.easeInOut(duration: 0.2)) {
-                                mode = mode == .signIn ? .create : .signIn
-                                backend.errorMessage = nil
-                                backend.resetMessage = nil
-                            }
-                        } label: {
-                            Text(mode == .signIn ? "Create one" : "Sign in")
+                        HStack(spacing: 4) {
+                            Text(mode == .signIn
+                                 ? "Don't have an account?"
+                                 : "Already have an account?")
                                 .font(.custom("DM Sans", size: 14))
-                                .foregroundColor(Color(red: 0.627, green: 0.471, blue: 1.0).opacity(0.9))
+                                .foregroundColor(Color.white.opacity(0.3))
+
+                            Button {
+                                withAnimation(.easeInOut(duration: 0.2)) {
+                                    mode = mode == .signIn ? .create : .signIn
+                                    backend.errorMessage = nil
+                                    backend.resetMessage = nil
+                                }
+                            } label: {
+                                Text(mode == .signIn ? "Create one" : "Sign in")
+                                    .font(.custom("DM Sans", size: 14))
+                                    .foregroundColor(Color(red: 0.627, green: 0.471, blue: 1.0).opacity(0.9))
+                            }
                         }
-                    }
                     } // end if showEmailSection (mode toggle)
 
                     // ── Back to calendar picker ───────────────
@@ -425,56 +423,19 @@ struct LuniferSignin: View {
                 }
                 .padding(.horizontal, 62)
                 .padding(.top, 115)
-                .padding(.bottom, 110)   // leave room for the pinned checkbox panel
+                .padding(.bottom, 100)   // leave room for the pinned terms panel
                 .frame(maxWidth: .infinity)
             }
 
-            // ── Pinned terms checkbox card ────────────────────
+            // ── Pinned terms notice ───────────────────────────
             VStack {
                 Spacer()
-                HStack(alignment: .top, spacing: 10) {
-                    Button {
-                        withAnimation(.easeInOut(duration: 0.15)) { agreedToTerms.toggle() }
-                    } label: {
-                        ZStack {
-                            RoundedRectangle(cornerRadius: 5)
-                                .fill(agreedToTerms
-                                      ? Color(red: 0.627, green: 0.471, blue: 1.0)
-                                      : Color.white.opacity(0.06))
-                                .overlay(
-                                    RoundedRectangle(cornerRadius: 5)
-                                        .stroke(agreedToTerms
-                                                ? Color.clear
-                                                : Color.white.opacity(0.18),
-                                                lineWidth: 1.5)
-                                )
-                                .frame(width: 18, height: 18)
-                            if agreedToTerms {
-                                Image(systemName: "checkmark")
-                                    .font(.system(size: 10, weight: .bold))
-                                    .foregroundColor(.white)
-                            }
-                        }
-                    }
-                    .padding(.top, 1)
-                    .padding(.horizontal, 5)
-
-                    Text(termsAttributedString)
-                        .multilineTextAlignment(.leading)
-                        .fixedSize(horizontal: false, vertical: true)
-                }
-                .padding(.horizontal, 16)
-                .padding(.vertical, 16)
-                .background(
-                    RoundedRectangle(cornerRadius: 16)
-                        .fill(Color(red: 0.12, green: 0.08, blue: 0.20))
-                        .overlay(
-                            RoundedRectangle(cornerRadius: 16)
-                                .stroke(Color.white.opacity(0.08), lineWidth: 1)
-                        )
-                )
-                .padding(.horizontal, 29)
-                .padding(.bottom, 52)
+                Text(termsAttributedString)
+                    .multilineTextAlignment(.center)
+                    .fixedSize(horizontal: false, vertical: true)
+                    .padding(.horizontal, 16)
+                    .padding(.horizontal, 29)
+                    .padding(.bottom, 52)
             }
         }
         .frame(maxWidth: .infinity, maxHeight: .infinity)

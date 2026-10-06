@@ -81,7 +81,7 @@ enum WearableRecommendationStore {
 
     static func fallbackSleepHours(from answers: SurveyAnswers) -> Double {
         if answers.sleep.auto {
-            return SleepDurationModel.baselineForAge(answers.age)
+            return 8.0
         }
 
         return Double(answers.sleep.hours) + Double(answers.sleep.minutes) / 60.0

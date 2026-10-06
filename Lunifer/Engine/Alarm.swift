@@ -674,7 +674,7 @@ class LuniferAlarm: ObservableObject {
             : answers.routine.hours * 60 + answers.routine.minutes
         let commute: Int = answers.commute.auto
             ? (CommuteManager.shared.currentDurationMinutes > 0
-                ? CommuteManager.shared.currentDurationMinutes
+                ? CommuteManager.commuteMinutesForAlarmMath(CommuteManager.shared.currentDurationMinutes)
                 : CommuteManager.surveyDuration(from: answers))
             : CommuteManager.surveyDuration(from: answers)
         return Double(routine + commute) * 60
@@ -1465,7 +1465,7 @@ class LuniferAlarm: ObservableObject {
                     // Prefer the live GPS-routed duration cached by CommuteManager;
                     // fall back to zero until a live route exists.
                     let live = CommuteManager.shared.currentDurationMinutes
-                    commuteMins = live > 0 ? live : CommuteManager.surveyDuration(from: a)
+                    commuteMins = live > 0 ? CommuteManager.commuteMinutesForAlarmMath(live) : CommuteManager.surveyDuration(from: a)
                 } else {
                     commuteMins = CommuteManager.surveyDuration(from: a)
                 }
@@ -1476,7 +1476,7 @@ class LuniferAlarm: ObservableObject {
             routineMins = 60
             // Same live-first logic when answers aren't available.
             let live = CommuteManager.shared.currentDurationMinutes
-            commuteMins = live > 0 ? live : 0
+            commuteMins = live > 0 ? CommuteManager.commuteMinutesForAlarmMath(live) : 0
         }
 
         let calendarFinalized = AppPreferencesStore.shared.isMainAlarmFinalized(for: currentAlarm)

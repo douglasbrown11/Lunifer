@@ -61,6 +61,9 @@ final class CommuteManager: ObservableObject {
 
     @Published var currentDurationMinutes: Int = 0
     @Published var lastFetched: Date?          = nil
+    @Published var ignoredCommuteMinutes: Int? = nil
+
+    static let maxAlarmCommuteMinutes = 180
 
     // ── Routing state ─────────────────────────────────────────
 
@@ -257,7 +260,7 @@ final class CommuteManager: ObservableObject {
             if let destCoord = await geocode(eventLocation) {
                 if let minutes = await routeMinutes(from: originCoord, to: destCoord, mode: answers.commuteMode) {
                     print("🚗 Live commute (calendar): \(minutes) min to \(eventLocation)")
-                    return minutes
+                    return commuteMinutesForAlarmMath(minutes)
                 }
             }
         }
@@ -284,8 +287,14 @@ final class CommuteManager: ObservableObject {
         guard let minutes = await routeMinutes(from: originCoord, to: destCoord, mode: answers.commuteMode) else {
             return nil   // ORS request failed
         }
-        print("🚗 Live commute (routable check): \(minutes) min to \(eventLocation)")
-        return minutes
+        guard let usableMinutes = validatedCommuteMinutes(minutes) else {
+            shared.currentDurationMinutes = 0
+            shared.ignoredCommuteMinutes = minutes
+            return nil
+        }
+        print("🚗 Live commute (routable check): \(usableMinutes) min to \(eventLocation)")
+        shared.ignoredCommuteMinutes = nil
+        return usableMinutes
     }
 
     /// Geocodes a free-form address string to a coordinate using CLGeocoder.
@@ -441,8 +450,26 @@ final class CommuteManager: ObservableObject {
     /// to a calendar event location succeeds.
     static func surveyDuration(from answers: SurveyAnswers) -> Int {
         guard answers.hasCommuteSetup else { return 0 }
-        return answers.commute.auto
+        let minutes = answers.commute.auto
             ? 0
             : answers.commute.hours * 60 + answers.commute.minutes
+        return commuteMinutesForAlarmMath(minutes)
+    }
+
+    static func validatedCommuteMinutes(_ minutes: Int) -> Int? {
+        guard minutes >= 0, minutes <= maxAlarmCommuteMinutes else { return nil }
+        return minutes
+    }
+
+    static func commuteMinutesForAlarmMath(_ minutes: Int) -> Int {
+        guard let usableMinutes = validatedCommuteMinutes(minutes) else {
+            shared.currentDurationMinutes = 0
+            shared.ignoredCommuteMinutes = minutes
+            return 0
+        }
+        if minutes > 0 {
+            shared.ignoredCommuteMinutes = nil
+        }
+        return usableMinutes
     }
 }

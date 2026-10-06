@@ -25,7 +25,6 @@ final class SurveyAnswersStore {
         guard let uid = Auth.auth().currentUser?.uid else { return }
 
         let data: [String: Any] = [
-            "age": answers.age,
             "wakeDays": answers.wakeDays,
             "calendar": answers.calendar ?? "",
             "sleep": [
@@ -68,7 +67,6 @@ final class SurveyAnswersStore {
         }
 
         let data: [String: Any] = [
-            "age": answers.age,
             "wakeDays": answers.wakeDays,
             "calendar": answers.calendar ?? "",
             "sleep": [
