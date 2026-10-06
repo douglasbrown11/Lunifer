@@ -22,15 +22,10 @@ Verify actual system alarms each day rather than relying on dashboard state or a
 Measure actual delivery and next-day recovery on supported iPhones; document platform limitations without promising unavailable execution.
 - **C10 — Alarm presentation and sound (device verification):** locked screen, silent mode, Focus, volume settings, audio accessories, custom sound assets, and overlapping alarms.
 Confirm the audible/visible wake experience and supported system behavior separately from successful scheduling.
-- **C11 — OS/device compatibility (audit):** minimum supported OS, system updates, SDK errors, resource limits, and unsupported configurations.
-Fail visibly and provide a defined fallback or clear requirement when native alarms are unavailable.
-
 ### D. Calendar and wake-time calculation
 
 - **D3 — Fallback chain quality (audit):** no live event leads to historical event patterns, historical wake averages, or the default wake time.
 Validate stale/missing history and ensure the resulting alarm is suitable for the target day.
-- **D4 — Commute/routine extremes (audit):** missing location, stale commute cache, negative/huge durations, or an event early enough to push waking into the previous date.
-Validate inputs and define cross-midnight scheduling rather than creating a past alarm.
 - **D6 — Adaptive drift (audit):** repeated sleep estimates or calendar pulls move the alarm earlier/later across checks or a restart.
 Preserve the reference time, enforce agreed bounds, respect the first obligation, and avoid repeated contradictory replacements.
 - **D7 — Corrupt or incomplete preferences (audit):** missing enabled defaults, malformed survey JSON, unknown weekdays, invalid clock values, and failed persistence.

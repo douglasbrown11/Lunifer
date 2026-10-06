@@ -73,14 +73,9 @@ final class SigninBackend: ObservableObject {
         email: String,
         password: String,
         mode: SigninMode,
-        agreedToTerms: Bool,
         onSignedIn: @escaping (_ isNewUser: Bool) async -> Void
     ) {
         guard !email.isEmpty && password.count >= 6 else { return }
-        guard agreedToTerms else {
-            withAnimation { errorMessage = "Please agree to the Terms of Service and Privacy Policy to continue." }
-            return
-        }
         Task { @MainActor in
             loading = true
             errorMessage = nil
@@ -140,13 +135,8 @@ final class SigninBackend: ObservableObject {
     //     plus identity token for a Firebase OAuthCredential.
 
     func handleAppleSignIn(
-        agreedToTerms: Bool,
         onSignedIn: @escaping (_ isNewUser: Bool) async -> Void
     ) {
-        guard agreedToTerms else {
-            withAnimation { errorMessage = "Please agree to the Terms of Service and Privacy Policy to continue." }
-            return
-        }
         Task { @MainActor in
             loading = true
             errorMessage = nil
@@ -228,13 +218,8 @@ final class SigninBackend: ObservableObject {
 
     func handleMicrosoftSignIn(
         calendarChoice: String = "",
-        agreedToTerms: Bool,
         onSignedIn: @escaping (_ isNewUser: Bool) async -> Void
     ) {
-        guard agreedToTerms else {
-            withAnimation { errorMessage = "Please agree to the Terms of Service and Privacy Policy to continue." }
-            return
-        }
         // `calendarChoice` is accepted for call-site symmetry with the Google
         // handler. Outlook calendar access is connected separately (post-auth) from
         // the survey via `MicrosoftCalendarService.connect()`, so it is not requested
@@ -296,13 +281,8 @@ final class SigninBackend: ObservableObject {
 
     func handleGoogleSignIn(
         calendarChoice: String = "",
-        agreedToTerms: Bool,
         onSignedIn: @escaping (_ isNewUser: Bool) async -> Void
     ) {
-        guard agreedToTerms else {
-            withAnimation { errorMessage = "Please agree to the Terms of Service and Privacy Policy to continue." }
-            return
-        }
         Task { @MainActor in
             loading = true
             errorMessage = nil

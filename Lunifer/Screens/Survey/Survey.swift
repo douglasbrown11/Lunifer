@@ -147,6 +147,7 @@ private struct HoursMinutesPicker: UIViewRepresentable {
     @Binding var hours: Int
     @Binding var minutes: Int
     let hourRange: ClosedRange<Int>
+    let maxTotalMinutes: Int?
 
     private static let minuteRowCount = 60_000
     private static let minuteMidStart = minuteRowCount / 2  // 30 000 % 60 == 0 → maps to :00
@@ -156,12 +157,14 @@ private struct HoursMinutesPicker: UIViewRepresentable {
         picker.dataSource = context.coordinator
         picker.delegate   = context.coordinator
         picker.backgroundColor = .clear
+        clampSelection()
         picker.selectRow(hours - hourRange.lowerBound, inComponent: 0, animated: false)
         picker.selectRow(Self.minuteMidStart + minutes,  inComponent: 1, animated: false)
         return picker
     }
 
     func updateUIView(_ uiView: UIPickerView, context: Context) {
+        clampSelection()
         let expectedHourRow = hours - hourRange.lowerBound
         if uiView.selectedRow(inComponent: 0) != expectedHourRow {
             uiView.selectRow(expectedHourRow, inComponent: 0, animated: true)
@@ -173,6 +176,21 @@ private struct HoursMinutesPicker: UIViewRepresentable {
     }
 
     func makeCoordinator() -> Coordinator { Coordinator(self) }
+
+    private func clampedMinutes(hours: Int, minutes: Int) -> (hours: Int, minutes: Int) {
+        let hour = min(max(hours, hourRange.lowerBound), hourRange.upperBound)
+        guard let maxTotalMinutes else {
+            return (hour, min(max(minutes, 0), 59))
+        }
+        let total = min(max(hour * 60 + minutes, 0), maxTotalMinutes)
+        return (total / 60, total % 60)
+    }
+
+    private func clampSelection() {
+        let clamped = clampedMinutes(hours: hours, minutes: minutes)
+        if hours != clamped.hours { hours = clamped.hours }
+        if minutes != clamped.minutes { minutes = clamped.minutes }
+    }
 
     final class Coordinator: NSObject, UIPickerViewDataSource, UIPickerViewDelegate {
         var parent: HoursMinutesPicker
@@ -203,9 +221,25 @@ private struct HoursMinutesPicker: UIViewRepresentable {
                         didSelectRow row: Int,
                         inComponent component: Int) {
             if component == 0 {
-                parent.hours   = row + parent.hourRange.lowerBound
+                let selectedHours = row + parent.hourRange.lowerBound
+                let selectedMinutes = parent.minutes
+                let clamped = parent.clampedMinutes(hours: selectedHours, minutes: selectedMinutes)
+                parent.hours = clamped.hours
+                parent.minutes = clamped.minutes
+                if clamped.hours != selectedHours {
+                    pickerView.selectRow(clamped.hours - parent.hourRange.lowerBound, inComponent: 0, animated: true)
+                }
+                if clamped.minutes != selectedMinutes {
+                    pickerView.selectRow(HoursMinutesPicker.minuteMidStart + clamped.minutes, inComponent: 1, animated: true)
+                }
             } else {
-                parent.minutes = row % 60
+                let selectedMinutes = row % 60
+                let clamped = parent.clampedMinutes(hours: parent.hours, minutes: selectedMinutes)
+                parent.hours = clamped.hours
+                parent.minutes = clamped.minutes
+                if clamped.minutes != selectedMinutes {
+                    pickerView.selectRow(HoursMinutesPicker.minuteMidStart + clamped.minutes, inComponent: 1, animated: true)
+                }
             }
         }
     }
@@ -240,6 +274,7 @@ struct TimeScalePicker: View {
     @Binding var value: TimeValue
     let autoLabel: String
     let hourRange: ClosedRange<Int>
+    let maxTotalMinutes: Int?
     /// When false, the "let Lunifer figure this out" auto toggle is hidden and
     /// the hours/minutes wheels are always shown. Used by the morning-routine
     /// picker, which is manual-only (Lunifer does not learn routine duration).
@@ -249,11 +284,13 @@ struct TimeScalePicker: View {
         value: Binding<TimeValue>,
         autoLabel: String,
         hourRange: ClosedRange<Int> = 0...5,
+        maxTotalMinutes: Int? = nil,
         showAutoToggle: Bool = true
     ) {
         self._value = value
         self.autoLabel = autoLabel
         self.hourRange = hourRange
+        self.maxTotalMinutes = maxTotalMinutes
         self.showAutoToggle = showAutoToggle
     }
 
@@ -316,7 +353,8 @@ struct TimeScalePicker: View {
                     ZStack {
                         HoursMinutesPicker(hours: $value.hours,
                                            minutes: $value.minutes,
-                                           hourRange: hourRange)
+                                           hourRange: hourRange,
+                                           maxTotalMinutes: maxTotalMinutes)
                             .frame(height: 120)
 
                         Text(":")
@@ -340,7 +378,22 @@ struct TimeScalePicker: View {
             // the entered duration rather than the 60-minute auto fallback —
             // this also migrates any legacy answers that stored auto == true.
             if !showAutoToggle && value.auto { value.auto = false }
+            clampToMaximumIfNeeded()
         }
+        .onChange(of: value.hours) { _, _ in
+            clampToMaximumIfNeeded()
+        }
+        .onChange(of: value.minutes) { _, _ in
+            clampToMaximumIfNeeded()
+        }
+    }
+
+    private func clampToMaximumIfNeeded() {
+        guard let maxTotalMinutes else { return }
+        let total = value.hours * 60 + value.minutes
+        guard total > maxTotalMinutes else { return }
+        value.hours = maxTotalMinutes / 60
+        value.minutes = maxTotalMinutes % 60
     }
 }
 
@@ -358,26 +411,18 @@ struct LuniferSurvey: View {
         /// Maps the raw step index to a visual index for the progress dots,
         /// accounting for the skipped calendar step.
         private var visualStep: Int {
-            var visual = step
-            if step > 1 { visual -= 1 }
+            var visual = step - 2
             if skipCalendarStep && step > 3 { visual -= 1 }
-            return visual
+            return max(visual, 0)
         }
 
         @EnvironmentObject private var calendarManager: CalendarManager
         @Environment(\.openURL) private var openURL
 
-        @State private var step      = 0
+        @State private var step      = 2
         @State private var saving    = false
         @State private var saveError: String? = nil
         @State private var answers   = SurveyAnswers()
-        @State private var birthdayDate: Date = {
-            let formatter = DateFormatter()
-            formatter.dateFormat = "yyyy-MM-dd"
-            return formatter.date(from: "2000-01-01")
-                ?? Calendar.current.date(byAdding: .year, value: -25, to: Date())
-                ?? Date()
-        }()
         // Long-routine warning alert
         @State private var showLongRoutineAlert = false
         @State private var longRoutineTimeLabel = ""
@@ -401,13 +446,12 @@ struct LuniferSurvey: View {
         @State private var showCalendarNudge = false
         
         private var totalSteps: Int {
-            skipCalendarStep ? 4 : 5
+            skipCalendarStep ? 3 : 4
         }
         private var isLastStep: Bool { visualStep == totalSteps - 1 }
         
         private var canNext: Bool {
             switch step {
-            case 0: return !answers.age.isEmpty
             case 2: return !answers.wakeDays.isEmpty
             case 3: return answers.calendar  != nil
             case 4: // sleep step — wearable selected must complete its fetch before continuing
@@ -473,7 +517,7 @@ struct LuniferSurvey: View {
                             .padding(.bottom, 12)
                             
                             // ── Back button ──────────────────────
-                            if step > 0 {
+                            if visualStep > 0 {
                                 Button { goBack() } label: {
                                     Text("← Back")
                                         .font(.custom("DM Sans", size: 14))
@@ -527,8 +571,8 @@ struct LuniferSurvey: View {
                                 advance()
                             } label: {
                                 Text("Yes, Continue")
-                                    .font(.system(size: 16))
-                                    .foregroundColor(Color(.systemBlue))
+                                    .font(.system(size: 16, weight: .semibold))
+                                    .foregroundColor(Color(.systemRed))
                                     .frame(maxWidth: .infinity)
                                     .frame(height: 44)
                             }
@@ -630,7 +674,6 @@ struct LuniferSurvey: View {
         @ViewBuilder
         private var stepContent: some View {
             switch step {
-            case 0: stepAge
             case 2: stepWakeDays
             case 3: stepCalendar
             case 4: stepSleep
@@ -639,60 +682,6 @@ struct LuniferSurvey: View {
             }
         }
         
-        // Step 0 — Birthday Question
-        private var stepAge: some View {
-            VStack(spacing: 0) {
-                Text("When's your birthday?")
-                    .font(.custom("Cormorant Garamond", size: 22))
-                    .fixedSize(horizontal: false, vertical: true)
-                    .multilineTextAlignment(.center)
-                    .fontWeight(.light)
-                    .foregroundColor(Color.white.opacity(0.95))
-                    .frame(maxWidth: .infinity, alignment: .center)
-                    .padding(.bottom, 20)
-
-                ZStack {
-                    RoundedRectangle(cornerRadius: 16)
-                        .fill(Color.white.opacity(0.03))
-                        .overlay(
-                            RoundedRectangle(cornerRadius: 16)
-                                .stroke(Color.white.opacity(0.08), lineWidth: 1.5)
-                        )
-
-                    DatePicker(
-                        "",
-                        selection: $birthdayDate,
-                        in: ...Calendar.current.date(byAdding: .year, value: -13, to: Date())!,
-                        displayedComponents: .date
-                    )
-                    .datePickerStyle(.wheel)
-                    .labelsHidden()
-                    .colorScheme(.dark)
-                    .frame(height: 160)
-                    .clipped()
-                    .onChange(of: birthdayDate) { _, newDate in
-                        let formatter = DateFormatter()
-                        formatter.dateFormat = "yyyy-MM-dd"
-                        answers.age = formatter.string(from: newDate)
-                    }
-                }
-                .frame(maxWidth: .infinity)
-                .frame(height: 160)
-                .padding(.bottom, 24)
-            }
-            .onAppear {
-                // Sync answers.age → birthdayDate on first render, so any
-                // pre-loaded survey answer is reflected in the picker.
-                let formatter = DateFormatter()
-                formatter.dateFormat = "yyyy-MM-dd"
-                if let date = formatter.date(from: answers.age) {
-                    birthdayDate = date
-                }
-                // Write the picker's current date into answers.age so
-                // canNext passes even if the user never moves the wheel.
-                answers.age = formatter.string(from: birthdayDate)
-            }
-        }
         // Step 2 — Wake-up days
         private var stepWakeDays: some View {
             let weekdays = [
@@ -1028,6 +1017,8 @@ struct LuniferSurvey: View {
 
                 TimeScalePicker(value: $answers.routine,
                                 autoLabel: "Not sure — let Lunifer figure this out",
+                                hourRange: 0...3,
+                                maxTotalMinutes: 180,
                                 showAutoToggle: false)
                 .padding(.bottom, 24)
                 .padding(.horizontal, 40)
@@ -1038,7 +1029,7 @@ struct LuniferSurvey: View {
         /// Called by the primary button. Intercepts the routine step so the
         /// long-routine warning fires on "Done" rather than mid-scroll.
         private func checkRoutineBeforeContinue() {
-            if step == 5 && !answers.routine.auto && answers.routine.hours > 4 {
+            if step == 5 && !answers.routine.auto && routineMinutes > 90 {
                 let h = answers.routine.hours
                 let m = answers.routine.minutes
                 longRoutineTimeLabel = m > 0 ? "\(h) hours \(m) minutes" : "\(h) hours"
@@ -1046,6 +1037,10 @@ struct LuniferSurvey: View {
                 return
             }
             isLastStep ? handleFinish() : advance()
+        }
+
+        private var routineMinutes: Int {
+            answers.routine.hours * 60 + answers.routine.minutes
         }
 
         private func advance() {
@@ -1062,9 +1057,7 @@ struct LuniferSurvey: View {
                     requestMicrophonePermission()
                 }
             }
-            if step == 0 {
-                step = 2
-            } else if skipCalendarStep && step == 2 {
+            if skipCalendarStep && step == 2 {
                 // Skip the calendar step when it was pre-selected before sign-in.
                 step = 4
             } else {
@@ -1078,7 +1071,7 @@ struct LuniferSurvey: View {
                 if skipCalendarStep && step == 4 {
                     step = 2
                 } else if step == 2 {
-                    step = 0
+                    return
                 } else {
                     step -= 1
                 }

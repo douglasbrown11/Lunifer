@@ -75,6 +75,7 @@ struct AddedAlarm: Codable, Identifiable {
 struct LuniferMain: View {
     @Binding var answers: SurveyAnswers
     @ObservedObject private var alarmManager = LuniferAlarm.shared
+    @ObservedObject private var commuteManager = CommuteManager.shared
     @State private var showSettings = false
     @State private var showSound = false
     @State private var currentPage: Int = 1
@@ -573,7 +574,6 @@ struct LuniferMain: View {
             ), let wakeForNotification {
                 await WakeNotification.shared.schedule(wakeDate: wakeForNotification, answers: answers)
             }
-            await BirthdayNotification.shared.schedule(answers: answers)
             // Nudge the user to keep their calendar populated if no calendar event
             // has driven the alarm in over 7 wake days (resolveAlarmDate above has
             // already recorded any event usage for tomorrow).
@@ -1043,6 +1043,33 @@ struct LuniferMain: View {
                             .accessibilityIdentifier("alarmRecovery.message")
                             .transition(.opacity)
                         }
+
+                        if !alarmExpanded, commuteManager.ignoredCommuteMinutes != nil {
+                            HStack(spacing: 10) {
+                                Image(systemName: "location.slash")
+                                    .font(.system(size: 12, weight: .regular))
+                                    .foregroundColor(Color(red: 0.95, green: 0.78, blue: 0.45))
+                                Text("Commute route looks unusual. Alarm set without commute time.")
+                                    .font(.custom("DM Sans", size: 12))
+                                    .foregroundColor(Color.white.opacity(0.68))
+                                    .fixedSize(horizontal: false, vertical: true)
+                                Spacer(minLength: 4)
+                            }
+                            .padding(.horizontal, 12)
+                            .padding(.vertical, 10)
+                            .background(
+                                RoundedRectangle(cornerRadius: 10)
+                                    .fill(Color.white.opacity(0.06))
+                                    .overlay(
+                                        RoundedRectangle(cornerRadius: 10)
+                                            .stroke(Color.white.opacity(0.1), lineWidth: 1)
+                                    )
+                            )
+                            .padding(.top, 12)
+                            .accessibilityElement(children: .combine)
+                            .accessibilityIdentifier("commuteRoute.warning")
+                            .transition(.opacity)
+                        }
                     }
                     .padding(.horizontal, 32)
 
@@ -1137,7 +1164,7 @@ struct LuniferMain: View {
                                                 routineMinutes: answers.routine.auto ? 60 : answers.routine.hours * 60 + answers.routine.minutes,
                                                 commuteMinutes: answers.commute.auto
                                                     ? (CommuteManager.shared.currentDurationMinutes > 0
-                                                        ? CommuteManager.shared.currentDurationMinutes
+                                                        ? CommuteManager.commuteMinutesForAlarmMath(CommuteManager.shared.currentDurationMinutes)
                                                         : CommuteManager.surveyDuration(from: answers))
                                                     : CommuteManager.surveyDuration(from: answers)
                                             ) else { return }

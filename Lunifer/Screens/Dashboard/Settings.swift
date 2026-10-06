@@ -590,6 +590,10 @@ struct AboutYouSettingsView: View {
         return "\(h)h \(m)m"
     }
 
+    private var routineMinutes: Int {
+        answers.routine.hours * 60 + answers.routine.minutes
+    }
+	
     private var commuteModeLabel: String {
         switch answers.commuteMode {
         case "drive":   return "Drive"
@@ -598,19 +602,6 @@ struct AboutYouSettingsView: View {
         case "bike":    return "Bike"
         default:        return "Not set"
         }
-    }
-
-    /// Computes the user's current age from the stored birthday string ("yyyy-MM-dd").
-    /// Falls back gracefully for legacy plain-integer age data.
-    private var ageDisplayString: String {
-        let formatter = DateFormatter()
-        formatter.dateFormat = "yyyy-MM-dd"
-        if let birthday = formatter.date(from: answers.age) {
-            let years = Calendar.current.dateComponents([.year], from: birthday, to: Date()).year ?? 0
-            return "\(years)"
-        }
-        // Legacy: already a plain age number
-        return answers.age
     }
 
     var body: some View {
@@ -638,7 +629,6 @@ struct AboutYouSettingsView: View {
 
                 ScrollView(showsIndicators: false) {
                     VStack(spacing: 10) {
-                        immutableAgeRow
                         aboutYouRow(label: "Calendar", value: calendarLabel, field: "calendar")
                         aboutYouRow(label: "Morning Routine", value: routineLabel, field: "routine")
                         aboutYouRow(label: "Commute Type", value: commuteModeLabel, field: "commuteMode")
@@ -724,8 +714,8 @@ struct AboutYouSettingsView: View {
                     editingField = nil
                 } label: {
                     Text("Yes, Continue")
-                        .font(.system(size: 16))
-                        .foregroundColor(Color(.systemBlue))
+                        .font(.system(size: 16, weight: .semibold))
+                        .foregroundColor(Color(.systemRed))
                         .frame(maxWidth: .infinity)
                         .frame(height: 44)
                 }
@@ -751,38 +741,6 @@ struct AboutYouSettingsView: View {
         .shadow(color: .black.opacity(0.25), radius: 24, x: 0, y: 8)
         .frame(maxWidth: 320)
         .padding(.horizontal, 20)
-    }
-
-    private var immutableAgeRow: some View {
-        HStack {
-            Text("Age")
-                .font(.custom("DM Sans", size: 14))
-                .foregroundColor(Color.white.opacity(0.45))
-
-            Text(ageDisplayString)
-                .font(.custom("DM Sans", size: 14))
-                .foregroundColor(Color.white.opacity(0.85))
-                .padding(.leading, 12)
-
-            Spacer()
-
-            Image(systemName: "lock.fill")
-                .font(.system(size: 10, weight: .medium))
-                .foregroundColor(Color.white.opacity(0.25))
-        }
-        .padding(.horizontal, 16)
-        .padding(.vertical, 14)
-        .background(
-            RoundedRectangle(cornerRadius: 12)
-                .fill(Color.white.opacity(0.04))
-        )
-        .overlay(
-            RoundedRectangle(cornerRadius: 12)
-                .stroke(Color.white.opacity(0.08), lineWidth: 1)
-        )
-        .opacity(editingField == nil ? 1 : 0.5)
-        .scaleEffect(editingField == nil ? 1 : 0.985)
-        .animation(.spring(response: 0.38, dampingFraction: 0.82), value: editingField)
     }
 
     @ViewBuilder
@@ -835,7 +793,7 @@ struct AboutYouSettingsView: View {
                     withAnimation(.easeInOut(duration: 0.25)) {
                         if editingField == field {
                             // Closing the row — check for long routine before collapsing
-                            if field == "routine" && !answers.routine.auto && answers.routine.hours > 4 {
+                            if field == "routine" && !answers.routine.auto && routineMinutes > 90 {
                                 let h = answers.routine.hours
                                 let m = answers.routine.minutes
                                 longRoutineTimeLabel = m > 0 ? "\(h) hours \(m) minutes" : "\(h) hours"
@@ -963,6 +921,8 @@ struct AboutYouSettingsView: View {
                         TimeScalePicker(
                             value: $answers.routine,
                             autoLabel: "Let Lunifer figure this out",
+                            hourRange: 0...3,
+                            maxTotalMinutes: 180,
                             showAutoToggle: false
                         )
 
@@ -2279,7 +2239,6 @@ struct FeedbackSettingsView: View {
 #Preview {
     LuniferSettings(answers: .constant({
         var answers = SurveyAnswers()
-        answers.age = "21"
         return answers
     }()))
 }

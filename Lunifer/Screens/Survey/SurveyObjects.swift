@@ -58,6 +58,7 @@ struct CalendarChoiceScreen: View {
     @EnvironmentObject private var calendarManager: CalendarManager
     @State private var selection: String? = nil
     @State private var showCalendarNudge = false
+    @State private var hasAppeared = false
 
     var body: some View {
         ZStack {
@@ -99,6 +100,8 @@ struct CalendarChoiceScreen: View {
 
                 Spacer()
             }
+            .opacity(hasAppeared ? 1 : 0)
+            .offset(y: hasAppeared ? 0 : 12)
 
             // Calendar nudge overlay
             if showCalendarNudge {
@@ -154,8 +157,8 @@ struct CalendarChoiceScreen: View {
                                 onSelect("none")
                             } label: {
                                 Text("Yes, Continue")
-                                    .font(.system(size: 16))
-                                    .foregroundColor(Color(.systemBlue))
+                                    .font(.system(size: 16, weight: .semibold))
+                                    .foregroundColor(Color(.systemRed))
                                     .frame(maxWidth: .infinity)
                                     .frame(height: 44)
                             }
@@ -187,6 +190,12 @@ struct CalendarChoiceScreen: View {
             }
         }
         .frame(maxWidth: .infinity, maxHeight: .infinity)
+        .onAppear {
+            hasAppeared = false
+            withAnimation(.easeOut(duration: 0.55)) {
+                hasAppeared = true
+            }
+        }
         .animation(.easeInOut(duration: 0.2), value: showCalendarNudge)
     }
 

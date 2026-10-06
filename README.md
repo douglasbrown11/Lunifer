@@ -40,7 +40,6 @@ Records every night's duration, sleep onset, and wake time. The Sleep Insights t
 - **Alarm set alert** — confirms your alarm time 3 hours before estimated bedtime
 - **Commute reminder** — notifies you 15 minutes before you need to leave
 - **Rest day reminder** — alerts you at 7 PM on rest days when you have an early event the next morning
-- **Birthday notification** — yearly reminder on your birthday
 
 **Added alarms**
 Supports additional one-shot or repeating alarms alongside the main adaptive alarm, each with independent sound, snooze duration, and repeat schedule settings.
@@ -101,8 +100,7 @@ Lunifer/
 │   ├── BatteryAlarmNotification.swift
 │   ├── WakeNotification.swift
 │   ├── CommuteNotification.swift
-│   ├── RestDayEventNotification.swift
-│   └── BirthdayNotification.swift
+│   └── RestDayEventNotification.swift
 │
 ├── Screens/
 │   ├── Intro/
@@ -125,12 +123,11 @@ Lunifer/
 
 New users complete a short survey that captures:
 
-1. **Age** (birthday) — used for age-based sleep baseline when no wearable is connected
-2. **Wake days** — which days Lunifer should set an alarm
-3. **Calendar** — Apple, Google, Outlook, or none
-4. **Sleep target** — manual hours or automatic
-5. **Morning routine** — preparation time
-6. **Commute** — transport mode; duration is zero until live routing can use a calendar event location
+1. **Wake days** — which days Lunifer should set an alarm
+2. **Calendar** — Apple, Google, Outlook, or none
+3. **Sleep target** — manual hours or automatic
+4. **Morning routine** — preparation time
+5. **Commute** — transport mode; duration is zero until live routing can use a calendar event location
 
 Survey answers are saved locally and synced to Firestore.
 They drive every alarm calculation.

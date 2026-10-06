@@ -33,6 +33,7 @@ final class LuniferTests: XCTestCase {
         LuniferAlarm.shared.scheduledWakeTime = nil
         LuniferAlarm.shared.activeAlarms = []
         CommuteManager.shared.currentDurationMinutes = 0
+        CommuteManager.shared.ignoredCommuteMinutes = nil
         UITestSupport.forceScheduleFailure = false
         UITestSupport.forceAlarmRegistryReadFailure = false
         UITestSupport.alarmRefreshDelayNanoseconds = 0
@@ -49,6 +50,7 @@ final class LuniferTests: XCTestCase {
         LuniferAlarm.shared.scheduledWakeTime = nil
         LuniferAlarm.shared.activeAlarms = []
         CommuteManager.shared.currentDurationMinutes = 0
+        CommuteManager.shared.ignoredCommuteMinutes = nil
         UITestSupport.forceScheduleFailure = false
         UITestSupport.forceAlarmRegistryReadFailure = false
         UITestSupport.alarmRefreshDelayNanoseconds = 0
@@ -142,6 +144,31 @@ final class LuniferTests: XCTestCase {
 
         CommuteManager.shared.currentDurationMinutes = 18
         XCTAssertEqual(LuniferAlarm.shared.routineCommuteBufferSeconds(answers: answers), 63 * 60)
+    }
+
+    func testAbsurdCommuteIsIgnoredForAlarmMathAndFlagged() {
+        var answers = SurveyAnswers()
+        answers.commuteMode = "drive"
+        answers.commute = TimeValue(hours: 0, minutes: 30, auto: true)
+        answers.routine = TimeValue(hours: 0, minutes: 45, auto: false)
+
+        CommuteManager.shared.currentDurationMinutes = 360
+
+        XCTAssertEqual(LuniferAlarm.shared.routineCommuteBufferSeconds(answers: answers), 45 * 60)
+        XCTAssertEqual(CommuteManager.shared.currentDurationMinutes, 0)
+        XCTAssertEqual(CommuteManager.shared.ignoredCommuteMinutes, 360)
+    }
+
+    func testThreeHourCommuteIsAllowedForAlarmMath() {
+        var answers = SurveyAnswers()
+        answers.commuteMode = "drive"
+        answers.commute = TimeValue(hours: 0, minutes: 30, auto: true)
+        answers.routine = TimeValue(hours: 0, minutes: 45, auto: false)
+
+        CommuteManager.shared.currentDurationMinutes = 180
+
+        XCTAssertEqual(LuniferAlarm.shared.routineCommuteBufferSeconds(answers: answers), 225 * 60)
+        XCTAssertNil(CommuteManager.shared.ignoredCommuteMinutes)
     }
 
     func testHardFallbackSubtractsRoutineButNotCommute() async {
