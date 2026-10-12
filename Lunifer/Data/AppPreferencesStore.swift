@@ -20,6 +20,12 @@ final class AppPreferencesStore {
         static let pendingReplacementAlarmTimestamp = "pendingReplacementAlarmTimestamp"
         static let pendingStopRescheduleTimestamp = "pendingStopRescheduleTimestamp"
         static let finalizedMainAlarmTimestamp = "finalizedMainAlarmTimestamp"
+        static let mainAlarmWallClockYear = "mainAlarmWallClockYear"
+        static let mainAlarmWallClockMonth = "mainAlarmWallClockMonth"
+        static let mainAlarmWallClockDay = "mainAlarmWallClockDay"
+        static let mainAlarmWallClockHour = "mainAlarmWallClockHour"
+        static let mainAlarmWallClockMinute = "mainAlarmWallClockMinute"
+        static let adaptiveSleepPushCompletedDay = "adaptiveSleepPushCompletedDay"
 
         // Added alarms (stored as a JSON-encoded [AddedAlarm] array)
         static let addedAlarms = "addedAlarms"
@@ -181,6 +187,59 @@ final class AppPreferencesStore {
 
     func clearFinalizedMainAlarm() {
         defaults.removeObject(forKey: Keys.finalizedMainAlarmTimestamp)
+        clearMainAlarmWallClock()
+    }
+
+    struct MainAlarmWallClock {
+        let year: Int
+        let month: Int
+        let day: Int
+        let hour: Int
+        let minute: Int
+    }
+
+    var mainAlarmWallClock: MainAlarmWallClock? {
+        let year = defaults.integer(forKey: Keys.mainAlarmWallClockYear)
+        let month = defaults.integer(forKey: Keys.mainAlarmWallClockMonth)
+        let day = defaults.integer(forKey: Keys.mainAlarmWallClockDay)
+        let hour = defaults.integer(forKey: Keys.mainAlarmWallClockHour)
+        let minute = defaults.integer(forKey: Keys.mainAlarmWallClockMinute)
+        guard year > 0,
+              (1...12).contains(month),
+              (1...31).contains(day),
+              (0...23).contains(hour),
+              (0...59).contains(minute) else { return nil }
+        return MainAlarmWallClock(year: year, month: month, day: day, hour: hour, minute: minute)
+    }
+
+    func saveMainAlarmWallClock(for date: Date, calendar: Calendar = .current) {
+        let components = calendar.dateComponents([.year, .month, .day, .hour, .minute], from: date)
+        guard let year = components.year,
+              let month = components.month,
+              let day = components.day,
+              let hour = components.hour,
+              let minute = components.minute else { return }
+        defaults.set(year, forKey: Keys.mainAlarmWallClockYear)
+        defaults.set(month, forKey: Keys.mainAlarmWallClockMonth)
+        defaults.set(day, forKey: Keys.mainAlarmWallClockDay)
+        defaults.set(hour, forKey: Keys.mainAlarmWallClockHour)
+        defaults.set(minute, forKey: Keys.mainAlarmWallClockMinute)
+    }
+
+    func clearMainAlarmWallClock() {
+        defaults.removeObject(forKey: Keys.mainAlarmWallClockYear)
+        defaults.removeObject(forKey: Keys.mainAlarmWallClockMonth)
+        defaults.removeObject(forKey: Keys.mainAlarmWallClockDay)
+        defaults.removeObject(forKey: Keys.mainAlarmWallClockHour)
+        defaults.removeObject(forKey: Keys.mainAlarmWallClockMinute)
+    }
+
+    func adaptiveSleepPushCompleted(for dayKey: String) -> Bool {
+        defaults.string(forKey: Keys.adaptiveSleepPushCompletedDay) == dayKey
+    }
+
+    func markAdaptiveSleepPushCompleted(for dayKey: String) {
+        defaults.set(dayKey, forKey: Keys.adaptiveSleepPushCompletedDay)
     }
 
     // MARK: - Rest-day alarm opt-in

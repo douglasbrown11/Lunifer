@@ -20,56 +20,16 @@ Verify actual system alarms each day rather than relying on dashboard state or a
 
 - **C9 — Device conditions (device verification):** force quit, reboot, prolonged shutdown, battery depletion, low-power conditions, and first unlock.
 Measure actual delivery and next-day recovery on supported iPhones; document platform limitations without promising unavailable execution.
-- **C10 — Alarm presentation and sound (device verification):** locked screen, silent mode, Focus, volume settings, audio accessories, custom sound assets, and overlapping alarms.
+- **C10 — Alarm presentation and sound (device verification):** locked screen, silent mode, Focus, volume settings, audio accessories, and custom sound assets.
 Confirm the audible/visible wake experience and supported system behavior separately from successful scheduling.
+- **C11 — Timezone helper mode (product/device revisit):** explore whether Lunifer should help users adapt to a new timezone after travel.
+Revisit after code-fixable alarm-loss cases are done; validate detection, user control, notification timing, and alarm behavior on real devices.
 ### D. Calendar and wake-time calculation
-
-- **D3 — Fallback chain quality (audit):** no live event leads to historical event patterns, historical wake averages, or the default wake time.
-Validate stale/missing history and ensure the resulting alarm is suitable for the target day.
-- **D6 — Adaptive drift (audit):** repeated sleep estimates or calendar pulls move the alarm earlier/later across checks or a restart.
-Preserve the reference time, enforce agreed bounds, respect the first obligation, and avoid repeated contradictory replacements.
-- **D7 — Corrupt or incomplete preferences (audit):** missing enabled defaults, malformed survey JSON, unknown weekdays, invalid clock values, and failed persistence.
-Use consistent defaults, validate data, and show when safe scheduling cannot be derived.
 
 ### E. Dates, rest days, and user intent
 
-- **E1 — Timezone travel (audit):** the device timezone changes after a fixed-date alarm is confirmed.
-Choose and test whether user intent follows local wall-clock time, event timezone, or the original absolute instant.
-- **E2 — Daylight saving transitions (audit):** the selected wake time is skipped or occurs twice.
-Define the intended occurrence and verify a single alarm on the correct eligible day.
-- **E3 — Manual clock and date changes (audit):** a pending alarm becomes past, unexpectedly distant, or falls on a different local date.
-Reconcile weekday eligibility, freeze logic, overrides, and confirmed system state.
-- **E4 — Date boundaries (audit):** Sunday/Monday, month/year end, leap day, and switching locale/calendar settings affect weekday/date calculations.
-Test calendar-day arithmetic rather than assuming every day is a fixed number of seconds.
-- **E5 — Wake-day edits before today's alarm (audit):** today's preservation guard runs before later wake-day checks.
-Define which explicit edits should cancel or replace today's pending alarm and test them separately from automatic refresh.
-- **E6 — Empty or restored wake-day selection (audit):** no selected wake days should leave no automatic main alarm; adding a day should repair scheduling immediately when enabled.
-Keep independently added alarms intact.
-- **E8 — Rest-day opt-in lifetime (audit):** opt-in is consumed, ignored, or reused after midnight, dismissal, missed firing, or timezone change.
-Apply it to one intended calendar day and advance correctly afterward.
-- **E9 — Manual override lifetime (audit):** overrides survive a crash, expire after firing, or apply to a rest day.
-Respect the selected alarm while active and clear only the consumed override.
-- **E10 — Toggle during permission recovery or scheduling (audit):** the user disables/re-enables during awaited work or returns from Settings with different settings.
-The latest explicit enabled state and wake-day choices must win.
-
 ### F. Independent alarms, reminders, and recovery UX
 
-- **F1 — Repeating added alarms (audit):** next-repeat scheduling fails after a one-shot system occurrence is stopped.
-Preserve the logical record, surface the failure, and repair the next eligible repeat without replacing the main alarm.
-- **F2 — Snooze and Stop overlap (audit):** snooze, dismiss, or delete an alarm while another alarm fires or a refresh replaces the main alarm.
-Match actions to the correct system ID and ensure snooze does not consume the daily advancement twice.
-- **F3 — Simultaneous alarms (audit):** the main and independently added alarms have identical or nearby fire times.
-Keep separate sound/snooze metadata and avoid misclassifying the active alarm.
-- **F4 — Reminder/alarm disagreement (audit):** an alarm succeeds but wake-reminder scheduling fails, or reminder delivery occurs after the alarm was changed.
-Treat reminders as separate state and never imply that a reminder proves a native alarm exists.
-- **F5 — Recovery UI escape paths (audit):** home buttons, gestures, overlays, deep links, accessibility actions, or state restoration bypass the denied-permission page.
-Keep home controls unavailable while preserving intended Sleep Insights access.
-- **F7 — Settings cannot open or permission remains denied (audit):** the Settings URL is unavailable, navigation fails, or the user returns without granting access.
-Keep recovery visible and avoid claiming permission or scheduling was restored.
-- **F8 — Recovery accessibility (audit):** large text, small screens, VoiceOver, and supported orientations hide or obstruct the Settings action or page navigation.
-Keep the recovery action reachable and test the actual visible layout.
-- **F9 — Background refresh success reporting (audit):** `SilentPushManager.refreshTomorrowAlarm()` returns true after invoking refresh without distinguishing a failed scheduling attempt.
-Report actual update outcomes so monitoring and retry logic can distinguish confirmed schedules, intentional no-ops, and failures.
 
 ## Practical completion criteria
 
@@ -93,3 +53,12 @@ Scheduling confirmation, notification delivery, and successful wake-up are separ
 
 The parent-folder copy is provided for planning.
 An identical version is committed as `lunifer/docs/ALARM_RELIABILITY.md` so the record travels with the code.
+
+## Alarm sound selection
+
+Main alarms pass the saved `selectedAlarmSound` filename, including its extension, to AlarmKit.
+Added alarms pass their own persisted sound and retain it when repeating or snoozing.
+Changing the main sound refreshes the scheduled alarm at the same time through the serialized replacement path, preserving its adaptive baseline and retaining the existing alarm if replacement fails.
+The in-app player reads the same filename resolver.
+Regression tests cover the default, every bundled sound, subsequent selection reads, and isolation between added and main alarm selections.
+A locked physical iPhone must still verify audible delivery for each sound; simulator scheduling and preference tests do not establish audio delivery.

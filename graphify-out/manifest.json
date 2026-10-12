@@ -6,10 +6,10 @@
     "semantic_hash": "5ac9be6774fdb0dae8946b2f184cc718"
   },
   "Database/cloudflare-worker/src/index.js": {
-    "mtime": 1785740438.699916,
-    "seen": 1789357871.131448,
-    "ast_hash": "f86f6e54cdd8d7cc07db63c8d0ad0c6b",
-    "semantic_hash": "f86f6e54cdd8d7cc07db63c8d0ad0c6b"
+    "mtime": 1791310852.4237254,
+    "seen": 1791476296.4973,
+    "ast_hash": "28867f672076eb1ad560d6d5866bcd3c",
+    "semantic_hash": "28867f672076eb1ad560d6d5866bcd3c"
   },
   "LocalPackages/FeedbackPulse/Package.swift": {
     "mtime": 1784655047.7256823,
@@ -36,10 +36,10 @@
     "semantic_hash": "042d06cf3c7f78a52084e701c35c7309"
   },
   "Lunifer/App.swift": {
-    "mtime": 1785915737.2468126,
-    "seen": 1789357871.1314502,
-    "ast_hash": "3bcd7f7e809b0bc06d348b16ce29cd6f",
-    "semantic_hash": "3bcd7f7e809b0bc06d348b16ce29cd6f"
+    "mtime": 1791324002.6883683,
+    "seen": 1791476296.4973052,
+    "ast_hash": "9d91baf10b6d87df6cc3a54e78b48834",
+    "semantic_hash": "9d91baf10b6d87df6cc3a54e78b48834"
   },
   "Lunifer/Assets 2.xcassets/AccentColor.colorset/Contents.json": {
     "mtime": 1782756445.9096367,
@@ -108,22 +108,22 @@
     "semantic_hash": "77df2fce69c565672e50c1fd8a9f2017"
   },
   "Lunifer/ContentView.swift": {
-    "mtime": 1785904714.392578,
-    "seen": 1789357871.131459,
-    "ast_hash": "446a115a993bf9fa2f60dc171d30a677",
-    "semantic_hash": "446a115a993bf9fa2f60dc171d30a677"
+    "mtime": 1790885659.0810049,
+    "seen": 1791476296.49731,
+    "ast_hash": "2d7bea73ac31014eced5f008572f9745",
+    "semantic_hash": "2d7bea73ac31014eced5f008572f9745"
   },
   "Lunifer/Data/AccountDataManager.swift": {
-    "mtime": 1785911079.5313609,
-    "seen": 1789357871.1314602,
-    "ast_hash": "bb4832d11faaa42fd1f59ee11241cd35",
-    "semantic_hash": "bb4832d11faaa42fd1f59ee11241cd35"
+    "mtime": 1790957241.2218328,
+    "seen": 1791476296.49731,
+    "ast_hash": "14defd50f8fc2c86cf03fa8fe39c9bdb",
+    "semantic_hash": "14defd50f8fc2c86cf03fa8fe39c9bdb"
   },
   "Lunifer/Data/AppPreferencesStore.swift": {
-    "mtime": 1785910997.3254693,
-    "seen": 1789357871.1314602,
-    "ast_hash": "e24abd9468fcd8d57d550b4b344a3227",
-    "semantic_hash": "e24abd9468fcd8d57d550b4b344a3227"
+    "mtime": 1791324855.223223,
+    "seen": 1791476296.4973109,
+    "ast_hash": "c010e535a96b9abc9113a792ed510c9a",
+    "semantic_hash": "c010e535a96b9abc9113a792ed510c9a"
   },
   "Lunifer/Data/SleepHistoryMock.swift": {
     "mtime": 1782756445.9175022,
@@ -132,10 +132,10 @@
     "semantic_hash": "02f53c99ce9a1a99723a96e87ace6c3b"
   },
   "Lunifer/Data/SleepHistoryStore.swift": {
-    "mtime": 1785356167.3578374,
-    "seen": 1789357871.1314611,
-    "ast_hash": "37ec0a7a385eadf2b8790a0d505c88e7",
-    "semantic_hash": "37ec0a7a385eadf2b8790a0d505c88e7"
+    "mtime": 1791381579.2600067,
+    "seen": 1791476296.497312,
+    "ast_hash": "836b4d68a44058ed4b8211d2a15cedeb",
+    "semantic_hash": "836b4d68a44058ed4b8211d2a15cedeb"
   },
   "Lunifer/Data/SleepTrackingStore.swift": {
     "mtime": 1785826510.3305066,
@@ -144,10 +144,10 @@
     "semantic_hash": "642d70011eab3e9174e75b6c4b18adca"
   },
   "Lunifer/Data/SurveyAnswersStore.swift": {
-    "mtime": 1782756445.9177866,
-    "seen": 1789357871.1314611,
-    "ast_hash": "8182c2749f4a6b299c796cd13a7ba76b",
-    "semantic_hash": "8182c2749f4a6b299c796cd13a7ba76b"
+    "mtime": 1791302701.4218583,
+    "seen": 1791476296.497312,
+    "ast_hash": "6880326b14acb735955900eaaeba9062",
+    "semantic_hash": "6880326b14acb735955900eaaeba9062"
   },
   "Lunifer/Engine/AdaptiveAlarm/AdaptiveAlarmStore.swift": {
     "mtime": 1782756445.9179885,
@@ -180,10 +180,10 @@
     "semantic_hash": "735d5ff408e813e9c794ddecd85bb007"
   },
   "Lunifer/Engine/Alarm.swift": {
-    "mtime": 1785912446.9262493,
-    "seen": 1789357871.1314628,
-    "ast_hash": "d6fbe96f2e6a3c1672400d729cd24180",
-    "semantic_hash": "d6fbe96f2e6a3c1672400d729cd24180"
+    "mtime": 1791475188.1975484,
+    "seen": 1791476296.4973152,
+    "ast_hash": "740975bef37cdd9bb6c4b38f6901e5ae",
+    "semantic_hash": "740975bef37cdd9bb6c4b38f6901e5ae"
   },
   "Lunifer/Engine/AlarmStopIntent.swift": {
     "mtime": 1784647776.716264,
@@ -192,52 +192,52 @@
     "semantic_hash": "744f5960b57276b40f060c09952f46d4"
   },
   "Lunifer/Engine/Calendar/GoogleCalendarService.swift": {
-    "mtime": 1785909067.1441405,
-    "seen": 1789357871.131464,
-    "ast_hash": "c09366966589912174594c93e8fe0eb1",
-    "semantic_hash": "c09366966589912174594c93e8fe0eb1"
+    "mtime": 1790958291.544863,
+    "seen": 1791476296.4973152,
+    "ast_hash": "f54a6bd7614dcae0e1b9ed0e5b980d90",
+    "semantic_hash": "f54a6bd7614dcae0e1b9ed0e5b980d90"
   },
   "Lunifer/Engine/Calendar/MicrosoftCalendarService.swift": {
-    "mtime": 1785446749.8298726,
-    "seen": 1789357871.131464,
-    "ast_hash": "521c7e17d44cbdedf8b02da4c480861c",
-    "semantic_hash": "521c7e17d44cbdedf8b02da4c480861c"
+    "mtime": 1790958291.5455425,
+    "seen": 1791476296.4973161,
+    "ast_hash": "2a4ee7e1a2535ada9a261cf3f152cd37",
+    "semantic_hash": "2a4ee7e1a2535ada9a261cf3f152cd37"
   },
   "Lunifer/Engine/CalendarManager.swift": {
-    "mtime": 1782779634.2687573,
-    "seen": 1789357871.131464,
-    "ast_hash": "deeb17e49946de67e94071314a0aa377",
-    "semantic_hash": "deeb17e49946de67e94071314a0aa377"
+    "mtime": 1790958291.543189,
+    "seen": 1791476296.4973161,
+    "ast_hash": "dad477f2b88b472ea1a75faf180c9371",
+    "semantic_hash": "dad477f2b88b472ea1a75faf180c9371"
   },
   "Lunifer/Engine/CommuteManager.swift": {
-    "mtime": 1786402610.2780821,
-    "seen": 1789357871.131465,
-    "ast_hash": "3ff0aa8acfeb053b7fba26b597210a19",
-    "semantic_hash": "3ff0aa8acfeb053b7fba26b597210a19"
+    "mtime": 1791302430.1430447,
+    "seen": 1791476296.4973161,
+    "ast_hash": "b795855ac4a01ba4efb4ef599f6995bd",
+    "semantic_hash": "b795855ac4a01ba4efb4ef599f6995bd"
   },
   "Lunifer/Engine/LocationManager.swift": {
-    "mtime": 1782756445.9196384,
-    "seen": 1789357871.131465,
-    "ast_hash": "bfb1df7065f079875801317d25e372d1",
-    "semantic_hash": "bfb1df7065f079875801317d25e372d1"
+    "mtime": 1790885520.5686588,
+    "seen": 1791476296.497317,
+    "ast_hash": "d34744e15907c9040f09b10de1dcf7cc",
+    "semantic_hash": "d34744e15907c9040f09b10de1dcf7cc"
   },
   "Lunifer/Engine/Sleep/AmbientAudioMonitor.swift": {
-    "mtime": 1785356167.355059,
-    "seen": 1789357871.131465,
-    "ast_hash": "6eb830e908c374958bc3d25fb2db8914",
-    "semantic_hash": "6eb830e908c374958bc3d25fb2db8914"
+    "mtime": 1790885452.917505,
+    "seen": 1791476296.497317,
+    "ast_hash": "1684e2f3a5cda8fd5abc97311491d550",
+    "semantic_hash": "1684e2f3a5cda8fd5abc97311491d550"
   },
   "Lunifer/Engine/Sleep/SleepDurationModel.swift": {
-    "mtime": 1785356167.3542738,
-    "seen": 1789357871.131466,
-    "ast_hash": "f9b6aadd900f3986c0bfd3f419061be1",
-    "semantic_hash": "f9b6aadd900f3986c0bfd3f419061be1"
+    "mtime": 1791302701.4196012,
+    "seen": 1791476296.497317,
+    "ast_hash": "6af216abd285a50af21f17634d8291d4",
+    "semantic_hash": "6af216abd285a50af21f17634d8291d4"
   },
   "Lunifer/Engine/Sleep/SleepFeatureCollector.swift": {
-    "mtime": 1785356167.355895,
-    "seen": 1789357871.131466,
-    "ast_hash": "5e96c2273e6882f30b259e1258ab4f22",
-    "semantic_hash": "5e96c2273e6882f30b259e1258ab4f22"
+    "mtime": 1791314072.0124161,
+    "seen": 1791476296.4973178,
+    "ast_hash": "f790ad9b4b2e4eba9c1a5f093dbc6b4e",
+    "semantic_hash": "f790ad9b4b2e4eba9c1a5f093dbc6b4e"
   },
   "Lunifer/Engine/Sleep/SleepPredictionModel.swift": {
     "mtime": 1785356167.356564,
@@ -246,16 +246,16 @@
     "semantic_hash": "97e5e07a8c93e2f9c47843a3cb5469f3"
   },
   "Lunifer/Engine/Sleep/SleepTracker.swift": {
-    "mtime": 1785826606.3313413,
-    "seen": 1789357871.131466,
-    "ast_hash": "3d3f2ac38eefaf66f1d6e4c98679bb4a",
-    "semantic_hash": "3d3f2ac38eefaf66f1d6e4c98679bb4a"
+    "mtime": 1791381579.2629268,
+    "seen": 1791476296.4973178,
+    "ast_hash": "42d7d3c9f4a2b70aa2de280a24ebd5bc",
+    "semantic_hash": "42d7d3c9f4a2b70aa2de280a24ebd5bc"
   },
   "Lunifer/Engine/Wearables/HealthKitManager.swift": {
-    "mtime": 1784580882.0780783,
-    "seen": 1789357871.131467,
-    "ast_hash": "7c201e4402701289f29915b90a54a841",
-    "semantic_hash": "7c201e4402701289f29915b90a54a841"
+    "mtime": 1791302701.422206,
+    "seen": 1791476296.497319,
+    "ast_hash": "88d4efa6bee6b04fb559def77f18a676",
+    "semantic_hash": "88d4efa6bee6b04fb559def77f18a676"
   },
   "Lunifer/Engine/Wearables/KeychainHelper.swift": {
     "mtime": 1785740344.2700462,
@@ -264,82 +264,76 @@
     "semantic_hash": "f3e471a11d281b2d2f705dc08a81cd10"
   },
   "Lunifer/Engine/Wearables/OuraManager.swift": {
-    "mtime": 1785441310.428343,
-    "seen": 1789357871.131468,
-    "ast_hash": "7c89d4bab153cc4f5ee40036e880c83e",
-    "semantic_hash": "7c89d4bab153cc4f5ee40036e880c83e"
+    "mtime": 1790885452.914047,
+    "seen": 1791476296.497319,
+    "ast_hash": "55351cfe704ad3119616f542f6157620",
+    "semantic_hash": "55351cfe704ad3119616f542f6157620"
   },
   "Lunifer/Engine/Wearables/WearableRecommendationStore.swift": {
-    "mtime": 1782756445.92043,
-    "seen": 1789357871.131468,
-    "ast_hash": "01871004b7791a58b355ca6f7f871170",
-    "semantic_hash": "01871004b7791a58b355ca6f7f871170"
+    "mtime": 1791302701.4215555,
+    "seen": 1791476296.49732,
+    "ast_hash": "363365d36b6081d541cc0302315b1f80",
+    "semantic_hash": "363365d36b6081d541cc0302315b1f80"
   },
   "Lunifer/Engine/Wearables/WhoopManager.swift": {
-    "mtime": 1785441302.0246413,
-    "seen": 1789357871.131468,
-    "ast_hash": "2a9ef3de3699a90f76cb68a4b2e0c673",
-    "semantic_hash": "2a9ef3de3699a90f76cb68a4b2e0c673"
+    "mtime": 1790885452.9136677,
+    "seen": 1791476296.49732,
+    "ast_hash": "2985046d06b66fae7521977e7aa3e7b2",
+    "semantic_hash": "2985046d06b66fae7521977e7aa3e7b2"
   },
   "Lunifer/NotificationDelegate.swift": {
-    "mtime": 1784749963.696307,
-    "seen": 1789357871.131469,
-    "ast_hash": "987a17065a06152045571c8e2278ca2d",
-    "semantic_hash": "987a17065a06152045571c8e2278ca2d"
+    "mtime": 1790732685.2330096,
+    "seen": 1791476296.49732,
+    "ast_hash": "8d5f86f56cf39d2b2a292b659425b23f",
+    "semantic_hash": "8d5f86f56cf39d2b2a292b659425b23f"
   },
   "Lunifer/Notifications/BatteryAlarmNotification.swift": {
-    "mtime": 1782756445.921955,
-    "seen": 1789357871.131469,
-    "ast_hash": "698f1c9ce45e02f635b8177c5f93f037",
-    "semantic_hash": "698f1c9ce45e02f635b8177c5f93f037"
-  },
-  "Lunifer/Notifications/BirthdayNotification.swift": {
-    "mtime": 1782756445.9220743,
-    "seen": 1789357871.131469,
-    "ast_hash": "7a0ab89c2c43874eb039a16f9eb1b512",
-    "semantic_hash": "7a0ab89c2c43874eb039a16f9eb1b512"
+    "mtime": 1791302701.4212375,
+    "seen": 1791476296.49732,
+    "ast_hash": "4130d94ba569388ce6bc85fb8304e631",
+    "semantic_hash": "4130d94ba569388ce6bc85fb8304e631"
   },
   "Lunifer/Notifications/CalendarNudgeNotification.swift": {
-    "mtime": 1784648278.5276718,
-    "seen": 1789357871.131469,
-    "ast_hash": "f59d71451918abe59150381a513c90a6",
-    "semantic_hash": "f59d71451918abe59150381a513c90a6"
+    "mtime": 1790885452.9151766,
+    "seen": 1791476296.497321,
+    "ast_hash": "187c6a5101402ba0736421a2bc167be6",
+    "semantic_hash": "187c6a5101402ba0736421a2bc167be6"
   },
   "Lunifer/Notifications/CommuteNotification.swift": {
-    "mtime": 1782756445.9221826,
-    "seen": 1789357871.13147,
-    "ast_hash": "c5725406a6351aeb2ee899934ecb0b1b",
-    "semantic_hash": "c5725406a6351aeb2ee899934ecb0b1b"
+    "mtime": 1790885452.916153,
+    "seen": 1791476296.497321,
+    "ast_hash": "cae004cb667f7d48ee130758cca97c3f",
+    "semantic_hash": "cae004cb667f7d48ee130758cca97c3f"
   },
   "Lunifer/Notifications/MorningRoutineEstimator.swift": {
-    "mtime": 1782756445.9198701,
-    "seen": 1789357871.13147,
-    "ast_hash": "83241738186b93b23bbf3eb7b8e1400c",
-    "semantic_hash": "83241738186b93b23bbf3eb7b8e1400c"
+    "mtime": 1791227071.9508066,
+    "seen": 1791476296.497321,
+    "ast_hash": "fcca4a44f70fc18a45f945a6c99eed83",
+    "semantic_hash": "fcca4a44f70fc18a45f945a6c99eed83"
   },
   "Lunifer/Notifications/RestDayEventNotification.swift": {
-    "mtime": 1782756445.9222968,
-    "seen": 1789357871.13147,
-    "ast_hash": "d6eb6796faa2ab46ce849536468e404f",
-    "semantic_hash": "d6eb6796faa2ab46ce849536468e404f"
+    "mtime": 1790885452.916558,
+    "seen": 1791476296.497322,
+    "ast_hash": "ce519027e0a2427917318d3a070cb685",
+    "semantic_hash": "ce519027e0a2427917318d3a070cb685"
   },
   "Lunifer/Notifications/SilentPushManager.swift": {
-    "mtime": 1785740424.9825988,
-    "seen": 1789357871.1314712,
-    "ast_hash": "d7b2916852a512484637a3c6339e11d4",
-    "semantic_hash": "d7b2916852a512484637a3c6339e11d4"
+    "mtime": 1791475193.7084367,
+    "seen": 1791476296.497322,
+    "ast_hash": "5c34ee432101e028497d0fa95d77daf0",
+    "semantic_hash": "5c34ee432101e028497d0fa95d77daf0"
   },
   "Lunifer/Notifications/TurnBackOnNotification.swift": {
-    "mtime": 1784744103.313261,
-    "seen": 1789357871.1314712,
-    "ast_hash": "58313d59dab758230a2da34e6c8aa6da",
-    "semantic_hash": "58313d59dab758230a2da34e6c8aa6da"
+    "mtime": 1790885452.9156177,
+    "seen": 1791476296.497322,
+    "ast_hash": "a71f16220b77f813485d4de696b746c7",
+    "semantic_hash": "a71f16220b77f813485d4de696b746c7"
   },
   "Lunifer/Notifications/WakeNotification.swift": {
-    "mtime": 1782756445.9223855,
-    "seen": 1789357871.1314712,
-    "ast_hash": "a954443c8433c305e9e7e1ce0ce7ee57",
-    "semantic_hash": "a954443c8433c305e9e7e1ce0ce7ee57"
+    "mtime": 1791302701.4207451,
+    "seen": 1791476296.497323,
+    "ast_hash": "388abc93115fe782b890f70914d587e0",
+    "semantic_hash": "388abc93115fe782b890f70914d587e0"
   },
   "Lunifer/Screens/AlarmScreen.swift": {
     "mtime": 1782756445.922537,
@@ -348,34 +342,34 @@
     "semantic_hash": "f201b8ec40acfa7c6997145ab00d7b70"
   },
   "Lunifer/Screens/Dashboard/CommuteDashboard.swift": {
-    "mtime": 1786411296.4600744,
-    "seen": 1789357871.1314719,
-    "ast_hash": "003c8d1fefe9e850f1fd0bd1452f3857",
-    "semantic_hash": "003c8d1fefe9e850f1fd0bd1452f3857"
+    "mtime": 1791302182.431185,
+    "seen": 1791476296.497324,
+    "ast_hash": "6cd85ef0c2026fd33125bcef1eb91dfe",
+    "semantic_hash": "6cd85ef0c2026fd33125bcef1eb91dfe"
   },
   "Lunifer/Screens/Dashboard/Main.swift": {
-    "mtime": 1786404122.7679613,
-    "seen": 1789357871.1314719,
-    "ast_hash": "efc8760243fa8ac0de4c707cff829ed6",
-    "semantic_hash": "efc8760243fa8ac0de4c707cff829ed6"
+    "mtime": 1791475199.4886413,
+    "seen": 1791476296.497324,
+    "ast_hash": "00b21a223e5148ba6248c3e99e946dcf",
+    "semantic_hash": "00b21a223e5148ba6248c3e99e946dcf"
   },
   "Lunifer/Screens/Dashboard/Settings.swift": {
-    "mtime": 1786408068.388083,
-    "seen": 1789357871.1314719,
-    "ast_hash": "934e51536412fe4cdca08ce23e643928",
-    "semantic_hash": "934e51536412fe4cdca08ce23e643928"
+    "mtime": 1791302701.423658,
+    "seen": 1791476296.497324,
+    "ast_hash": "1a39557e0c92390350e3c7a4d6e9e48e",
+    "semantic_hash": "1a39557e0c92390350e3c7a4d6e9e48e"
   },
   "Lunifer/Screens/Dashboard/SleepInsights.swift": {
-    "mtime": 1785983353.1151688,
-    "seen": 1789357871.1314719,
-    "ast_hash": "304519d0ef0703fb4578c7c2d8c7506e",
-    "semantic_hash": "304519d0ef0703fb4578c7c2d8c7506e"
+    "mtime": 1791381559.9438474,
+    "seen": 1791476296.497327,
+    "ast_hash": "af6ce3c546a669891955a5fc7a9f3406",
+    "semantic_hash": "af6ce3c546a669891955a5fc7a9f3406"
   },
   "Lunifer/Screens/Intro/Intro.swift": {
-    "mtime": 1782846629.6619754,
-    "seen": 1789357871.1314728,
-    "ast_hash": "4a54f6f534565dffecc197078aed4cd4",
-    "semantic_hash": "4a54f6f534565dffecc197078aed4cd4"
+    "mtime": 1791296998.847687,
+    "seen": 1791476296.497327,
+    "ast_hash": "d8b3afec65ecce6892ef7d63b3b3c33f",
+    "semantic_hash": "d8b3afec65ecce6892ef7d63b3b3c33f"
   },
   "Lunifer/Screens/Intro/Walkthrough.swift": {
     "mtime": 1785445931.6128585,
@@ -384,28 +378,28 @@
     "semantic_hash": "5575f97fca57db860548ba41e426e249"
   },
   "Lunifer/Screens/SignIn/SignInScreen.swift": {
-    "mtime": 1785907986.7999964,
-    "seen": 1789357871.1314728,
-    "ast_hash": "d2575886a55e12d36958ec8953b5cda2",
-    "semantic_hash": "d2575886a55e12d36958ec8953b5cda2"
+    "mtime": 1791302392.3068352,
+    "seen": 1791476296.497328,
+    "ast_hash": "b923dc4eae731b9e87c40c77e8fc3aa3",
+    "semantic_hash": "b923dc4eae731b9e87c40c77e8fc3aa3"
   },
   "Lunifer/Screens/SignIn/Signin.swift": {
-    "mtime": 1785792021.0994933,
-    "seen": 1789357871.131474,
-    "ast_hash": "deda7f95f01f878ea182c0c616213570",
-    "semantic_hash": "deda7f95f01f878ea182c0c616213570"
+    "mtime": 1791301734.9092143,
+    "seen": 1791476296.497329,
+    "ast_hash": "9e92ba9824af45cc7c014b5c8fee41ce",
+    "semantic_hash": "9e92ba9824af45cc7c014b5c8fee41ce"
   },
   "Lunifer/Screens/Survey/Survey.swift": {
-    "mtime": 1787175170.9719508,
-    "seen": 1789357871.131474,
-    "ast_hash": "89c67924544212ffa17570d8fe37777d",
-    "semantic_hash": "89c67924544212ffa17570d8fe37777d"
+    "mtime": 1791314141.572535,
+    "seen": 1791476296.497329,
+    "ast_hash": "84018ec13bce4c90f144c44f049645fe",
+    "semantic_hash": "84018ec13bce4c90f144c44f049645fe"
   },
   "Lunifer/Screens/Survey/SurveyObjects.swift": {
-    "mtime": 1785442279.9348278,
-    "seen": 1789357871.131474,
-    "ast_hash": "900807c37744192e24cde419228306e5",
-    "semantic_hash": "900807c37744192e24cde419228306e5"
+    "mtime": 1791298039.3521295,
+    "seen": 1791476296.497329,
+    "ast_hash": "6e89994927b4f5a9e2962ef4be98479e",
+    "semantic_hash": "6e89994927b4f5a9e2962ef4be98479e"
   },
   "Lunifer/Utils/Utils.swift": {
     "mtime": 1782756445.9257948,
@@ -438,16 +432,16 @@
     "semantic_hash": "78bf975d769c9862713e67c267830731"
   },
   "tests/LuniferTests/Tests.swift": {
-    "mtime": 1782756445.982147,
-    "seen": 1789357871.131476,
-    "ast_hash": "7ca002f337cc9612c01a40b33e00f070",
-    "semantic_hash": "7ca002f337cc9612c01a40b33e00f070"
+    "mtime": 1791475213.5420184,
+    "seen": 1791476296.497333,
+    "ast_hash": "2b9a7f37164680308fbe08c1f4abc403",
+    "semantic_hash": "2b9a7f37164680308fbe08c1f4abc403"
   },
   "tests/LuniferUITests/UITests.swift": {
-    "mtime": 1782756445.9822688,
-    "seen": 1789357871.131476,
-    "ast_hash": "00f71a81a48b8b833f5cc45542d360da",
-    "semantic_hash": "00f71a81a48b8b833f5cc45542d360da"
+    "mtime": 1791471925.94687,
+    "seen": 1791476296.497333,
+    "ast_hash": "9f5c245f5f37dfd86e906144ef90b65e",
+    "semantic_hash": "9f5c245f5f37dfd86e906144ef90b65e"
   },
   "tests/LuniferUITests/UITestsLaunchTests.swift": {
     "mtime": 1782756445.9823408,
@@ -456,28 +450,22 @@
     "semantic_hash": "600908021c2feecae00ac0ece9f6f7bf"
   },
   "AGENTS.md": {
-    "mtime": 1785354764.3878777,
-    "seen": 1789357871.131476,
-    "ast_hash": "41b83367a766e94c6884c407cd6f8ed2",
-    "semantic_hash": "41b83367a766e94c6884c407cd6f8ed2"
+    "mtime": 1791220475.3258293,
+    "seen": 1791476296.497335,
+    "ast_hash": "5862b6660bbecfe1c13fabd00b51ad0a",
+    "semantic_hash": "5862b6660bbecfe1c13fabd00b51ad0a"
   },
   "Database/cloudflare-worker/README.md": {
-    "mtime": 1785740382.2447271,
-    "seen": 1789357871.1314769,
-    "ast_hash": "89250250a386cab91a9417b2f4bed585",
-    "semantic_hash": "89250250a386cab91a9417b2f4bed585"
+    "mtime": 1790183637.7811332,
+    "seen": 1791476296.497335,
+    "ast_hash": "d480d46b792fafc684dec55f439694e3",
+    "semantic_hash": "d480d46b792fafc684dec55f439694e3"
   },
   "LocalPackages/FeedbackPulse/README.md": {
     "mtime": 1784658704.2314336,
     "seen": 1789357871.1314769,
     "ast_hash": "ba191004560ad4f15da39ee6834ef0b0",
     "semantic_hash": "ba191004560ad4f15da39ee6834ef0b0"
-  },
-  "Lunifer/claude.md": {
-    "mtime": 1786411296.460564,
-    "seen": 1789357871.1314769,
-    "ast_hash": "939315d17450909db36fc54d38b2b8b3",
-    "semantic_hash": "939315d17450909db36fc54d38b2b8b3"
   },
   "Lunifer/fonts/Poppins-OFL.txt": {
     "mtime": 1785914224.4819543,
@@ -498,10 +486,10 @@
     "semantic_hash": "d54c51e8fd6d687d8be9cb970cc5aca6"
   },
   "Privacy Policy & ToS/privacy-policy.html": {
-    "mtime": 1785637301.0265377,
-    "seen": 1789357871.131478,
-    "ast_hash": "7f6d7d377f84ee16b6603cda32e8c57e",
-    "semantic_hash": "7f6d7d377f84ee16b6603cda32e8c57e"
+    "mtime": 1791302701.4248447,
+    "seen": 1791476296.497337,
+    "ast_hash": "107e98c0c5f6bbad46872cf86777cca2",
+    "semantic_hash": "107e98c0c5f6bbad46872cf86777cca2"
   },
   "Privacy Policy & ToS/terms.html": {
     "mtime": 1782756445.9299345,
@@ -510,10 +498,10 @@
     "semantic_hash": "0db727001a62df6291afb3da28080648"
   },
   "README.md": {
-    "mtime": 1785356167.3589027,
-    "seen": 1789357871.131479,
-    "ast_hash": "7c7a0c3a58ae09308e701eeb0b35a26d",
-    "semantic_hash": "7c7a0c3a58ae09308e701eeb0b35a26d"
+    "mtime": 1791296703.3771403,
+    "seen": 1791476296.497338,
+    "ast_hash": "e37f9d62569ec7454f1788b0b009fff5",
+    "semantic_hash": "e37f9d62569ec7454f1788b0b009fff5"
   },
   "sounds/credits.txt": {
     "mtime": 1782756445.9816043,
@@ -646,5 +634,131 @@
     "seen": 1789357871.131486,
     "ast_hash": "28ab7cb69f6910b466221f5a82724a89",
     "semantic_hash": "28ab7cb69f6910b466221f5a82724a89"
+  },
+  "Database/cloudflare-worker/src/sleep-history.mjs": {
+    "mtime": 1791205947.911069,
+    "seen": 1791476296.497301,
+    "ast_hash": "d84f1715ce59493d36c761cef8381b47",
+    "semantic_hash": "d84f1715ce59493d36c761cef8381b47"
+  },
+  "Database/cloudflare-worker/src/sleep-history.test.mjs": {
+    "mtime": 1791205976.4215136,
+    "seen": 1791476296.497302,
+    "ast_hash": "2993eabef7aaa368c6eecf65ad170226",
+    "semantic_hash": "2993eabef7aaa368c6eecf65ad170226"
+  },
+  "Lunifer.xcodeproj/xcshareddata/xcodecloud/manifest.json": {
+    "mtime": 1791296430.7731214,
+    "seen": 1791476296.497304,
+    "ast_hash": "62a05e7b29d707d6e08a475e1306367e",
+    "semantic_hash": "62a05e7b29d707d6e08a475e1306367e"
+  },
+  "Lunifer/Data/BackgroundActivitySession.swift": {
+    "mtime": 1790885799.835436,
+    "seen": 1791476296.4973109,
+    "ast_hash": "9386b6c93cb99da55cc6cd194dc6973e",
+    "semantic_hash": "9386b6c93cb99da55cc6cd194dc6973e"
+  },
+  "Lunifer/Engine/Sleep/AudioSampleGate.swift": {
+    "mtime": 1790872760.205846,
+    "seen": 1791476296.497317,
+    "ast_hash": "93a07d8f98cc62f725549d0b20f921b0",
+    "semantic_hash": "93a07d8f98cc62f725549d0b20f921b0"
+  },
+  "Lunifer/Screens/Dashboard/AlarmPermissionPage.swift": {
+    "mtime": 1789360580.099038,
+    "seen": 1791476296.497323,
+    "ast_hash": "3e6afd73ec107da9c74538ab382f4fe0",
+    "semantic_hash": "3e6afd73ec107da9c74538ab382f4fe0"
+  },
+  "Lunifer/UITestSupport.swift": {
+    "mtime": 1790791842.7524593,
+    "seen": 1791476296.49733,
+    "ast_hash": "6d19ce6003e7241811782bdf1051f70b",
+    "semantic_hash": "6d19ce6003e7241811782bdf1051f70b"
+  },
+  "tests/LuniferTests/AudioSampleGateTests.swift": {
+    "mtime": 1790872760.2060533,
+    "seen": 1791476296.4973319,
+    "ast_hash": "63b840d01a2016ae5d5c60f32ee0a72c",
+    "semantic_hash": "63b840d01a2016ae5d5c60f32ee0a72c"
+  },
+  "tests/LuniferTests/BackgroundActivitySessionTests.swift": {
+    "mtime": 1790885659.0834644,
+    "seen": 1791476296.497333,
+    "ast_hash": "485e29c1f467a026eed01f2217f43625",
+    "semantic_hash": "485e29c1f467a026eed01f2217f43625"
+  },
+  ".lavish/alarm-permission.html": {
+    "mtime": 1789360791.1527991,
+    "seen": 1791476296.497334,
+    "ast_hash": "e8ea35faf4a3943757ecd4294ab6d375",
+    "semantic_hash": "e8ea35faf4a3943757ecd4294ab6d375"
+  },
+  ".lavish/calendar-nudge-button-preview.html": {
+    "mtime": 1791297969.3061972,
+    "seen": 1791476296.497334,
+    "ast_hash": "e51c2d183ea8695c2993a9585df0d393",
+    "semantic_hash": "e51c2d183ea8695c2993a9585df0d393"
+  },
+  ".lavish/wake-times-card-proposal.html": {
+    "mtime": 1791323828.3781364,
+    "seen": 1791476296.497335,
+    "ast_hash": "0fd7ac2a93184f9bbd0061d987cd01fd",
+    "semantic_hash": "0fd7ac2a93184f9bbd0061d987cd01fd"
+  },
+  "Lunifer/Claude.md": {
+    "mtime": 1791471671.6898334,
+    "seen": 1791476296.4973361,
+    "ast_hash": "b91e584192735a11841ee89b13d8a3a9",
+    "semantic_hash": "b91e584192735a11841ee89b13d8a3a9"
+  },
+  "docs/ALARM_RELIABILITY.md": {
+    "mtime": 1791475293.6318152,
+    "seen": 1791476296.497338,
+    "ast_hash": "7ef8e3529463bd4a7ace9cc41e531aa9",
+    "semantic_hash": "7ef8e3529463bd4a7ace9cc41e531aa9"
+  },
+  ".lavish/alarm-permission-final.png": {
+    "mtime": 1789361058.777412,
+    "seen": 1791476296.4973388,
+    "ast_hash": "048f2b8276707613b4a3180975f65358",
+    "semantic_hash": "048f2b8276707613b4a3180975f65358"
+  },
+  ".lavish/alarm-permission.png": {
+    "mtime": 1789360729.5816422,
+    "seen": 1791476296.4973388,
+    "ast_hash": "7fb6ad23bf47259693aa575a3ea8cc9b",
+    "semantic_hash": "7fb6ad23bf47259693aa575a3ea8cc9b"
+  },
+  ".lavish/calendar-nudge-current.png": {
+    "mtime": 1791297824.521807,
+    "seen": 1791476296.49734,
+    "ast_hash": "0597f961ac7194d3405f3e6a2de88ee1",
+    "semantic_hash": "0597f961ac7194d3405f3e6a2de88ee1"
+  },
+  ".lavish/sleep-insights-access.png": {
+    "mtime": 1789361058.7768974,
+    "seen": 1791476296.49734,
+    "ast_hash": "59cff8fb9b8f3ae860bb4d02d5674e5e",
+    "semantic_hash": "59cff8fb9b8f3ae860bb4d02d5674e5e"
+  },
+  "appstore-assets/wearable-current.png": {
+    "mtime": 1790626650.998899,
+    "seen": 1791476296.4973462,
+    "ast_hash": "f1b0dfcad31f1aad99175f16d5059e7c",
+    "semantic_hash": "f1b0dfcad31f1aad99175f16d5059e7c"
+  },
+  "appstore-assets/wearable-fixed-1284.png": {
+    "mtime": 1790626785.5673294,
+    "seen": 1791476296.4973462,
+    "ast_hash": "56b002a5f7d4e42b18a1f80ee69df060",
+    "semantic_hash": "56b002a5f7d4e42b18a1f80ee69df060"
+  },
+  "appstore-assets/wearable-fixed.png": {
+    "mtime": 1790626723.9527683,
+    "seen": 1791476296.4973462,
+    "ast_hash": "eead2c5194eb483dc90128f7a6c7f885",
+    "semantic_hash": "eead2c5194eb483dc90128f7a6c7f885"
   }
 }

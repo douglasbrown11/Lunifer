@@ -1059,7 +1059,7 @@ struct SleepAndWearablesSettingsView: View {
         return WearableRecommendationStore.activeRecommendation(from: wearableSources)
     }
 
-    // Flow: wearable recommendation -> manual preference -> age baseline
+    // Flow: wearable recommendation -> manual preference -> default baseline
     private var recommendedHours: Double {
         guard userHasWearable else {
             return WearableRecommendationStore.fallbackSleepHours(from: answers)
@@ -1295,7 +1295,7 @@ struct SleepAndWearablesSettingsView: View {
             }
             Button("Cancel", role: .cancel) { }
         } message: {
-            Text("Your sleep recommendation will revert to your manual setting or Lunifer's age-based estimate.")
+            Text("Your sleep recommendation will revert to your manual setting or Lunifer's default estimate.")
         }
         .alert("Disconnect Oura Ring?", isPresented: $showDisconnectOuraAlert) {
             Button("Disconnect", role: .destructive) {
@@ -1303,7 +1303,7 @@ struct SleepAndWearablesSettingsView: View {
             }
             Button("Cancel", role: .cancel) { }
         } message: {
-            Text("Your sleep recommendation will revert to your manual setting or Lunifer's age-based estimate.")
+            Text("Your sleep recommendation will revert to your manual setting or Lunifer's default estimate.")
         }
         .alert("Only One Wearable at a Time", isPresented: $showOneWearableAlert) {
             Button("OK", role: .cancel) { }

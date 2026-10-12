@@ -7,21 +7,20 @@ import FirebaseAuth
 // ─────────────────────────────────────────────────────────────
 // SleepTracker (Background-Safe)
 // ─────────────────────────────────────────────────────────────
-// Orchestrates sleep detection across both foreground and background.
+// Orchestrates sleep detection through background and retroactive analysis.
 //
 // ARCHITECTURE:
 //
-//   The old approach ran a 5-minute timer that only worked while
-//   the app was in the foreground. This version uses two strategies:
+//   Sleep onset is not predicted live while the user is in Lunifer.
+//   App foreground/background transitions are recorded as awake interaction
+//   signals, and sleep is reconstructed when iOS gives the app execution time.
 //
-//   1. FOREGROUND: Same 5-minute prediction loop (when user has app open)
-//
-//   2. BACKGROUND: Uses BGProcessingTask to wake up periodically.
+//   1. BACKGROUND: Uses BGProcessingTask to wake up periodically.
 //      When woken, it queries CoreMotion's historical activity buffer
 //      and the persisted interaction log to retroactively reconstruct
 //      what happened while the app was suspended.
 //
-//   3. APP RETURN: When the user opens the app in the morning,
+//   2. APP RETURN: When the user opens the app in the morning,
 //      runs a full retroactive analysis of the overnight period
 //      to fill in any gaps the background tasks missed.
 //
@@ -56,6 +55,7 @@ final class SleepTracker: ObservableObject {
     let featureCollector = SleepFeatureCollector()
     private var model = SleepPredictionModel()
     private var predictionTimer: Timer?
+    private var lifecycleCancellables = Set<AnyCancellable>()
     private let predictionInterval: TimeInterval = 5 * 60
 
     // State machine
@@ -70,16 +70,17 @@ final class SleepTracker: ObservableObject {
     // MARK: - Lifecycle
     // ─────────────────────────────────────────────────────────
 
-    /// Called once at app launch. Starts foreground tracking,
-    /// runs retroactive analysis for any missed overnight period,
-    /// and schedules the next background task.
+    /// Called once at app launch. Records app interactions, runs retroactive
+    /// analysis for any missed overnight period, and schedules background work.
     private(set) var isTracking = false
 
     func startTracking() async {
         guard !isTracking, !BackgroundActivitySession.shared.isStopped else { return }
         isTracking = true
         let generation = BackgroundActivitySession.shared.generation
-        featureCollector.startCollecting()
+        observeAppLifecycle()
+        recordInteraction()
+        featureCollector.loadPersistedState()
 
         // Run retroactive analysis for the overnight period we missed
         await runRetroactiveAnalysis()
@@ -92,23 +93,8 @@ final class SleepTracker: ObservableObject {
         await confirmWakeFromMorningPickup()
         guard BackgroundActivitySession.shared.accepts(generation), isTracking else { return }
 
-        // Start the foreground prediction timer
-        predictionTimer = Timer.scheduledTimer(
-            withTimeInterval: predictionInterval,
-            repeats: true
-        ) { [weak self] _ in
-            Task { @MainActor [weak self] in
-                self?.runLivePrediction()
-            }
-        }
-
         // Schedule the next background wake-up
         scheduleBackgroundTask()
-
-        // Run an initial live prediction after a short delay
-        try? await Task.sleep(nanoseconds: 5_000_000_000)
-        guard BackgroundActivitySession.shared.accepts(generation), isTracking else { return }
-        runLivePrediction()
     }
 
     func stopTracking() {
@@ -117,6 +103,27 @@ final class SleepTracker: ObservableObject {
         featureCollector.stopCollecting()
         predictionTimer?.invalidate()
         predictionTimer = nil
+        lifecycleCancellables.removeAll()
+    }
+
+    private func observeAppLifecycle() {
+        guard lifecycleCancellables.isEmpty else { return }
+        NotificationCenter.default.publisher(for: UIApplication.didBecomeActiveNotification)
+            .sink { [weak self] _ in
+                Task { @MainActor [weak self] in self?.recordInteraction() }
+            }
+            .store(in: &lifecycleCancellables)
+
+        NotificationCenter.default.publisher(for: UIApplication.willResignActiveNotification)
+            .sink { [weak self] _ in
+                Task { @MainActor [weak self] in self?.recordInteraction() }
+            }
+            .store(in: &lifecycleCancellables)
+    }
+
+    private func recordInteraction() {
+        guard isTracking else { return }
+        trackingStore.recordInteraction(at: Date())
     }
 
     // ─────────────────────────────────────────────────────────
@@ -191,6 +198,8 @@ final class SleepTracker: ObservableObject {
         if let answers = SurveyAnswers.loadFromDefaults() {
             MorningRoutineEstimator.shared.refresh(answers: answers)
         }
+
+        await LuniferAlarm.shared.performAdaptiveSleepProtectionCheck()
 
         // Tell iOS we're done
         task.setTaskCompleted(success: true)
@@ -389,6 +398,8 @@ final class SleepTracker: ObservableObject {
 
         // Only in the morning, near the alarm.
         guard isWithinMorningWakeWindow(now: now) else { return }
+
+        SleepHistoryStore.shared.recordWakeTimeSample(now)
 
         // Resolve last night's onset from the full model (with fallbacks).
         guard let onset = await resolveOnsetForMorningWake(now: now) else { return }

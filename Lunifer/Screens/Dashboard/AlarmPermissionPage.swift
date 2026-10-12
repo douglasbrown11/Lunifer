@@ -1,26 +1,32 @@
 import SwiftUI
 
-struct AlarmPermissionPage: View {
+struct PermissionGatePage: View {
+    let permissionNames: [String]
     let openSettings: () -> Void
+
+    static func message(for permissionNames: [String]) -> String {
+        let permissionText = permissionNames.joined(separator: " and ")
+        return "Lunifer cannot run correctly without \(permissionText) approval. Approve this in Settings to continue."
+    }
 
     var body: some View {
         ZStack {
             LuniferBackground()
             VStack(spacing: 0) {
-                Image(systemName: "alarm.waves.left.and.right")
+                Image(systemName: "checkmark.shield")
                     .font(.system(size: 42, weight: .light))
                     .foregroundStyle(Color(red: 0.75, green: 0.65, blue: 1))
                     .frame(width: 104, height: 104)
                     .background(Circle().fill(Color.white.opacity(0.05)))
                     .overlay(Circle().stroke(Color.white.opacity(0.1), lineWidth: 1))
                     .padding(.bottom, 32)
-                Text("Alarm access is off")
+                Text("Permission needed")
                     .font(.custom("Poppins", size: 27))
                     .foregroundStyle(Color.white.opacity(0.95))
                     .multilineTextAlignment(.center)
                     .padding(.bottom, 14)
                     .accessibilityIdentifier("alarmPermission.title")
-                Text("Lunifer can’t set alarms. Turn on Alarms & Reminders in Settings to wake up with Lunifer.")
+                Text(Self.message(for: permissionNames))
                     .font(.custom("DM Sans", size: 15))
                     .foregroundStyle(Color.white.opacity(0.55))
                     .multilineTextAlignment(.center)

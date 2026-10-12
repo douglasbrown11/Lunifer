@@ -1,0 +1,234 @@
+{
+  "node_count": 1740,
+  "unverified_node_count": 0,
+  "raw_edge_count": 4470,
+  "non_object_edges": 0,
+  "missing_endpoint_edges": 0,
+  "dangling_endpoint_edges": 0,
+  "external_reference_edges": 2,
+  "self_loop_edges": 58,
+  "valid_candidate_edges": 4468,
+  "exact_duplicate_edges": 0,
+  "directed_unique_endpoint_pairs": 3991,
+  "directed_same_endpoint_collapsed_edges": 477,
+  "undirected_unique_endpoint_pairs": 3977,
+  "undirected_same_endpoint_collapsed_edges": 491,
+  "same_endpoint_group_count": 294,
+  "relation_variant_groups": 82,
+  "source_file_variant_groups": 0,
+  "source_location_variant_groups": 177,
+  "context_variant_groups": 50,
+  "post_build_graph_type": "Graph",
+  "post_build_node_count": 1742,
+  "post_build_edge_count": 3979,
+  "post_build_error": "",
+  "producer_suppression": {
+    "path": "/Users/dougie/.local/share/uv/tools/graphifyy/lib/python3.11/site-packages/graphify/extract.py",
+    "total_sites": 12,
+    "sites": [
+      {
+        "line": 1349,
+        "name": "seen_ids",
+        "tuple_arity": 0,
+        "sample": "seen_ids = {n[\"id\"] for n in nodes}"
+      },
+      {
+        "line": 1882,
+        "name": "seen_ids",
+        "tuple_arity": 0,
+        "sample": "seen_ids = {n[\"id\"] for n in nodes}"
+      },
+      {
+        "line": 1884,
+        "name": "seen_doc_refs",
+        "tuple_arity": 0,
+        "sample": "seen_doc_refs: set[str] = set()"
+      },
+      {
+        "line": 2254,
+        "name": "seen_ids",
+        "tuple_arity": 0,
+        "sample": "seen_ids: set[str] = {n[\"id\"] for n in nodes}"
+      },
+      {
+        "line": 2401,
+        "name": "seen_ids",
+        "tuple_arity": 0,
+        "sample": "seen_ids = {n.get(\"id\") for n in nodes}"
+      },
+      {
+        "line": 3127,
+        "name": "seen_keys",
+        "tuple_arity": 0,
+        "sample": "seen_keys: set[tuple] = set()"
+      },
+      {
+        "line": 3296,
+        "name": "seen_keys",
+        "tuple_arity": 0,
+        "sample": "seen_keys: set[tuple] = set()"
+      },
+      {
+        "line": 5370,
+        "name": "seen_ids",
+        "tuple_arity": 0,
+        "sample": "seen_ids: set[str] = set()"
+      },
+      {
+        "line": 5478,
+        "name": "seen_ids",
+        "tuple_arity": 0,
+        "sample": "seen_ids: set[str] = set()"
+      },
+      {
+        "line": 5557,
+        "name": "seen_ids",
+        "tuple_arity": 0,
+        "sample": "seen_ids: set[str] = set()"
+      },
+      {
+        "line": 6072,
+        "name": "seen_ids",
+        "tuple_arity": 0,
+        "sample": "seen_ids: set[str] = set()"
+      },
+      {
+        "line": 6073,
+        "name": "seen_edges",
+        "tuple_arity": 4,
+        "sample": "seen_edges: set[tuple[str, str, str, str | None]] = set()"
+      }
+    ],
+    "error": ""
+  },
+  "examples": [
+    {
+      "source": "lunifer_data_apppreferencesstore_apppreferencesstore",
+      "target": "lunifer_data_apppreferencesstore_swift_date",
+      "edge_count": 11,
+      "relations": [
+        "references"
+      ],
+      "source_files": [
+        "Lunifer/Data/AppPreferencesStore.swift"
+      ],
+      "source_locations": [
+        "L103",
+        "L127",
+        "L163",
+        "L251",
+        "L294",
+        "L299",
+        "L304",
+        "L309",
+        "L336",
+        "L341",
+        "L346"
+      ],
+      "contexts": [
+        "field"
+      ]
+    },
+    {
+      "source": "lunifer_screens_dashboard_main_lunifermain",
+      "target": "lunifer_screens_dashboard_main_swift_string",
+      "edge_count": 10,
+      "relations": [
+        "references"
+      ],
+      "source_files": [
+        "Lunifer/Screens/Dashboard/Main.swift"
+      ],
+      "source_locations": [
+        "L120",
+        "L122",
+        "L128",
+        "L139",
+        "L267",
+        "L274",
+        "L345",
+        "L361",
+        "L371",
+        "L92"
+      ],
+      "contexts": [
+        "field"
+      ]
+    },
+    {
+      "source": "lunifer_screens_dashboard_main_luniferdebugview",
+      "target": "view",
+      "edge_count": 9,
+      "relations": [
+        "implements",
+        "references"
+      ],
+      "source_files": [
+        "Lunifer/Screens/Dashboard/Main.swift"
+      ],
+      "source_locations": [
+        "L2374",
+        "L2392",
+        "L2462",
+        "L2490",
+        "L2514",
+        "L2534",
+        "L2554",
+        "L2578",
+        "L2665"
+      ],
+      "contexts": [
+        "",
+        "field"
+      ]
+    },
+    {
+      "source": "lunifer_screens_dashboard_main_lunifermain",
+      "target": "lunifer_screens_dashboard_main_swift_bool",
+      "edge_count": 8,
+      "relations": [
+        "references"
+      ],
+      "source_files": [
+        "Lunifer/Screens/Dashboard/Main.swift"
+      ],
+      "source_locations": [
+        "L124",
+        "L309",
+        "L321",
+        "L327",
+        "L333",
+        "L88",
+        "L90",
+        "L97"
+      ],
+      "contexts": [
+        "field"
+      ]
+    },
+    {
+      "source": "lunifer_screens_signin_signinscreen_lunifersignin",
+      "target": "lunifer_screens_signin_signinscreen_swift_bool",
+      "edge_count": 8,
+      "relations": [
+        "references"
+      ],
+      "source_files": [
+        "Lunifer/Screens/SignIn/SignInScreen.swift"
+      ],
+      "source_locations": [
+        "L120",
+        "L128",
+        "L131",
+        "L134",
+        "L137",
+        "L140",
+        "L143",
+        "L155"
+      ],
+      "contexts": [
+        "field"
+      ]
+    }
+  ]
+}

@@ -40,6 +40,50 @@ final class LuniferUITests: XCTestCase {
     }
 
     @MainActor
+    func testAlarmEditsSaveOnCollapseAndLeavingHome() {
+        let app = XCUIApplication()
+        app.launchArguments = ["--ui-test-dashboard"]
+        app.launch()
+        defer { app.terminate() }
+        let toggle = app.buttons["lunifer.enabledToggle"]
+        XCTAssertTrue(toggle.waitForExistence(timeout: 15))
+        XCTAssertTrue(waitForAlarmStatus("Alarm scheduled", toggle: toggle))
+        let editor = app.descendants(matching: .any).matching(identifier: "alarm.editorToggle").firstMatch
+        XCTAssertTrue(editor.waitForExistence(timeout: 15))
+
+        for leaveHome in [false, true] {
+            editor.tap()
+            let wheel = app.pickerWheels.element(boundBy: 0)
+            XCTAssertTrue(wheel.waitForExistence(timeout: 5))
+            XCTAssertFalse(app.buttons["Confirm"].exists)
+            let original = wheel.value as? String ?? ""
+            wheel.adjust(toPickerWheelValue: original == "8" ? "9" : "8")
+            let selected = wheel.value as? String
+            if leaveHome {
+                app.swipeRight()
+                app.swipeLeft()
+            } else {
+                editor.tap()
+            }
+            XCTAssertTrue(NSPredicate(format: "exists == false").evaluate(with: wheel)
+                || XCTWaiter.wait(for: [XCTNSPredicateExpectation(predicate: NSPredicate(format: "exists == false"), object: wheel)], timeout: 5) == .completed)
+            editor.tap()
+            XCTAssertTrue(wheel.waitForExistence(timeout: 5))
+            XCTAssertEqual(wheel.value as? String, selected)
+            XCTAssertTrue(app.buttons["Reset to Lunifer's time"].exists)
+            editor.tap()
+        }
+        editor.tap()
+        XCTAssertTrue(app.pickerWheels.element(boundBy: 0).waitForExistence(timeout: 5))
+        // Let the dropdown transition finish before capturing its layout.
+        Thread.sleep(forTimeInterval: 0.5)
+        let screenshot = XCTAttachment(screenshot: app.screenshot())
+        screenshot.name = "Alarm dropdown without Confirm"
+        screenshot.lifetime = .keepAlways
+        add(screenshot)
+    }
+
+    @MainActor
     func testTurningLuniferBackOnSchedulesAlarmImmediately() {
         let app = XCUIApplication()
         app.launchArguments = ["--ui-test-dashboard"]

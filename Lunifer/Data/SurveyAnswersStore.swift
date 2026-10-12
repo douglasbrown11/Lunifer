@@ -112,14 +112,6 @@ final class SurveyAnswersStore {
         guard let data = snapshot.data() else { return nil }
 
         var answers = SurveyAnswers()
-        if let birthday = data["age"] as? String, !birthday.isEmpty {
-            // New format: birthday stored as "yyyy-MM-dd"
-            answers.age = birthday
-        } else if let legacyAge = data["age"] as? Int, legacyAge > 0 {
-            // Legacy format: plain integer age — keep as-is; SleepDurationModel
-            // handles both formats via its Int fallback path.
-            answers.age = String(legacyAge)
-        }
         if let wakeDays = data["wakeDays"] as? [String], !wakeDays.isEmpty {
             answers.wakeDays = wakeDays
         }

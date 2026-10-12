@@ -39,9 +39,7 @@ fileprivate func formattedDurationAttributed(_ hours: Double, size: CGFloat) -> 
 // SleepInsights
 // ─────────────────────────────────────────────────────────────
 // Accessible by swiping right from the dashboard.
-// Shows:
-//   1. Recommended optimal sleep duration (top)
-//   2. Sleep history range selector and tappable chart
+// Shows recommended optimal sleep duration and recent wake-time history.
 
 struct SleepInsights: View {
     @Binding var answers: SurveyAnswers
@@ -54,8 +52,6 @@ struct SleepInsights: View {
     }
 
     @State private var showSettings = false
-    @State private var selectedRange: SleepInsightsRange = .oneWeek
-    @State private var selectedPointID: String?
 
     // Wearable state — read directly from AppStorage so changes sync immediately
     @AppStorage(AppPreferencesStore.Keys.hasWearable)               private var hasWearable: Bool      = false
@@ -69,26 +65,12 @@ struct SleepInsights: View {
         previewEntries ?? SleepHistoryManager.shared.allHistory()
     }
 
-    private var visibleHistory: [SleepHistoryEntry] {
-        let sortedHistory = allStoredHistory.sorted { $0.date > $1.date }
-
-        guard let cutoff = selectedRange.cutoffDate(referenceDate: Date()) else {
-            return sortedHistory
-        }
-
-        return sortedHistory.filter { $0.date >= cutoff }
+    private var wakeHistoryPoints: [WakeHistoryPoint] {
+        WakeHistoryPoint.points(from: allStoredHistory, referenceDate: Date())
     }
 
-    private var chartPoints: [SleepHistoryChartPoint] {
-        SleepHistoryChartPoint.points(
-            from: visibleHistory,
-            range: selectedRange,
-            recommendedHours: recommendedHours
-        )
-    }
-
-    private var selectedPoint: SleepHistoryChartPoint? {
-        chartPoints.first { $0.id == selectedPointID } ?? chartPoints.last
+    private var averageWakeTime: Date? {
+        WakeHistoryPoint.averageWakeTime(from: wakeHistoryPoints)
     }
 
     private var wearableSources: [WearableRecommendationSource] {
@@ -109,7 +91,7 @@ struct SleepInsights: View {
         return WearableRecommendationStore.activeRecommendation(from: wearableSources)
     }
 
-    // Flow: wearable recommendation -> manual preference -> age baseline
+    // Flow: wearable recommendation -> manual preference -> default baseline
     private var recommendedHours: Double {
         guard userHasWearable else {
             return WearableRecommendationStore.fallbackSleepHours(from: answers)
@@ -186,83 +168,18 @@ struct SleepInsights: View {
 
                 Spacer().frame(height: 16)
 
-                SleepRangeSelector(selectedRange: $selectedRange)
+                WakeTimesCard(points: wakeHistoryPoints, averageWakeTime: averageWakeTime)
                     .padding(.horizontal, 60)
-
-                Spacer().frame(height: 16)
-
-                // ── History chart ─────────────────────────
-                HStack {
-                    Text("SLEEP HISTORY")
-                        .font(.custom("DM Sans", size: 11))
-                        .foregroundColor(Color.white.opacity(0.35))
-                        .kerning(2.5)
-                    Spacer()
-                    Text(selectedRange.subtitle)
-                        .font(.custom("DM Sans", size: 11))
-                        .foregroundColor(Color.white.opacity(0.28))
-                }
-                .padding(.horizontal, 60)
-                .padding(.bottom, 10)
-
-                Group {
-                    if chartPoints.isEmpty {
-                        VStack(spacing: 10) {
-                            Image(systemName: "moon.zzz")
-                                .font(.system(size: 28, weight: .ultraLight))
-                                .foregroundColor(Color.white.opacity(0.2))
-
-                            Text("Sleep data will appear here\nafter your first night")
-                                .font(.custom("DM Sans", size: 13))
-                                .foregroundColor(Color.white.opacity(0.3))
-                                .multilineTextAlignment(.center)
-                        }
-                        .frame(maxWidth: .infinity)
-                        .padding(.vertical, 28)
-                    } else {
-                        SleepHistoryChart(
-                            points: chartPoints,
-                            selectedPointID: $selectedPointID
-                        )
-                        .frame(height: 150)
-                        .padding(.horizontal, 16)
-                        .padding(.vertical, 14)
-                    }
-                }
-                .frame(maxWidth: .infinity)
-                .background(
-                    RoundedRectangle(cornerRadius: 20)
-                        .fill(Color.white.opacity(0.04))
-                        .overlay(
-                            RoundedRectangle(cornerRadius: 20)
-                                .stroke(Color.white.opacity(0.08), lineWidth: 1)
-                        )
-                )
-                .padding(.horizontal, 60)
-
-                if let selectedPoint {
-                    Spacer().frame(height: 14)
-
-                    SleepInsightDetailCard(point: selectedPoint)
-                    .padding(.horizontal, 60)
-                }
 
                 Spacer().frame(height: 28)
             }
         }
         .frame(maxWidth: .infinity)
         .onAppear {
-            syncSelectedPoint()
             guard !isRunningPreview else { return }
             WhoopManager.shared.refreshIfNeeded()
             OuraManager.shared.refreshIfNeeded()
             HealthKitManager.shared.refreshIfNeeded()
-        }
-        .onChange(of: selectedRange) { _, _ in
-            syncSelectedPoint(preferLatest: true)
-        }
-        .onChange(of: chartPoints.map(\.id)) { _, _ in
-            syncSelectedPoint()
         }
         // ── Jump to Sleep & Wearables settings ───────────
         .sheet(isPresented: $showSettings) {
@@ -274,296 +191,142 @@ struct SleepInsights: View {
             .presentationBackground(Color(red: 0.06, green: 0.03, blue: 0.14))
         }
     }
-
-    private func syncSelectedPoint(preferLatest: Bool = false) {
-        guard !chartPoints.isEmpty else {
-            selectedPointID = nil
-            return
-        }
-
-        if preferLatest || !chartPoints.contains(where: { $0.id == selectedPointID }) {
-            selectedPointID = chartPoints.last?.id
-        }
-    }
 }
 
-private enum SleepInsightsRange: String, CaseIterable, Identifiable {
-    case oneWeek = "1W"
-    case oneMonth = "1M"
-    case sixMonths = "6M"
-    case yearToDate = "YTD"
-    case maximum = "Max"
-
-    var id: String { rawValue }
-
-    func cutoffDate(referenceDate: Date) -> Date? {
-        let calendar = Calendar.current
-
-        switch self {
-        case .oneWeek:
-            return calendar.date(byAdding: .day, value: -7, to: referenceDate)
-        case .oneMonth:
-            return calendar.date(byAdding: .month, value: -1, to: referenceDate)
-        case .sixMonths:
-            return calendar.date(byAdding: .month, value: -6, to: referenceDate)
-        case .yearToDate:
-            let year = calendar.component(.year, from: referenceDate)
-            return calendar.date(from: DateComponents(year: year, month: 1, day: 1))
-        case .maximum:
-            return nil
-        }
-    }
-
-    var subtitle: String {
-        switch self {
-        case .oneWeek:
-            return "daily"
-        case .oneMonth:
-            return "weekly"
-        case .sixMonths:
-            return "monthly"
-        case .yearToDate:
-            return "monthly"
-        case .maximum:
-            return "monthly"
-        }
-    }
-
-    var aggregation: SleepHistoryAggregation {
-        switch self {
-        case .oneWeek:
-            return .night
-        case .oneMonth:
-            return .week
-        case .sixMonths, .yearToDate, .maximum:
-            return .month
-        }
-    }
-}
-
-private enum SleepHistoryAggregation {
-    case night
-    case week
-    case month
-}
-
-private struct SleepRangeSelector: View {
-    @Binding var selectedRange: SleepInsightsRange
-
-    var body: some View {
-        HStack(spacing: 4) {
-            ForEach(SleepInsightsRange.allCases) { range in
-                Button {
-                    withAnimation(.easeInOut(duration: 0.2)) {
-                        selectedRange = range
-                    }
-                } label: {
-                    Text(range.rawValue)
-                        .font(.custom("DM Sans", size: 11).weight(.medium))
-                        .foregroundColor(selectedRange == range ? .white : Color.white.opacity(0.42))
-                        .frame(maxWidth: .infinity)
-                        .frame(height: 30)
-                        .background(
-                            Capsule()
-                                .fill(
-                                    selectedRange == range
-                                    ? Color(red: 0.627, green: 0.471, blue: 1.0).opacity(0.28)
-                                    : Color.clear
-                                )
-                        )
-                }
-                .buttonStyle(.plain)
-            }
-        }
-        .padding(4)
-        .background(
-            Capsule()
-                .fill(Color.white.opacity(0.045))
-                .overlay(
-                    Capsule()
-                        .stroke(Color.white.opacity(0.08), lineWidth: 1)
-                )
-        )
-    }
-}
-
-private struct SleepHistoryChartPoint: Identifiable, Equatable {
+struct WakeHistoryPoint: Identifiable, Equatable {
     let id: String
-    let startDate: Date
-    let endDate: Date
-    let durationHours: Double
-    let entryCount: Int
+    let date: Date
+    let wakeTime: Date
     let label: String
-    let title: String
-    let sleepOnset: Date?
-    let wakeTime: Date?
-    let metTarget: Bool
+    let minuteOfDay: Int
 
-    var isAggregate: Bool {
-        entryCount > 1
-    }
+    static func points(from entries: [SleepHistoryEntry], referenceDate: Date) -> [WakeHistoryPoint] {
+        let calendar = Calendar.current
+        let cutoff = calendar.date(byAdding: .day, value: -7, to: referenceDate) ?? referenceDate
 
-    static func points(
-        from entries: [SleepHistoryEntry],
-        range: SleepInsightsRange,
-        recommendedHours: Double
-    ) -> [SleepHistoryChartPoint] {
-        let ascendingEntries = entries.sorted { $0.date < $1.date }
+        let entryPoints = entries
+            .compactMap { entry -> SleepHistoryEntry? in
+                guard let wakeTime = entry.wakeTime,
+                      wakeTime >= cutoff,
+                      wakeTime <= referenceDate else { return nil }
+                return entry
+            }
+            .sorted { ($0.wakeTime ?? $0.date) < ($1.wakeTime ?? $1.date) }
+            .suffix(7)
+            .map { entry in
+                let wakeTime = entry.wakeTime ?? entry.date
+                let components = calendar.dateComponents([.hour, .minute], from: wakeTime)
+                let minuteOfDay = (components.hour ?? 0) * 60 + (components.minute ?? 0)
 
-        switch range.aggregation {
-        case .night:
-            return ascendingEntries.map { entry in
-                let isToday = Calendar.current.isDateInToday(entry.date)
-                return SleepHistoryChartPoint(
-                    id: "night-\(Int(entry.date.timeIntervalSince1970))",
-                    startDate: entry.date,
-                    endDate: entry.date,
-                    durationHours: entry.durationHours,
-                    entryCount: 1,
-                    label: range == .oneWeek ? (isToday ? "Today" : entry.dayLabel) : dayOfMonthLabel(entry.date),
-                    title: fullDateLabel(entry.date),
-                    sleepOnset: entry.sleepOnset,
-                    wakeTime: entry.wakeTime,
-                    metTarget: entry.durationHours >= recommendedHours
+                return WakeHistoryPoint(
+                    id: "wake-\(Int(wakeTime.timeIntervalSince1970))",
+                    date: entry.date,
+                    wakeTime: wakeTime,
+                    label: calendar.isDateInToday(wakeTime) ? "Today" : entry.dayLabel,
+                    minuteOfDay: minuteOfDay
                 )
             }
 
-        case .week:
-            return groupedPoints(
-                from: ascendingEntries,
-                component: .weekOfYear,
-                recommendedHours: recommendedHours,
-                label: { weekLabel($0) },
-                title: { start, end in rangeLabel(start: start, end: end) }
-            )
+        let samplePoints = SleepHistoryStore.shared
+            .wakeTimeSamples(since: cutoff, through: referenceDate)
+            .filter { sample in
+                !entryPoints.contains { calendar.isDate($0.wakeTime, inSameDayAs: sample) }
+            }
+            .map { wakeTime in
+                let components = calendar.dateComponents([.hour, .minute], from: wakeTime)
+                let minuteOfDay = (components.hour ?? 0) * 60 + (components.minute ?? 0)
 
-        case .month:
-            return groupedPoints(
-                from: ascendingEntries,
-                component: .month,
-                recommendedHours: recommendedHours,
-                label: { monthLabel($0, includeYear: range == .maximum) },
-                title: { start, _ in monthTitle(start) }
-            )
-        }
+                return WakeHistoryPoint(
+                    id: "wake-sample-\(Int(wakeTime.timeIntervalSince1970))",
+                    date: wakeTime,
+                    wakeTime: wakeTime,
+                    label: calendar.isDateInToday(wakeTime) ? "Today" : Self.dayLabel(for: wakeTime),
+                    minuteOfDay: minuteOfDay
+                )
+            }
+
+        return (entryPoints + samplePoints)
+            .sorted { $0.wakeTime < $1.wakeTime }
+            .suffix(7)
     }
 
-    private static func groupedPoints(
-        from entries: [SleepHistoryEntry],
-        component: Calendar.Component,
-        recommendedHours: Double,
-        label: (Date) -> String,
-        title: (Date, Date) -> String
-    ) -> [SleepHistoryChartPoint] {
+    static func averageWakeTime(from points: [WakeHistoryPoint]) -> Date? {
+        guard !points.isEmpty else { return nil }
+        let averageMinute = points.reduce(0) { $0 + $1.minuteOfDay } / points.count
         let calendar = Calendar.current
-        let groups = Dictionary(grouping: entries) { entry in
-            calendar.dateInterval(of: component, for: entry.date)?.start
-                ?? calendar.startOfDay(for: entry.date)
-        }
-
-        return groups.map { groupStart, groupedEntries in
-            let sortedGroup = groupedEntries.sorted { $0.date < $1.date }
-            let average = sortedGroup.reduce(0) { $0 + $1.durationHours } / Double(sortedGroup.count)
-            let end = calendar.dateInterval(of: component, for: groupStart)?.end.addingTimeInterval(-1)
-                ?? sortedGroup.last?.date
-                ?? groupStart
-
-            return SleepHistoryChartPoint(
-                id: "\(component)-\(Int(groupStart.timeIntervalSince1970))",
-                startDate: groupStart,
-                endDate: end,
-                durationHours: average,
-                entryCount: sortedGroup.count,
-                label: label(groupStart),
-                title: title(groupStart, end),
-                sleepOnset: nil,
-                wakeTime: nil,
-                metTarget: average >= recommendedHours
-            )
-        }
-        .sorted { $0.startDate < $1.startDate }
+        var components = calendar.dateComponents([.year, .month, .day], from: Date())
+        components.hour = averageMinute / 60
+        components.minute = averageMinute % 60
+        return calendar.date(from: components)
     }
 
-    private static func dayOfMonthLabel(_ date: Date) -> String {
+    private static func dayLabel(for date: Date) -> String {
         let formatter = DateFormatter()
-        formatter.dateFormat = "d"
-        return formatter.string(from: date)
-    }
-
-    private static func weekLabel(_ date: Date) -> String {
-        let formatter = DateFormatter()
-        formatter.dateFormat = "MMM d"
-        return formatter.string(from: date)
-    }
-
-    private static func monthLabel(_ date: Date, includeYear: Bool) -> String {
-        let formatter = DateFormatter()
-        formatter.dateFormat = includeYear ? "MMM yy" : "MMM"
-        return formatter.string(from: date)
-    }
-
-    private static func monthTitle(_ date: Date) -> String {
-        let formatter = DateFormatter()
-        formatter.dateFormat = "MMMM yyyy"
-        return formatter.string(from: date)
-    }
-
-    private static func fullDateLabel(_ date: Date) -> String {
-        let formatter = DateFormatter()
-        formatter.dateFormat = "EEE, MMM d"
-        return formatter.string(from: date)
-    }
-
-    private static func rangeLabel(start: Date, end: Date) -> String {
-        "\(shortDateLabel(start)) - \(shortDateLabel(end))"
-    }
-
-    private static func shortDateLabel(_ date: Date) -> String {
-        let formatter = DateFormatter()
-        formatter.dateFormat = "MMM d"
+        formatter.dateFormat = "EEE"
         return formatter.string(from: date)
     }
 }
 
-private struct SleepInsightDetailCard: View {
-    let point: SleepHistoryChartPoint
+private struct WakeTimesCard: View {
+    let points: [WakeHistoryPoint]
+    let averageWakeTime: Date?
 
     var body: some View {
-        VStack(alignment: .leading, spacing: 14) {
-            HStack(alignment: .firstTextBaseline) {
-                VStack(alignment: .leading, spacing: 4) {
-                    Text(point.isAggregate ? "Average Sleep" : "Night Sleep")
+        VStack(alignment: .leading, spacing: 16) {
+            HStack(alignment: .lastTextBaseline) {
+                VStack(alignment: .leading, spacing: 12) {
+                    Text("WAKE TIMES")
                         .font(.custom("DM Sans", size: 11))
-                        .kerning(2.0)
                         .foregroundColor(Color.white.opacity(0.35))
+                        .kerning(2.5)
 
-                    Text(point.title)
-                        .font(.custom("Poppins-Medium", size: 15))
-                        .foregroundColor(Color.white.opacity(0.82))
+                    if let averageWakeTime {
+                        HStack(alignment: .lastTextBaseline, spacing: 4) {
+                            Text(timeLabel(averageWakeTime, includePeriod: false))
+                                .font(.custom("Poppins-Medium", size: 38))
+                                .foregroundColor(Color.white.opacity(0.96))
+
+                            Text(periodLabel(averageWakeTime))
+                                .font(.custom("DM Sans", size: 16).weight(.medium))
+                                .foregroundColor(Color.white.opacity(0.52))
+                                .padding(.bottom, 4)
+                        }
+                    }
                 }
-            }
 
-            HStack(alignment: .lastTextBaseline, spacing: 8) {
-                Text(formattedDurationAttributed(point.durationHours, size: 32))
-                    .foregroundColor(.white.opacity(0.96))
+                Spacer()
 
-                Text(point.isAggregate ? "average" : "recorded")
+                Text("average\nlast 7 days")
                     .font(.custom("DM Sans", size: 12))
-                    .foregroundColor(Color.white.opacity(0.35))
+                    .foregroundColor(Color.white.opacity(0.4))
+                    .multilineTextAlignment(.trailing)
+                    .lineSpacing(2)
             }
 
-            VStack(spacing: 9) {
-                if point.isAggregate {
-                    detailRow("Nights", "\(point.entryCount)")
-                    detailRow("Range", "\(shortDate(point.startDate)) - \(shortDate(point.endDate))")
-                } else {
-                    detailRow("Bedtime", timeLabel(point.sleepOnset))
-                    detailRow("Wake", timeLabel(point.wakeTime))
+            if points.isEmpty {
+                VStack(spacing: 10) {
+                    Image(systemName: "sun.horizon")
+                        .font(.system(size: 28, weight: .ultraLight))
+                        .foregroundColor(Color.white.opacity(0.2))
+
+                    Text("Wake times will appear here\nafter a few mornings")
+                        .font(.custom("DM Sans", size: 13))
+                        .foregroundColor(Color.white.opacity(0.3))
+                        .multilineTextAlignment(.center)
                 }
+                .frame(maxWidth: .infinity)
+                .padding(.vertical, 28)
+            } else {
+                WakeTimesChart(points: points)
+                    .frame(height: 150)
+
+                Text("Last 7 days")
+                    .font(.custom("DM Sans", size: 12))
+                    .foregroundColor(Color.white.opacity(0.34))
             }
         }
         .frame(maxWidth: .infinity, alignment: .leading)
-        .padding(16)
+        .padding(18)
         .background(
             RoundedRectangle(cornerRadius: 20)
                 .fill(Color.white.opacity(0.04))
@@ -574,31 +337,22 @@ private struct SleepInsightDetailCard: View {
         )
     }
 
-    private func detailRow(_ label: String, _ value: String) -> some View {
-        HStack {
-            Text(label)
-                .font(.custom("DM Sans", size: 12))
-                .foregroundColor(Color.white.opacity(0.34))
-
-            Spacer()
-
-            Text(value)
-                .font(.custom("DM Sans", size: 12).weight(.medium))
-                .foregroundColor(Color.white.opacity(0.74))
-        }
-    }
-
-    private func timeLabel(_ date: Date?) -> String {
-        guard let date else { return "Not recorded" }
+    private func timeLabel(_ date: Date, includePeriod: Bool) -> String {
         let formatter = DateFormatter()
-        formatter.timeStyle = .short
         formatter.dateStyle = .none
+        formatter.timeStyle = .short
+
+        if includePeriod {
+            return formatter.string(from: date)
+        }
+
+        formatter.dateFormat = "h:mm"
         return formatter.string(from: date)
     }
 
-    private func shortDate(_ date: Date) -> String {
+    private func periodLabel(_ date: Date) -> String {
         let formatter = DateFormatter()
-        formatter.dateFormat = "MMM d"
+        formatter.dateFormat = "a"
         return formatter.string(from: date)
     }
 }
@@ -656,128 +410,139 @@ struct SleepEditSheet: View {
 }
 
 // ─────────────────────────────────────────────────────────────
-// SleepHistoryChart
+// WakeTimesChart
 // ─────────────────────────────────────────────────────────────
-// A tappable bar chart showing daily, weekly, or monthly sleep duration.
+// A simple last-seven-days wake-time line chart.
 
-private struct SleepHistoryChart: View {
-    let points: [SleepHistoryChartPoint]
-    @Binding var selectedPointID: String?
+private struct WakeTimesChart: View {
+    let points: [WakeHistoryPoint]
 
-    private var maxHours: Double {
-        let tallest = points.map(\.durationHours).max() ?? 8
-        return max(tallest + 1, 10)
+    private var axis: WakeTimeAxis {
+        WakeTimeAxis(points: points)
     }
 
     var body: some View {
         GeometryReader { geo in
-            let count = max(points.count, 1)
-            let spacing = CGFloat(8)
-            let desiredBarWidth = CGFloat(count > 40 ? 18 : (count > 16 ? 24 : 34))
-            let contentWidth = max(
-                geo.size.width,
-                CGFloat(count) * desiredBarWidth + spacing * CGFloat(max(count - 1, 0))
-            )
-            let barWidth = min(
-                max((contentWidth - spacing * CGFloat(count - 1)) / CGFloat(count), 8),
-                42
-            )
+            let axisWidth: CGFloat = 38
+            let axisSpacing: CGFloat = 8
+            let xLabelHeight: CGFloat = 24
+            let plotWidth = max(geo.size.width - axisWidth - axisSpacing, 1)
+            let plotHeight = max(geo.size.height - xLabelHeight, 1)
+            let coordinates = chartCoordinates(width: plotWidth, height: plotHeight)
 
-            // Vertical layout constants
-            let showsDurationLabels = count <= 32
-            let durLabelH = CGFloat(showsDurationLabels ? 16 : 0)
-            let axisH = CGFloat(1)
-            let xLabelH = CGFloat(22)
-            let barAreaH = geo.size.height - axisH - xLabelH
-            let barSlotH = barAreaH - durLabelH
+            HStack(alignment: .top, spacing: 8) {
+                ZStack(alignment: .topTrailing) {
+                    ForEach(axis.tickMinutes, id: \.self) { minute in
+                        Text(axis.label(for: minute))
+                            .font(.custom("DM Sans", size: 10))
+                            .foregroundColor(Color.white.opacity(0.38))
+                            .position(x: axisWidth / 2, y: yPosition(for: minute, height: plotHeight))
+                    }
+                }
+                .frame(width: axisWidth, height: plotHeight)
 
-            ScrollView(.horizontal, showsIndicators: false) {
                 VStack(spacing: 0) {
+                    ZStack(alignment: .topLeading) {
+                        ForEach(axis.tickMinutes, id: \.self) { minute in
+                            Rectangle()
+                                .fill(Color.white.opacity(0.075))
+                                .frame(width: plotWidth, height: 1)
+                                .position(x: plotWidth / 2, y: yPosition(for: minute, height: plotHeight))
+                            }
 
-                    // ── Bar + duration-label area ────────────────
-                    ZStack(alignment: .bottom) {
-                        HStack(alignment: .bottom, spacing: spacing) {
-                            ForEach(points) { point in
-                                let isSelected = selectedPointID == point.id
-                                let barH = max(barSlotH * (point.durationHours / maxHours), 4)
-
-                                Button {
-                                    withAnimation(.easeInOut(duration: 0.18)) {
-                                        selectedPointID = point.id
-                                    }
-                                } label: {
-                                    VStack(spacing: 4) {
-                                        if showsDurationLabels {
-                                            Text(SleepDurationModel.shortFormatted(point.durationHours))
-                                                .font(.custom("DM Sans", size: 10))
-                                                .foregroundColor(Color.white.opacity(isSelected ? 0.78 : 0.45))
-                                                .frame(height: durLabelH)
-                                        }
-
-                                        RoundedRectangle(cornerRadius: 6)
-                                            .fill(barFill(for: point, isSelected: isSelected))
-                                            .frame(width: barWidth, height: barH)
-                                            .overlay(
-                                                RoundedRectangle(cornerRadius: 6)
-                                                    .stroke(
-                                                        Color.white.opacity(isSelected ? 0.38 : 0),
-                                                        lineWidth: 1
-                                                    )
-                                            )
-                                    }
-                                    .frame(width: barWidth)
-                                }
-                                .buttonStyle(.plain)
+                        Path { path in
+                            guard let first = coordinates.first else { return }
+                            path.move(to: first)
+                            for coordinate in coordinates.dropFirst() {
+                                path.addLine(to: coordinate)
                             }
                         }
-                        .frame(width: contentWidth)
-                    }
-                    .frame(width: contentWidth, height: barAreaH)
+                        .stroke(
+                            Color.white.opacity(0.55),
+                            style: StrokeStyle(lineWidth: 2, lineCap: .round, dash: [2, 8])
+                        )
 
-                    // ── X-axis divider ───────────────────────────
-                    Rectangle()
-                        .fill(Color.white.opacity(0.12))
-                        .frame(width: contentWidth, height: axisH)
-
-                    // ── X-axis labels ────────────────────────────
-                    HStack(spacing: spacing) {
-                        ForEach(points) { point in
-                            let isSelected = selectedPointID == point.id
-                            Text(point.label)
-                                .font(.custom("DM Sans", size: 11))
-                                .foregroundColor(
-                                    isSelected
-                                    ? Color(red: 0.627, green: 0.471, blue: 1.0).opacity(0.9)
-                                    : Color.white.opacity(0.4)
-                                )
-                                .lineLimit(1)
-                                .minimumScaleFactor(0.7)
-                                .frame(width: barWidth)
+                        ForEach(Array(zip(points, coordinates)), id: \.0.id) { _, coordinate in
+                            Circle()
+                                .fill(Color.white)
+                                .frame(width: 9, height: 9)
+                                .position(coordinate)
                         }
                     }
-                    .frame(width: contentWidth)
-                    .padding(.top, 5)
-                    .frame(height: xLabelH)
+                    .frame(width: plotWidth, height: plotHeight)
+
+                    HStack(spacing: 0) {
+                        ForEach(points) { point in
+                            Text(point.label)
+                                .font(.custom("DM Sans", size: 11))
+                                .foregroundColor(Color.white.opacity(0.4))
+                                .lineLimit(1)
+                                .minimumScaleFactor(0.7)
+                                .frame(maxWidth: .infinity)
+                        }
+                    }
+                    .frame(width: plotWidth, height: xLabelHeight)
                 }
             }
         }
     }
 
-    private func barFill(for point: SleepHistoryChartPoint, isSelected: Bool) -> Color {
-        let base = Color(red: 0.627, green: 0.471, blue: 1.0)
+    private func yPosition(for minute: Int, height: CGFloat) -> CGFloat {
+        let range = max(axis.maxMinute - axis.minMinute, 1)
+        let normalized = CGFloat(minute - axis.minMinute) / CGFloat(range)
+        return height - (normalized * height)
+    }
 
-        if isSelected {
-            return base.opacity(0.9)
+    private func chartCoordinates(width: CGFloat, height: CGFloat) -> [CGPoint] {
+        guard !points.isEmpty else { return [] }
+        let xStep = points.count == 1 ? 0 : width / CGFloat(points.count - 1)
+        let range = max(axis.maxMinute - axis.minMinute, 1)
+
+        return points.enumerated().map { index, point in
+            let x = points.count == 1 ? width / 2 : CGFloat(index) * xStep
+            let normalized = CGFloat(point.minuteOfDay - axis.minMinute) / CGFloat(range)
+            let y = height - (normalized * height)
+            return CGPoint(x: x, y: y)
+        }
+    }
+}
+
+private struct WakeTimeAxis {
+    let minMinute: Int
+    let maxMinute: Int
+    let tickMinutes: [Int]
+
+    init(points: [WakeHistoryPoint]) {
+        let values = points.map(\.minuteOfDay)
+        let minValue = values.min() ?? 6 * 60
+        let maxValue = values.max() ?? 9 * 60
+        var lower = (minValue / 60) * 60
+        var upper = Int(ceil(Double(maxValue) / 60.0)) * 60
+
+        if upper - lower < 3 * 60 {
+            let midpoint = (lower + upper) / 2
+            lower = max(0, midpoint - 90)
+            upper = min(24 * 60, lower + 3 * 60)
+            lower = max(0, upper - 3 * 60)
         }
 
-        return point.metTarget ? base.opacity(0.58) : base.opacity(0.25)
+        minMinute = lower
+        maxMinute = upper
+        let step = max((upper - lower) / 3, 60)
+        tickMinutes = stride(from: upper, through: lower, by: -step).map { $0 }
+    }
+
+    func label(for minute: Int) -> String {
+        let hour24 = (minute / 60) % 24
+        let hour12 = hour24 % 12 == 0 ? 12 : hour24 % 12
+        let period = hour24 < 12 ? "AM" : "PM"
+        return "\(hour12) \(period)"
     }
 }
 
 #Preview("Sleep Insights — no wearable") {
     @Previewable @State var answers: SurveyAnswers = {
         var a = SurveyAnswers()
-        a.age = "22"
         return a
     }()
     ZStack {
@@ -793,7 +558,6 @@ private struct SleepHistoryChart: View {
 #Preview("Sleep Insights — WHOOP") {
     @Previewable @State var answers: SurveyAnswers = {
         var a = SurveyAnswers()
-        a.age = "22"
         return a
     }()
     ZStack {
@@ -810,7 +574,6 @@ private struct SleepHistoryChart: View {
 #Preview("Sleep Insights — Oura Ring") {
     @Previewable @State var answers: SurveyAnswers = {
         var a = SurveyAnswers()
-        a.age = "22"
         return a
     }()
     ZStack {
@@ -824,24 +587,13 @@ private struct SleepHistoryChart: View {
     }
 }
 
-#Preview("Sleep History Chart — mock data") {
-    @Previewable @State var selectedPointID: String? = nil
-    let points = SleepHistoryChartPoint.points(
-        from: SleepHistoryMock.entries,
-        range: .oneWeek,
-        recommendedHours: 8.0
-    )
+#Preview("Wake Times Chart — mock data") {
+    let points = WakeHistoryPoint.points(from: SleepHistoryMock.entries, referenceDate: Date())
 
     ZStack {
         Color(red: 0.07, green: 0.04, blue: 0.15).ignoresSafeArea()
-        SleepHistoryChart(
-            points: points,
-            selectedPointID: $selectedPointID
-        )
+        WakeTimesChart(points: points)
         .frame(height: 200)
         .padding(.horizontal, 24)
-    }
-    .onAppear {
-        selectedPointID = points.last?.id
     }
 }

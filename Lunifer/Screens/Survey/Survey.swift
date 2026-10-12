@@ -5,7 +5,6 @@ import CoreLocation
 import CoreMotion
 import UIKit
 import UserNotifications
-import AVFoundation
 
 // ── MARK: Models ─────────────────────────────────────────────
 
@@ -16,7 +15,6 @@ struct TimeValue: Codable, Equatable {
 }
 
 struct SurveyAnswers: Codable {
-    var age: String        = "2000-01-01"
     var wakeDays: [String] = ["mon", "tue", "wed", "thu", "fri"]
     var calendar: String?  = nil
     var sleep   = TimeValue(hours: 8, minutes: 0,  auto: false)
@@ -1051,12 +1049,11 @@ struct LuniferSurvey: View {
             if step == 4 && CMMotionActivityManager.authorizationStatus() == .notDetermined {
                 Task {
                     let m = CMMotionActivityManager()
-                    m.startActivityUpdates(to: .main) { _ in }
-                    try? await Task.sleep(nanoseconds: 500_000_000)
-                    m.stopActivityUpdates()
-                    requestMicrophonePermission()
-                }
-            }
+	                    m.startActivityUpdates(to: .main) { _ in }
+	                    try? await Task.sleep(nanoseconds: 500_000_000)
+	                    m.stopActivityUpdates()
+	                }
+	            }
             if skipCalendarStep && step == 2 {
                 // Skip the calendar step when it was pre-selected before sign-in.
                 step = 4
@@ -1078,15 +1075,7 @@ struct LuniferSurvey: View {
             }
         }
 
-        private func requestMicrophonePermission() {
-            if #available(iOS 17.0, *) {
-                AVAudioApplication.requestRecordPermission { _ in }
-            } else {
-                AVAudioSession.sharedInstance().requestRecordPermission { _ in }
-            }
-        }
-
-        private func toggleWakeDay(_ day: String) {
+	        private func toggleWakeDay(_ day: String) {
             if answers.wakeDays.contains(day) {
                 answers.wakeDays.removeAll { $0 == day }
             } else {

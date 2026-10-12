@@ -32,6 +32,7 @@ final class SleepHistoryStore {
 
     private let defaults = UserDefaults.standard
     private let storageKey = "lunifer_sleep_history"
+    private let wakeSampleKey = "lunifer_wake_time_samples"
 
     /// Source of a recorded night. Wearable-measured nights (Apple Watch, WHOOP,
     /// Oura) outrank the on-device CoreMotion estimate so the backup tracker never
@@ -174,11 +175,14 @@ final class SleepHistoryStore {
         let cal = Calendar.current
         guard let cutoff = cal.date(byAdding: .weekOfYear, value: -10, to: now) else { return nil }
 
-        let wakeDates: [Date] = loadRawEntries().compactMap { dict in
+        let recordedWakeDates: [Date] = loadRawEntries().compactMap { dict in
             let wakeTS = dict["wake"] as? Double ?? 0
             guard wakeTS > 0 else { return nil }
             return Date(timeIntervalSince1970: wakeTS)
-        }.filter { $0 >= cutoff && $0 <= now && cal.component(.weekday, from: $0) == weekday }
+        }
+        let overrideWakeDates = loadWakeTimeSamples().map { Date(timeIntervalSince1970: $0) }
+        let wakeDates = (recordedWakeDates + overrideWakeDates)
+            .filter { $0 >= cutoff && $0 <= now && cal.component(.weekday, from: $0) == weekday }
 
         guard wakeDates.count >= 2 else { return nil }
 
@@ -192,12 +196,33 @@ final class SleepHistoryStore {
         return (hour: medianMinutes / 60, minute: medianMinutes % 60)
     }
 
+    func recordWakeTimeSample(_ wake: Date) {
+        var samples = loadWakeTimeSamples()
+        if samples.contains(where: { Calendar.current.isDate(Date(timeIntervalSince1970: $0), inSameDayAs: wake) }) {
+            return
+        }
+        samples.append(wake.timeIntervalSince1970)
+        defaults.set(samples, forKey: wakeSampleKey)
+    }
+
+    func wakeTimeSamples(since cutoff: Date, through referenceDate: Date = Date()) -> [Date] {
+        loadWakeTimeSamples()
+            .map { Date(timeIntervalSince1970: $0) }
+            .filter { $0 >= cutoff && $0 <= referenceDate }
+            .sorted()
+    }
+
     func clearLocalData() {
         defaults.removeObject(forKey: storageKey)
+        defaults.removeObject(forKey: wakeSampleKey)
     }
 
     private func loadRawEntries() -> [[String: Any]] {
         defaults.array(forKey: storageKey) as? [[String: Any]] ?? []
+    }
+
+    private func loadWakeTimeSamples() -> [Double] {
+        defaults.array(forKey: wakeSampleKey) as? [Double] ?? []
     }
 
     private func entryReferenceDate(_ entry: [String: Any]) -> Date? {

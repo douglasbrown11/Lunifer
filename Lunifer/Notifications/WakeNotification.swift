@@ -51,12 +51,7 @@ final class WakeNotification {
         // ── Derive sleep duration ─────────────────────────────
         // Mirrors the same logic used in LuniferMain.bedtimeString
         // and BatteryAlarmNotification.expectedSleepDuration().
-        let sleepHours: Double
-        if answers.sleep.auto {
-            sleepHours = SleepDurationModel.baselineForAge(answers.age)
-        } else {
-            sleepHours = Double(answers.sleep.hours) + Double(answers.sleep.minutes) / 60.0
-        }
+        let sleepHours = WearableRecommendationStore.fallbackSleepHours(from: answers)
 
         // ── Compute bedtime and notification fire time ────────
         let bedtime    = targetWake.addingTimeInterval(-sleepHours * 3600)
