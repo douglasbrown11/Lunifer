@@ -1,0 +1,480 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Lunifer Wake Times Card Proposal</title>
+  <style>
+    *, *::before, *::after { box-sizing: border-box; }
+    :root {
+      --bg0: #070311;
+      --bg1: #120822;
+      --panel: rgba(255,255,255,.045);
+      --panel-2: rgba(255,255,255,.07);
+      --line: rgba(255,255,255,.10);
+      --text: rgba(255,255,255,.94);
+      --muted: rgba(255,255,255,.48);
+      --dim: rgba(255,255,255,.32);
+      --purple: #a078ff;
+      --purple-2: #7a52df;
+      --green: #78e0b8;
+      --amber: #f4c96b;
+      --font-sans: "DM Sans", -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+      --font-display: "Poppins", -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+    }
+    body {
+      margin: 0;
+      min-height: 100vh;
+      background:
+        radial-gradient(circle at 50% 0%, rgba(122,82,223,.20), transparent 38rem),
+        linear-gradient(180deg, var(--bg1), var(--bg0) 54%);
+      color: var(--text);
+      font-family: var(--font-sans);
+    }
+    main {
+      width: min(1180px, calc(100% - 32px));
+      margin: 0 auto;
+      padding: 34px 0 44px;
+    }
+    header {
+      display: grid;
+      gap: 10px;
+      margin-bottom: 22px;
+    }
+    .eyebrow {
+      color: var(--purple);
+      font-size: 12px;
+      letter-spacing: 2.4px;
+      text-transform: uppercase;
+      font-weight: 700;
+    }
+    h1 {
+      margin: 0;
+      font-family: var(--font-display);
+      font-size: clamp(30px, 4vw, 52px);
+      font-weight: 500;
+      letter-spacing: 0;
+    }
+    .lede {
+      max-width: 780px;
+      margin: 0;
+      color: var(--muted);
+      font-size: 16px;
+      line-height: 1.55;
+    }
+    .grid {
+      display: grid;
+      grid-template-columns: minmax(0, .9fr) minmax(320px, 420px);
+      gap: 20px;
+      align-items: start;
+    }
+    .card {
+      border: 1px solid var(--line);
+      background: var(--panel);
+      border-radius: 20px;
+      box-shadow: 0 24px 70px rgba(0,0,0,.28);
+    }
+    .section {
+      padding: 20px;
+    }
+    .compare {
+      display: grid;
+      grid-template-columns: repeat(2, minmax(0, 1fr));
+      gap: 14px;
+      margin-bottom: 16px;
+    }
+    .mini {
+      min-height: 188px;
+      padding: 16px;
+    }
+    h2, h3, p { overflow-wrap: anywhere; }
+    h2 {
+      margin: 0 0 12px;
+      font-size: 20px;
+      font-weight: 650;
+      letter-spacing: 0;
+    }
+    h3 {
+      margin: 0 0 10px;
+      font-size: 14px;
+      font-weight: 700;
+      color: rgba(255,255,255,.82);
+    }
+    .pill {
+      display: inline-flex;
+      align-items: center;
+      border: 1px solid rgba(255,255,255,.13);
+      border-radius: 999px;
+      padding: 5px 9px;
+      color: var(--dim);
+      font-size: 11px;
+      letter-spacing: 1.4px;
+      text-transform: uppercase;
+      margin-bottom: 12px;
+    }
+    ul {
+      margin: 0;
+      padding-left: 18px;
+      color: var(--muted);
+      line-height: 1.55;
+      font-size: 14px;
+    }
+    li + li { margin-top: 6px; }
+    .target-list {
+      display: grid;
+      gap: 10px;
+      margin-top: 12px;
+    }
+    .target-row {
+      display: grid;
+      grid-template-columns: 28px minmax(0,1fr);
+      gap: 10px;
+      align-items: start;
+      color: rgba(255,255,255,.72);
+      font-size: 14px;
+      line-height: 1.45;
+    }
+    .num {
+      height: 28px;
+      width: 28px;
+      display: grid;
+      place-items: center;
+      border-radius: 50%;
+      background: rgba(160,120,255,.15);
+      color: var(--purple);
+      font-weight: 700;
+      font-size: 12px;
+    }
+    .phone {
+      position: sticky;
+      top: 22px;
+      padding: 14px;
+      border-radius: 38px;
+      background: linear-gradient(180deg, rgba(255,255,255,.13), rgba(255,255,255,.035));
+      border: 1px solid rgba(255,255,255,.16);
+      box-shadow: 0 28px 80px rgba(0,0,0,.42);
+    }
+    .screen {
+      min-height: 690px;
+      border-radius: 28px;
+      overflow: hidden;
+      background:
+        radial-gradient(circle at 50% 0%, rgba(160,120,255,.22), transparent 19rem),
+        linear-gradient(180deg, #150a25, #070311 62%);
+      padding: 22px 22px 26px;
+    }
+    .status {
+      display: flex;
+      justify-content: space-between;
+      color: rgba(255,255,255,.72);
+      font-size: 12px;
+      margin-bottom: 34px;
+    }
+    .app-title {
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+      margin-bottom: 20px;
+    }
+    .app-title strong {
+      font-family: var(--font-display);
+      font-size: 22px;
+      font-weight: 500;
+    }
+    .circle {
+      width: 34px;
+      height: 34px;
+      border-radius: 50%;
+      display: grid;
+      place-items: center;
+      color: rgba(255,255,255,.68);
+      background: rgba(255,255,255,.07);
+      border: 1px solid rgba(255,255,255,.10);
+    }
+    .insight-card {
+      border-radius: 20px;
+      border: 1px solid rgba(255,255,255,.08);
+      background: rgba(255,255,255,.045);
+      padding: 18px;
+    }
+    .insight-card + .insight-card { margin-top: 14px; }
+    .label {
+      color: rgba(255,255,255,.35);
+      font-size: 11px;
+      letter-spacing: 2.3px;
+      text-transform: uppercase;
+      margin-bottom: 12px;
+    }
+    .wake-summary {
+      display: flex;
+      align-items: flex-end;
+      justify-content: space-between;
+      gap: 14px;
+      margin-bottom: 20px;
+    }
+    .wake-time {
+      font-family: var(--font-display);
+      font-size: 44px;
+      line-height: .95;
+      font-weight: 500;
+    }
+    .wake-time span {
+      color: rgba(255,255,255,.52);
+      font-size: 18px;
+      margin-left: 4px;
+    }
+    .confidence {
+      text-align: right;
+      color: var(--muted);
+      font-size: 12px;
+      line-height: 1.35;
+    }
+    .trend {
+      position: relative;
+      height: 150px;
+      margin-bottom: 12px;
+      padding-left: 42px;
+    }
+    .time-axis {
+      position: absolute;
+      left: 0;
+      top: 0;
+      bottom: 24px;
+      width: 34px;
+      display: flex;
+      flex-direction: column;
+      justify-content: space-between;
+      align-items: flex-end;
+      color: rgba(255,255,255,.38);
+      font-size: 10px;
+      line-height: 1;
+    }
+    .grid-lines {
+      position: absolute;
+      left: 42px;
+      right: 0;
+      top: 0;
+      bottom: 24px;
+      display: flex;
+      flex-direction: column;
+      justify-content: space-between;
+      pointer-events: none;
+    }
+    .grid-lines span {
+      display: block;
+      border-top: 1px solid rgba(255,255,255,.075);
+    }
+    .wake-plot {
+      position: absolute;
+      inset: 0 0 24px 42px;
+      overflow: visible;
+    }
+    .wake-plot polyline {
+      fill: none;
+      stroke: rgba(255,255,255,.55);
+      stroke-width: 2;
+      stroke-linecap: round;
+      stroke-dasharray: 2 8;
+    }
+    .wake-plot circle {
+      fill: #fff;
+      stroke: none;
+    }
+    .day-row {
+      position: absolute;
+      left: 0;
+      right: 0;
+      bottom: 0;
+      padding-left: 42px;
+      display: grid;
+      grid-template-columns: repeat(7, minmax(0,1fr));
+      gap: 8px;
+    }
+    .day {
+      color: rgba(255,255,255,.38);
+      font-size: 11px;
+      text-align: center;
+      white-space: nowrap;
+    }
+    .day.selected { color: rgba(255,255,255,.9); }
+    .caption {
+      color: var(--muted);
+      font-size: 13px;
+      line-height: 1.5;
+      margin: 10px 0 0;
+    }
+    .decision {
+      margin-top: 16px;
+    }
+    form {
+      display: grid;
+      gap: 10px;
+      margin-top: 10px;
+    }
+    label.option {
+      display: grid;
+      grid-template-columns: auto minmax(0,1fr);
+      gap: 10px;
+      align-items: start;
+      padding: 12px;
+      border-radius: 14px;
+      background: rgba(255,255,255,.045);
+      border: 1px solid rgba(255,255,255,.09);
+      color: rgba(255,255,255,.74);
+      line-height: 1.35;
+      cursor: pointer;
+    }
+    input[type="radio"] {
+      margin-top: 2px;
+      accent-color: var(--purple);
+    }
+    textarea {
+      width: 100%;
+      min-height: 74px;
+      resize: vertical;
+      border-radius: 14px;
+      border: 1px solid rgba(255,255,255,.12);
+      background: rgba(0,0,0,.18);
+      color: var(--text);
+      padding: 12px;
+      font: inherit;
+    }
+    button {
+      justify-self: start;
+      appearance: none;
+      border: 0;
+      border-radius: 14px;
+      background: linear-gradient(135deg, var(--purple), var(--purple-2));
+      color: white;
+      padding: 11px 15px;
+      font: 700 13px var(--font-sans);
+      cursor: pointer;
+    }
+    .tiny {
+      color: var(--dim);
+      font-size: 12px;
+      margin: 7px 0 0;
+    }
+    @media (max-width: 900px) {
+      .grid, .compare { grid-template-columns: 1fr; }
+      .phone { position: static; }
+      .screen { min-height: 640px; }
+    }
+  </style>
+</head>
+<body>
+  <main>
+    <header>
+      <div class="eyebrow">Lunifer Sleep Insights</div>
+      <h1>Replace sleep-duration history with one wake-times card.</h1>
+      <p class="lede">This keeps the app honest about what it knows well: wake time.
+        Instead of emphasizing sleep onset and total sleep duration, the screen would show a focused history of wake times and use that pattern as the trusted signal.</p>
+    </header>
+
+    <div class="grid">
+      <section>
+        <div class="compare">
+          <article class="card mini">
+            <span class="pill">Current</span>
+            <h3>Sleep History + Night Sleep detail</h3>
+            <ul>
+              <li>Charts estimated sleep duration across ranges.</li>
+              <li>Selected-night detail shows bedtime and wake time.</li>
+              <li>Strong visual weight goes to a number Lunifer may not estimate reliably.</li>
+            </ul>
+          </article>
+          <article class="card mini">
+            <span class="pill">Proposed</span>
+            <h3>Wake Times</h3>
+            <ul>
+              <li>One card, no separate sleep-history and night-sleep cards.</li>
+              <li>Points represent actual wake clock time, not sleep duration.</li>
+              <li>Detail focuses on the 7-day average, latest wake, and selected morning.</li>
+            </ul>
+          </article>
+        </div>
+
+        <article class="card section">
+          <h2>What changes in product behavior</h2>
+          <div class="target-list">
+            <div class="target-row"><div class="num">1</div><div>The “SLEEP HISTORY” chart becomes “WAKE TIMES.”</div></div>
+            <div class="target-row"><div class="num">2</div><div>The selected detail card no longer says “Night Sleep” or shows bedtime, because that invites trust in a weak signal.</div></div>
+            <div class="target-row"><div class="num">3</div><div>The top recommended sleep card can stay for now, but this mock assumes the history area becomes one wake-focused card.</div></div>
+            <div class="target-row"><div class="num">4</div><div>Empty state becomes “Wake times will appear after a few mornings,” not sleep-data language.</div></div>
+          </div>
+        </article>
+
+        <article class="card section decision">
+          <h2>Review decision</h2>
+          <p class="caption">Pick the direction you want me to take if we turn this mock into the real SwiftUI change.</p>
+          <form data-lavish-question="wake-times-card-direction" onsubmit="event.preventDefault(); const data = new FormData(event.currentTarget); const choice = data.get('direction'); const notes = data.get('notes') || ''; if (!choice) return; window.lavish.queuePrompt('For the Lunifer wake-times card change, use direction: ' + choice + (notes ? '. Notes: ' + notes : ''), { tag: 'choice', text: 'Wake card direction: ' + choice, element: event.currentTarget, data: { direction: choice, notes } });">
+            <label class="option"><input type="radio" name="direction" value="Implement this focused Wake Times card" checked><span>Implement this focused “Wake Times” card.</span></label>
+            <label class="option"><input type="radio" name="direction" value="Keep the card but make it more minimal"><span>Keep the card, but make it more minimal.</span></label>
+            <label class="option"><input type="radio" name="direction" value="Show wake time and sleep duration together"><span>Show wake time and sleep duration together.</span></label>
+            <textarea name="notes" placeholder="Optional tweaks: labels, timeframe, empty state, or what the summary should emphasize."></textarea>
+            <button type="submit">Queue this direction</button>
+            <p class="tiny">After queuing, send the feedback from the Lavish panel when ready.</p>
+          </form>
+        </article>
+      </section>
+
+      <aside class="phone" aria-label="Phone mockup">
+        <div class="screen">
+          <div class="status"><span>9:41</span><span>●●●</span></div>
+          <div class="app-title">
+            <strong>Sleep Insights</strong>
+            <div class="circle">⚙</div>
+          </div>
+
+          <div class="insight-card">
+            <div class="label">Recommended Sleep</div>
+            <div class="wake-summary">
+              <div class="wake-time">8<span>hours</span></div>
+              <div class="confidence">Adjust in<br>Settings</div>
+            </div>
+          </div>
+
+          <div class="insight-card">
+            <div class="label">Wake Times</div>
+            <div class="wake-summary">
+              <div class="wake-time">7:18<span>AM</span></div>
+              <div class="confidence">average<br>last 7 days</div>
+            </div>
+
+            <div class="trend" aria-hidden="true">
+              <div class="time-axis">
+                <span>9 AM</span>
+                <span>8 AM</span>
+                <span>7 AM</span>
+                <span>6 AM</span>
+              </div>
+              <div class="grid-lines"><span></span><span></span><span></span><span></span></div>
+              <svg class="wake-plot" viewBox="0 0 300 126" preserveAspectRatio="none">
+                <polyline points="10,70 56,54 103,60 150,44 197,66 244,86 290,74"></polyline>
+                <circle cx="10" cy="70" r="4.5"></circle>
+                <circle cx="56" cy="54" r="4.5"></circle>
+                <circle cx="103" cy="60" r="4.5"></circle>
+                <circle cx="150" cy="44" r="4.5"></circle>
+                <circle cx="197" cy="66" r="4.5"></circle>
+                <circle cx="244" cy="86" r="4.5"></circle>
+                <circle cx="290" cy="74" r="4.5"></circle>
+              </svg>
+              <div class="day-row">
+                <div class="day">Mon</div>
+                <div class="day">Tue</div>
+                <div class="day selected">Wed</div>
+                <div class="day">Thu</div>
+                <div class="day">Fri</div>
+                <div class="day">Sat</div>
+                <div class="day">Sun</div>
+              </div>
+            </div>
+
+            <p class="caption">Tap a point to inspect that morning’s wake time.</p>
+          </div>
+        </div>
+      </aside>
+    </div>
+  </main>
+</body>
+</html>

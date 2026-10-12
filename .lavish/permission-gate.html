@@ -1,0 +1,206 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>Lunifer Permission Gate</title>
+<style>
+  :root {
+    --bg: #10081f;
+    --panel: rgba(255,255,255,0.045);
+    --line: rgba(255,255,255,0.10);
+    --text: rgba(255,255,255,0.94);
+    --muted: rgba(255,255,255,0.57);
+    --faint: rgba(255,255,255,0.34);
+    --purple: #a078ff;
+    --purple2: #6446a0;
+  }
+  * { box-sizing: border-box; }
+  body {
+    margin: 0;
+    min-height: 100vh;
+    background: #0b0715;
+    color: var(--text);
+    font-family: "DM Sans", Inter, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+    display: grid;
+    place-items: center;
+    padding: 28px;
+  }
+  .stage {
+    width: min(1120px, 100%);
+    display: grid;
+    grid-template-columns: minmax(0, 430px) minmax(0, 1fr);
+    gap: 28px;
+    align-items: center;
+  }
+  .phone {
+    width: min(390px, 100%);
+    aspect-ratio: 390 / 844;
+    border-radius: 48px;
+    padding: 14px;
+    background: linear-gradient(145deg, rgba(255,255,255,0.14), rgba(255,255,255,0.03));
+    box-shadow: 0 32px 80px rgba(0,0,0,0.45), inset 0 0 0 1px rgba(255,255,255,0.12);
+  }
+  .screen {
+    position: relative;
+    height: 100%;
+    overflow: hidden;
+    border-radius: 38px;
+    background:
+      radial-gradient(circle at 50% 8%, rgba(110,70,180,0.24), transparent 34%),
+      radial-gradient(circle at 96% 95%, rgba(80,50,140,0.16), transparent 30%),
+      var(--bg);
+  }
+  .stars span {
+    position: absolute;
+    width: 2px;
+    height: 2px;
+    border-radius: 50%;
+    background: rgba(255,255,255,0.52);
+  }
+  .stars span:nth-child(1) { left: 17%; top: 15%; opacity: .35; }
+  .stars span:nth-child(2) { left: 76%; top: 20%; opacity: .5; }
+  .stars span:nth-child(3) { left: 84%; top: 40%; opacity: .28; }
+  .stars span:nth-child(4) { left: 23%; top: 58%; opacity: .22; }
+  .stars span:nth-child(5) { left: 66%; top: 72%; opacity: .33; }
+  .gate {
+    position: absolute;
+    inset: 0;
+    display: grid;
+    place-items: center;
+    padding: 0 32px;
+    text-align: center;
+  }
+  .icon {
+    width: 104px;
+    height: 104px;
+    border-radius: 50%;
+    margin: 0 auto 30px;
+    display: grid;
+    place-items: center;
+    background: rgba(255,255,255,0.05);
+    border: 1px solid rgba(255,255,255,0.10);
+    color: #c4aaff;
+  }
+  .icon svg { width: 46px; height: 46px; stroke-width: 1.35; }
+  h1 {
+    margin: 0 0 14px;
+    font-family: Poppins, Inter, sans-serif;
+    font-size: 27px;
+    line-height: 1.16;
+    font-weight: 500;
+    letter-spacing: 0;
+  }
+  .copy {
+    margin: 0 auto 30px;
+    color: var(--muted);
+    font-size: 15px;
+    line-height: 1.45;
+    max-width: 312px;
+  }
+  .button {
+    width: max-content;
+    max-width: 100%;
+    margin: 0 auto;
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    gap: 10px;
+    padding: 16px 28px;
+    border-radius: 999px;
+    color: rgba(255,255,255,0.92);
+    background: rgba(100,70,160,0.46);
+    border: 1px solid rgba(160,120,220,0.52);
+    font-size: 15px;
+    font-weight: 500;
+  }
+  .callout {
+    min-width: 0;
+    padding: 28px;
+    border-radius: 22px;
+    background: rgba(255,255,255,0.04);
+    border: 1px solid rgba(255,255,255,0.10);
+  }
+  .label {
+    width: fit-content;
+    padding: 7px 11px;
+    border-radius: 999px;
+    border: 1px solid rgba(160,120,255,0.32);
+    color: #c4aaff;
+    font-size: 12px;
+    margin-bottom: 18px;
+  }
+  h2 {
+    margin: 0 0 14px;
+    font-family: "Cormorant Garamond", Georgia, serif;
+    font-size: 42px;
+    line-height: 1.05;
+    font-weight: 300;
+    letter-spacing: 0;
+  }
+  .callout p {
+    margin: 0 0 18px;
+    color: rgba(255,255,255,0.66);
+    font-size: 15px;
+    line-height: 1.55;
+    max-width: 560px;
+  }
+  .rules {
+    display: grid;
+    gap: 10px;
+    margin-top: 22px;
+  }
+  .rule {
+    display: grid;
+    grid-template-columns: 18px minmax(0, 1fr);
+    gap: 10px;
+    align-items: start;
+    color: rgba(255,255,255,0.72);
+    font-size: 14px;
+    line-height: 1.42;
+  }
+  .rule b { color: white; font-weight: 600; }
+  .x { color: #ff9faa; font-weight: 700; }
+  .ok { color: #c4aaff; font-weight: 700; }
+  @media (max-width: 840px) {
+    body { padding: 18px; }
+    .stage { grid-template-columns: 1fr; }
+    .phone { margin: 0 auto; }
+    .callout { order: -1; }
+  }
+</style>
+</head>
+<body>
+  <main class="stage">
+    <section class="phone" aria-label="Permission gate mockup">
+      <div class="screen">
+        <div class="stars" aria-hidden="true"><span></span><span></span><span></span><span></span><span></span></div>
+        <div class="gate">
+          <div>
+            <div class="icon" aria-hidden="true">
+              <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-linecap="round" stroke-linejoin="round">
+                <path d="M12 22s8-4 8-10V6l-8-4-8 4v6c0 6 8 10 8 10Z"/>
+                <path d="M9.5 12.5 11 14l3.8-4"/>
+              </svg>
+            </div>
+            <h1>Permission needed</h1>
+            <p class="copy">Lunifer cannot run correctly without Alarm permission approval. Approve this in Settings to continue.</p>
+            <div class="button">Open Settings <span aria-hidden="true">↗</span></div>
+          </div>
+        </div>
+      </div>
+    </section>
+
+    <section class="callout">
+      <div class="label">Target state</div>
+      <h2>Hard gate, no dashboard controls</h2>
+      <p>When required permission is denied, user sees only recovery page. No page dots. No Add Alarm. No Settings. No Turn Lunifer off. No Sleep Insights hint.</p>
+      <div class="rules">
+        <div class="rule"><span class="x">×</span><span><b>Hide</b> dashboard, added alarm button, settings button, bottom page dots, and enablement toggle.</span></div>
+        <div class="rule"><span class="ok">✓</span><span><b>Show</b> missing permission name and one Settings action.</span></div>
+        <div class="rule"><span class="ok">✓</span><span><b>Copy pattern</b>: “Lunifer cannot run correctly without {permission} approval. Approve this in Settings to continue.”</span></div>
+      </div>
+    </section>
+  </main>
+</body>
+</html>

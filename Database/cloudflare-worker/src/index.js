@@ -87,6 +87,7 @@ export default {
         const installationID = requiredString(body.installationID, "installationID");
         const timeZone = requiredString(body.timeZone, "timeZone");
         const environment = requiredString(body.environment, "environment");
+        const bedtimeMinuteOfDay = optionalIntegerString(body.bedtimeMinuteOfDay);
         if (!/^[0-9a-f]{64}$/i.test(token)) {
           throw httpError(400, "Invalid APNs device token.");
         }
@@ -104,11 +105,63 @@ export default {
           token,
           timeZone,
           environment,
+          bedtimeMinuteOfDay,
           updatedAt: new Date().toISOString(),
           lastSentLocalDate: existing?.lastSentLocalDate || null,
-          lastSentAt: existing?.lastSentAt || null
+          lastSentAt: existing?.lastSentAt || null,
+          adaptivePushDayKey: existing?.adaptivePushDayKey || null,
+          adaptivePushOffsetsSent: existing?.adaptivePushOffsetsSent || [],
+          adaptivePushCompletedDayKey: existing?.adaptivePushCompletedDayKey || null,
+          nightlyRefreshLocalDate: existing?.nightlyRefreshLocalDate || null,
+          nightlyRefreshHoursSent: existing?.nightlyRefreshHoursSent || [],
+          nightlyRefreshCompletedLocalDate: existing?.nightlyRefreshCompletedLocalDate || null,
+          nightlyRefreshResults: existing?.nightlyRefreshResults || {}
         }));
         return json({registered: true});
+      }
+
+      if (url.pathname === "/push/adaptive-complete") {
+        const body = await request.json();
+        const installationID = requiredString(body.installationID, "installationID");
+        const dayKey = requiredString(body.dayKey, "dayKey");
+        const key = pushTokenKey(uid, installationID);
+        const registration = await env.WHOOP_TOKENS.get(key, "json");
+        if (registration) {
+          registration.adaptivePushCompletedDayKey = dayKey;
+          await env.WHOOP_TOKENS.put(key, JSON.stringify(registration));
+        }
+        return json({completed: true});
+      }
+
+      if (url.pathname === "/push/refresh-result") {
+        const body = await request.json();
+        const installationID = requiredString(body.installationID, "installationID");
+        const localDate = requiredString(body.localDate, "localDate");
+        const status = requiredString(body.status, "status");
+        const reason = optionalString(body.reason);
+        const scheduledAlarmTime = optionalString(body.scheduledAlarmTime);
+        if (!/^\d{4}-\d{2}-\d{2}$/.test(localDate)) {
+          throw httpError(400, "Invalid localDate.");
+        }
+        if (!["success", "failed", "skipped"].includes(status)) {
+          throw httpError(400, "Invalid refresh status.");
+        }
+        const key = pushTokenKey(uid, installationID);
+        const registration = await env.WHOOP_TOKENS.get(key, "json");
+        if (registration) {
+          registration.nightlyRefreshResults = registration.nightlyRefreshResults || {};
+          registration.nightlyRefreshResults[localDate] = {
+            status,
+            reason: reason || null,
+            scheduledAlarmTime: scheduledAlarmTime || null,
+            reportedAt: new Date().toISOString()
+          };
+          if (status === "success" || status === "skipped") {
+            registration.nightlyRefreshCompletedLocalDate = localDate;
+          }
+          await env.WHOOP_TOKENS.put(key, JSON.stringify(registration));
+        }
+        return json({recorded: Boolean(registration)});
       }
 
       if (url.pathname === "/push/unregister") {
@@ -145,12 +198,12 @@ async function sendNightlyAlarmRefreshes(env) {
     for (const key of page.keys) {
       const registration = await env.WHOOP_TOKENS.get(key.name, "json");
       if (!registration) continue;
-      const local = localDateAndHour(new Date(), registration.timeZone);
-      if (local.hour !== "19" || registration.lastSentLocalDate === local.date) continue;
-      const response = await sendAPNsBackgroundPush(env, registration);
+      const local = localDateTime(new Date(), registration.timeZone);
+      const sendPlan = nextPushPlan(registration, local);
+      if (!sendPlan) continue;
+      const response = await sendAPNsBackgroundPush(env, registration, sendPlan.payload);
       if (response.ok) {
-        registration.lastSentLocalDate = local.date;
-        registration.lastSentAt = new Date().toISOString();
+        applySentPush(registration, local, sendPlan);
         await env.WHOOP_TOKENS.put(key.name, JSON.stringify(registration));
       } else if (response.status === 410 ||
                  (response.status === 400 && response.reason === "BadDeviceToken")) {
@@ -163,23 +216,121 @@ async function sendNightlyAlarmRefreshes(env) {
   } while (cursor);
 }
 
-function localDateAndHour(date, timeZone) {
-  const parts = new Intl.DateTimeFormat("en-CA", {
+function localDateTime(date, timeZone) {
+  const formatter = new Intl.DateTimeFormat("en-CA", {
     timeZone,
     year: "numeric",
     month: "2-digit",
     day: "2-digit",
     hour: "2-digit",
+    minute: "2-digit",
     hourCycle: "h23"
-  }).formatToParts(date);
+  });
+  const parts = formatter.formatToParts(date);
+  const previousParts = formatter.formatToParts(new Date(date.getTime() - 24 * 60 * 60 * 1000));
   const value = type => parts.find(part => part.type === type)?.value;
+  const previousValue = type => previousParts.find(part => part.type === type)?.value;
+  const hour = Number(value("hour"));
+  const minute = Number(value("minute"));
   return {
     date: `${value("year")}-${value("month")}-${value("day")}`,
-    hour: value("hour")
+    previousDate: `${previousValue("year")}-${previousValue("month")}-${previousValue("day")}`,
+    hour,
+    minute,
+    minuteOfDay: hour * 60 + minute
   };
 }
 
-async function sendAPNsBackgroundPush(env, registration) {
+function nextPushPlan(registration, local) {
+  const nightlyPlan = nextNightlyRefreshPlan(registration, local);
+  if (nightlyPlan) {
+    return nightlyPlan;
+  }
+
+  const bedtimeMinuteOfDay = Number(registration.bedtimeMinuteOfDay);
+  if (!Number.isInteger(bedtimeMinuteOfDay)) return null;
+  if (registration.adaptivePushCompletedDayKey === local.date) return null;
+
+  const offsets = [0, 30, 60, 90, 120];
+  const sentDay = registration.adaptivePushDayKey === local.date;
+  const sentOffsets = sentDay && Array.isArray(registration.adaptivePushOffsetsSent)
+    ? registration.adaptivePushOffsetsSent
+    : [];
+  const offset = offsets.find(candidate => {
+    if (sentOffsets.includes(candidate)) return false;
+    const target = (bedtimeMinuteOfDay + candidate) % 1440;
+    const delta = (local.minuteOfDay - target + 1440) % 1440;
+    return delta >= 0 && delta < 30;
+  });
+  if (offset === undefined) return null;
+  return {
+    kind: "adaptive",
+    offset,
+    payload: {
+      type: "lunifer_adaptive_sleep_check",
+      dayKey: local.date,
+      offsetMinutes: offset
+    }
+  };
+}
+
+function nextNightlyRefreshPlan(registration, local) {
+  const refreshDate = local.hour < 3 ? local.previousDate : local.date;
+  const retryHours = [20, 21, 22, 23, 0, 1, 2];
+  const isInitialHour = local.hour === 19;
+  const isRetryHour = retryHours.includes(local.hour);
+  if (!isInitialHour && !isRetryHour) return null;
+  if (registration.nightlyRefreshCompletedLocalDate === refreshDate) return null;
+
+  const sameRefreshDate = registration.nightlyRefreshLocalDate === refreshDate;
+  const sentHours = sameRefreshDate && Array.isArray(registration.nightlyRefreshHoursSent)
+    ? registration.nightlyRefreshHoursSent
+    : [];
+  if (sentHours.includes(local.hour)) return null;
+
+  return {
+    kind: "nightly",
+    hour: local.hour,
+    refreshDate,
+    payload: {
+      type: "lunifer_alarm_refresh",
+      refreshDate,
+      retryAttempt: isInitialHour ? 0 : retryHours.indexOf(local.hour) + 1
+    }
+  };
+}
+
+function applySentPush(registration, local, sendPlan) {
+  if (sendPlan.kind === "nightly") {
+    registration.lastSentLocalDate = sendPlan.refreshDate;
+    registration.lastSentAt = new Date().toISOString();
+    if (registration.nightlyRefreshLocalDate !== sendPlan.refreshDate) {
+      registration.nightlyRefreshHoursSent = [];
+    }
+    registration.nightlyRefreshLocalDate = sendPlan.refreshDate;
+    registration.nightlyRefreshHoursSent = Array.isArray(registration.nightlyRefreshHoursSent)
+      ? registration.nightlyRefreshHoursSent
+      : [];
+    if (!registration.nightlyRefreshHoursSent.includes(sendPlan.hour)) {
+      registration.nightlyRefreshHoursSent.push(sendPlan.hour);
+    }
+    if (sendPlan.hour === 19) {
+      registration.nightlyRefreshCompletedLocalDate = null;
+    }
+    registration.adaptivePushDayKey = local.date;
+    registration.adaptivePushOffsetsSent = [];
+    registration.adaptivePushCompletedDayKey = null;
+    return;
+  }
+  registration.adaptivePushDayKey = local.date;
+  registration.adaptivePushOffsetsSent = Array.isArray(registration.adaptivePushOffsetsSent)
+    ? registration.adaptivePushOffsetsSent
+    : [];
+  registration.adaptivePushOffsetsSent.push(sendPlan.offset);
+  registration.lastSentAt = new Date().toISOString();
+}
+
+async function sendAPNsBackgroundPush(env, registration, payload) {
   const authorization = await createAPNsAuthorization(env);
   const host = registration.environment === "sandbox"
     ? "https://api.sandbox.push.apple.com"
@@ -195,7 +346,7 @@ async function sendAPNsBackgroundPush(env, registration) {
     },
     body: JSON.stringify({
       aps: {"content-available": 1},
-      type: "lunifer_alarm_refresh"
+      ...payload
     })
   });
   let reason = "";
@@ -674,6 +825,14 @@ function optionalString(value) {
   return typeof value === "string" && value.trim().length > 0 ? value.trim() : null;
 }
 
+function optionalIntegerString(value) {
+  const parsed = optionalString(value);
+  if (!parsed) return null;
+  const number = Number(parsed);
+  if (!Number.isInteger(number)) throw httpError(400, "Expected integer value.");
+  return number;
+}
+
 function requiredString(value, field) {
   const parsed = optionalString(value);
   if (!parsed) {
@@ -759,3 +918,10 @@ function json(data, status = 200) {
     }
   });
 }
+
+export {
+  applySentPush,
+  localDateTime,
+  nextNightlyRefreshPlan,
+  nextPushPlan
+};

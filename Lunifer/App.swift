@@ -37,14 +37,28 @@ final class AppDelegate: NSObject, UIApplicationDelegate {
         print("Remote-notification registration failed: \(error.localizedDescription)")
     }
 
+    func applicationSignificantTimeChange(_ application: UIApplication) {
+        Task { @MainActor in
+            await SilentPushManager.shared.handleTimeZoneChange()
+        }
+    }
+
     func application(_ application: UIApplication, didReceiveRemoteNotification userInfo: [AnyHashable: Any], fetchCompletionHandler completionHandler: @escaping (UIBackgroundFetchResult) -> Void) {
-        guard userInfo["type"] as? String == SilentPushManager.refreshMessageType else {
+        let type = userInfo["type"] as? String
+        guard type == SilentPushManager.refreshMessageType || type == SilentPushManager.adaptiveSleepMessageType else {
             completionHandler(.noData)
             return
         }
         Task { @MainActor in
-            let refreshed = await SilentPushManager.shared.refreshTomorrowAlarm()
-            completionHandler(refreshed ? .newData : .noData)
+            if type == SilentPushManager.adaptiveSleepMessageType {
+                let dayKey = userInfo["dayKey"] as? String
+                let handled = await SilentPushManager.shared.handleAdaptiveSleepCheck(for: dayKey)
+                completionHandler(handled ? .newData : .noData)
+            } else {
+                let refreshDate = userInfo["refreshDate"] as? String
+                let refreshed = await SilentPushManager.shared.refreshTomorrowAlarm(for: refreshDate)
+                completionHandler(refreshed ? .newData : .noData)
+            }
         }
     }
 
@@ -134,6 +148,11 @@ struct LuniferApp: App {
                     // session following a cold launch. Restore it silently before
                     // calendar-dependent screens and alarm refreshes use it.
                     await GoogleCalendarService.shared.restorePreviousSession()
+                }
+                .onReceive(NotificationCenter.default.publisher(for: .NSSystemTimeZoneDidChange)) { _ in
+                    Task { @MainActor in
+                        await SilentPushManager.shared.handleTimeZoneChange()
+                    }
                 }
                 // ".onOpenURL" handles the URL callback from Google Sign In.
                 // When the user finishes signing in via the browser, iOS sends

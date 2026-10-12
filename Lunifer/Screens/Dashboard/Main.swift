@@ -81,8 +81,10 @@ struct LuniferMain: View {
     @State private var currentPage: Int = 1
     @State private var alarmExpanded = false
     @State private var overrideTime = Date()
-    /// Staged time while the dropdown is open — only committed on confirm tap.
+    /// Edits are applied when the dropdown closes or Home is left.
     @State private var pendingOverrideTime: Date = Date()
+    @State private var editingInitialTime: Date?
+    @State private var editingInitialSnooze = 5
     @AppStorage("overrideActive") private var overrideActive: Bool = false
     @AppStorage("overrideTimestamp") private var overrideTimestamp: Double = 0
     @AppStorage("luniferEnabled") private var luniferEnabled: Bool = true
@@ -105,6 +107,7 @@ struct LuniferMain: View {
     @State private var showMotionDeniedAlert = false
     @State private var showAlarmDeniedAlert = false
     @State private var showDebug = false
+    @State private var dstNotice: DSTAlarmNotice? = nil
 
     // ── Edit-added-alarm state ────────────────────────────────
     // Tapping an added alarm card opens EditAddedAlarmSheet. The sheet
@@ -143,8 +146,26 @@ struct LuniferMain: View {
         return "Alarm update failed. Try again."
     }
 
+    private var missingRequiredPermissionNames: [String] {
+        guard !isRunningPreview else { return [] }
+        var names: [String] = []
+        if showAlarmDeniedAlert && luniferEnabled {
+            names.append("Alarm permission")
+        }
+        if showMotionDeniedAlert {
+            names.append("Motion & Fitness")
+        }
+        return names
+    }
+
     static func shouldScheduleWakeReminder(luniferEnabled: Bool, alarmAuthorized: Bool, confirmedAlarmDate: Date?) -> Bool {
         luniferEnabled && alarmAuthorized && confirmedAlarmDate != nil
+    }
+
+    private func openAppSettings() {
+        if let url = URL(string: UIApplication.openSettingsURLString) {
+            UIApplication.shared.open(url)
+        }
     }
 
     private func loadAddedAlarms() {
@@ -186,9 +207,13 @@ struct LuniferMain: View {
             return
         }
         let existing = addedAlarms[index]
+        let scheduledDate = LuniferAlarm.resolvedAddedAlarmDate(
+            timeOf: editPickerTime,
+            repeatDays: editRepeatDays
+        )
         let updated = AddedAlarm(
             id: id,
-            timestamp: editPickerTime.timeIntervalSince1970,
+            timestamp: scheduledDate.timeIntervalSince1970,
             label: existing.label,
             sound: editSound,
             snoozeMinutes: editSnoozeMinutes,
@@ -196,7 +221,8 @@ struct LuniferMain: View {
         )
         addedAlarms[index] = updated
         saveAddedAlarms()
-        Task { await LuniferAlarm.shared.scheduleAddedAlarm(for: updated.date, alarmID: id, snoozeMinutes: updated.snoozeMinutes) }
+        Task { await LuniferAlarm.shared.scheduleAddedAlarm(for: scheduledDate, alarmID: id, snoozeMinutes: updated.snoozeMinutes) }
+        dstNotice = DSTAlarmNotice.notice(for: scheduledDate)
         showEditAlarmSheet = false
         editingAlarmID = nil
     }
@@ -362,9 +388,8 @@ struct LuniferMain: View {
     }
 
     /// Recommended bedtime shown beneath the alarm time.
-    /// If the user said "let Lunifer learn this" in the survey, uses the
-    /// age-based recommendation from SleepDurationModel. Otherwise uses
-    /// exactly what the user entered.
+    /// Uses an active wearable recommendation, manual preference, or Lunifer's
+    /// default sleep target.
     private var bedtimeString: String {
         let alarmDate = overrideActive ? overrideTime : calculatedAlarmDate
 
@@ -389,65 +414,66 @@ struct LuniferMain: View {
 
     var body: some View {
         ZStack {
-            LuniferBackground()
+            if !missingRequiredPermissionNames.isEmpty {
+                PermissionGatePage(
+                    permissionNames: missingRequiredPermissionNames,
+                    openSettings: openAppSettings
+                )
+            } else {
+                LuniferBackground()
 
-            // ── Horizontal paging TabView ─────────────────
-            // Sleep insights is on the left (page 0) so swiping
-            // left-to-right from the alarm page reveals it.
-            TabView(selection: $currentPage) {
+                // ── Horizontal paging TabView ─────────────────
+                // Sleep insights is on the left (page 0) so swiping
+                // left-to-right from the alarm page reveals it.
+                TabView(selection: $currentPage) {
 
-                // PAGE 0: Sleep insights (left)
-                SleepInsights(answers: $answers)
-                    .tag(0)
+                    // PAGE 0: Sleep insights (left)
+                    SleepInsights(answers: $answers)
+                        .tag(0)
 
-                // PAGE 1: Alarm dashboard or rest screen
-                Group {
-                    if showAlarmDeniedAlert && luniferEnabled {
-                        AlarmPermissionPage {
-                            if let url = URL(string: UIApplication.openSettingsURLString) {
-                                UIApplication.shared.open(url)
-                            }
+                    // PAGE 1: Alarm dashboard or rest screen
+                    Group {
+                        if isRestPeriodActive {
+                            restPage
+                        } else {
+                            alarmPage
                         }
-                    } else if isRestPeriodActive {
-                        restPage
-                    } else {
-                        alarmPage
                     }
+                    .tag(1)
+                    .animation(.easeInOut(duration: 0.6), value: isRestPeriodActive)
                 }
-                .tag(1)
-                .animation(.easeInOut(duration: 0.6), value: isRestPeriodActive)
-            }
-            .tabViewStyle(.page(indexDisplayMode: .never))
-            .animation(.easeInOut(duration: 0.3), value: currentPage)
-            .ignoresSafeArea()
-
-            // ── Page indicator dots ──────────────────────
-            VStack {
-                Spacer()
-                HStack(spacing: 8) {
-                    ForEach(0..<2, id: \.self) { index in
-                        Circle()
-                            .fill(currentPage == index
-                                ? Color(red: 0.627, green: 0.471, blue: 1.0).opacity(0.9)
-                                : Color.white.opacity(0.25))
-                            .frame(width: 7, height: 7)
-                            .animation(.easeInOut(duration: 0.3), value: currentPage)
-                    }
-                }
-                .padding(.bottom, 28)
-            }
-            // Hide the page dots while the alarm dropdown is open so they don't
-            // overlap the Confirm button, which extends into the bottom region.
-            .opacity(alarmExpanded ? 0 : 1)
-            .allowsHitTesting(!alarmExpanded)
-            .animation(.easeInOut(duration: 0.3), value: alarmExpanded)
-
-            // ── Dim overlay when Lunifer is off ──────────────
-            Color.black
-                .opacity(luniferEnabled ? 0 : 0.45)
+                .tabViewStyle(.page(indexDisplayMode: .never))
+                .animation(.easeInOut(duration: 0.3), value: currentPage)
                 .ignoresSafeArea()
-                .allowsHitTesting(false)
-                .animation(.easeInOut(duration: 0.5), value: luniferEnabled)
+
+                // ── Page indicator dots ──────────────────────
+                VStack {
+                    Spacer()
+                    HStack(spacing: 8) {
+                        ForEach(0..<2, id: \.self) { index in
+                            Circle()
+                                .fill(currentPage == index
+                                    ? Color(red: 0.627, green: 0.471, blue: 1.0).opacity(0.9)
+                                    : Color.white.opacity(0.25))
+                                .frame(width: 7, height: 7)
+                                .animation(.easeInOut(duration: 0.3), value: currentPage)
+                        }
+                    }
+                    .padding(.bottom, 28)
+                }
+                // Hide the page dots while the alarm dropdown is open so they don't
+                // overlap the dropdown controls.
+                .opacity(alarmExpanded ? 0 : 1)
+                .allowsHitTesting(!alarmExpanded)
+                .animation(.easeInOut(duration: 0.3), value: alarmExpanded)
+
+                // ── Dim overlay when Lunifer is off ──────────────
+                Color.black
+                    .opacity(luniferEnabled ? 0 : 0.45)
+                    .ignoresSafeArea()
+                    .allowsHitTesting(false)
+                    .animation(.easeInOut(duration: 0.5), value: luniferEnabled)
+            }
         }
         .frame(maxWidth: .infinity, maxHeight: .infinity)
         // Coach-mark overlay for the dashboard + Sleep Insights walkthrough steps.
@@ -466,8 +492,24 @@ struct LuniferMain: View {
         .onChange(of: answers.wakeDays) { _, _ in
             Task { await refreshAlarmAfterWakeDayChange() }
         }
+        .onChange(of: alarmExpanded) { _, expanded in
+            if !expanded { saveAlarmEdits() }
+        }
+        .onChange(of: currentPage) { _, page in
+            if page != 1 { closeAlarmEditor() }
+        }
+        .onChange(of: showSettings) { _, showing in
+            if showing { closeAlarmEditor() }
+        }
+        .onDisappear { closeAlarmEditor() }
+        .onReceive(NotificationCenter.default.publisher(for: UIApplication.willResignActiveNotification)) { _ in
+            closeAlarmEditor()
+        }
         .sheet(isPresented: $showSettings) {
             LuniferSettings(answers: $answers)
+        }
+        .onChange(of: selectedAlarmSound) { _, _ in
+            Task { await alarmManager.refreshScheduledAlarmSound() }
         }
         .sheet(isPresented: $showSound) {
             SoundSettingsView()
@@ -666,6 +708,7 @@ struct LuniferMain: View {
             // finalize last night immediately so Sleep Insights updates on foreground.
             // Independent of the alarm enable/override state, so it runs before the guard.
             Task { await SleepTracker.shared.confirmWakeFromMorningPickup() }
+            Task { await alarmManager.reconcileAddedAlarms() }
             guard luniferEnabled else { return }
             Task { @MainActor in
                 guard luniferEnabled else { return }
@@ -691,14 +734,33 @@ struct LuniferMain: View {
         .onReceive(NotificationCenter.default.publisher(for: .luniferAddedAlarmModified)) { _ in
             loadAddedAlarms()
         }
-        .alert("Motion & Fitness Access Required", isPresented: $showMotionDeniedAlert) {
-            Button("Open Settings") {
-                if let url = URL(string: UIApplication.openSettingsURLString) {
-                    UIApplication.shared.open(url)
-                }
-            }
-        } message: {
-            Text("Lunifer needs Motion & Fitness access to accurately track your sleep. Please tap Open Settings and allow it under Motion & Fitness.")
+    }
+
+    private func closeAlarmEditor() {
+        saveAlarmEdits()
+        alarmExpanded = false
+    }
+
+    private func saveAlarmEdits() {
+        guard let initialTime = editingInitialTime else { return }
+        // Consume this editing session before starting asynchronous scheduling.
+        editingInitialTime = nil
+        let timeChanged = !Calendar.current.isDate(initialTime, equalTo: pendingOverrideTime, toGranularity: .minute)
+        guard timeChanged || editingInitialSnooze != mainAlarmSnoozeMinutes else { return }
+        let usesOverride = timeChanged
+            ? !Calendar.current.isDate(pendingOverrideTime, equalTo: calculatedAlarmDate, toGranularity: .minute)
+            : overrideActive
+        let requestedTime = timeChanged ? (usesOverride ? pendingOverrideTime : calculatedAlarmDate) : initialTime
+        Task { @MainActor in
+            guard luniferEnabled else { return }
+            guard await alarmManager.scheduleAlarm(for: requestedTime) else { return }
+            guard luniferEnabled else { return }
+            if usesOverride { AdaptiveAlarmStore.shared.clearPendingDecision() }
+            overrideActive = usesOverride
+            overrideTimestamp = usesOverride ? requestedTime.timeIntervalSince1970 : 0
+            overrideTime = requestedTime
+            await WakeNotification.shared.schedule(wakeDate: requestedTime, answers: answers)
+            dstNotice = DSTAlarmNotice.notice(for: requestedTime)
         }
     }
 
@@ -897,7 +959,7 @@ struct LuniferMain: View {
                 VStack(spacing: 0) {
                     // When collapsed: centres the alarm header vertically.
                     // When expanded: slides header near the top so the full dropdown
-                    // (picker + confirm button) is immediately visible below it.
+                    // (picker and alarm options) is immediately visible below it.
                     Spacer()
                         .frame(height: alarmExpanded
                                ? max(0, geo.size.height * 0.08)
@@ -972,11 +1034,15 @@ struct LuniferMain: View {
                                         if !alarmExpanded {
                                             // Seed the staging picker from the current committed time
                                             // so the user starts from where the alarm actually is.
-                                            pendingOverrideTime = overrideActive ? overrideTime : calculatedAlarmDate
+                                            pendingOverrideTime = overrideActive ? overrideTime : resolvedAlarmDate
+                                            editingInitialTime = pendingOverrideTime
+                                            editingInitialSnooze = mainAlarmSnoozeMinutes
                                         }
                                         alarmExpanded.toggle()
                                     }
                                 }
+                                .accessibilityElement(children: .combine)
+                                .accessibilityIdentifier("alarm.editorToggle")
                                 .walkthroughTarget(.alarmTime)
                             }
                         }
@@ -1157,6 +1223,8 @@ struct LuniferMain: View {
                                 // Only shown when a manual override is active.
                                 if overrideActive {
                                     Button {
+                                        // Reset handles scheduling itself; do not also save the draft.
+                                        editingInitialTime = nil
                                         Task {
                                             guard await LuniferAlarm.shared.scheduleAlarm(
                                                 for: calculatedAlarmDate,
@@ -1195,45 +1263,7 @@ struct LuniferMain: View {
                                     .buttonStyle(.plain)
                                 }
 
-                                // ── Confirm button ──────────────────────
-                                Button {
-                                    let diffSeconds = abs(pendingOverrideTime.timeIntervalSince(calculatedAlarmDate))
-                                    if diffSeconds > 60 {
-                                        // User chose a different time — commit the override.
-                                        let requestedTime = pendingOverrideTime
-                                        Task {
-                                            guard await LuniferAlarm.shared.scheduleAlarm(for: requestedTime) else { return }
-                                            guard luniferEnabled else { return }
-                                            AdaptiveAlarmStore.shared.clearPendingDecision()
-                                            overrideActive = true
-                                            overrideTimestamp = requestedTime.timeIntervalSince1970
-                                            overrideTime = requestedTime
-                                            await WakeNotification.shared.schedule(wakeDate: requestedTime, answers: answers)
-                                        }
-                                    } else {
-                                        // Picker is back near Lunifer's calculated time — clear any override.
-                                        overrideActive = false
-                                        overrideTimestamp = 0
-                                    }
-                                    withAnimation(.easeInOut(duration: 0.3)) {
-                                        alarmExpanded = false
-                                    }
-                                } label: {
-                                    Text("Confirm")
-                                        .font(.custom("DM Sans", size: 14))
-                                        .foregroundColor(Color.white.opacity(0.6))
-                                        .padding(.horizontal, 24)
-                                        .padding(.vertical, 12)
-                                        .frame(maxWidth: .infinity)
-                                        .background(
-                                            Capsule()
-                                                .fill(Color(red: 0.392, green: 0.275, blue: 0.627).opacity(0.2))
-                                                .overlay(Capsule().stroke(
-                                                    Color(red: 0.627, green: 0.471, blue: 0.863).opacity(0.3),
-                                                    lineWidth: 1))
-                                        )
-                                }
-                                .buttonStyle(.plain)
+
                             }
                             .padding(.vertical, 12)
                             .padding(.horizontal, 52)
@@ -1284,10 +1314,18 @@ struct LuniferMain: View {
             }) {
                 AddAlarmSheet(
                     pickerTime: $addedAlarmPickerTime,
+                    conflictsWithMainAlarm: { time, repeatDays in
+                        let scheduledDate = LuniferAlarm.resolvedAddedAlarmDate(timeOf: time, repeatDays: repeatDays)
+                        return LuniferAlarm.shared.addedAlarmConflictsWithMainAlarm(scheduledDate)
+                    },
                     onSet: { time, label, sound, snooze, repeatDays in
+                        let scheduledDate = LuniferAlarm.resolvedAddedAlarmDate(
+                            timeOf: time,
+                            repeatDays: repeatDays
+                        )
                         let alarm = AddedAlarm(
                             id: UUID(),
-                            timestamp: time.timeIntervalSince1970,
+                            timestamp: scheduledDate.timeIntervalSince1970,
                             label: label,
                             sound: sound,
                             snoozeMinutes: snooze,
@@ -1298,7 +1336,8 @@ struct LuniferMain: View {
                         }
                         saveAddedAlarms()
                         showAddAlarmSheet = false
-                        Task { await LuniferAlarm.shared.scheduleAddedAlarm(for: time, alarmID: alarm.id, snoozeMinutes: snooze) }
+                        Task { await LuniferAlarm.shared.scheduleAddedAlarm(for: scheduledDate, alarmID: alarm.id, snoozeMinutes: snooze) }
+                        dstNotice = DSTAlarmNotice.notice(for: scheduledDate)
                     },
                     onCancel: {
                         showAddAlarmSheet = false
@@ -1316,12 +1355,23 @@ struct LuniferMain: View {
                     sound:         $editSound,
                     snoozeMinutes: $editSnoozeMinutes,
                     repeatDays:    $editRepeatDays,
+                    conflictsWithMainAlarm: { time, repeatDays in
+                        let scheduledDate = LuniferAlarm.resolvedAddedAlarmDate(timeOf: time, repeatDays: repeatDays)
+                        return LuniferAlarm.shared.addedAlarmConflictsWithMainAlarm(scheduledDate)
+                    },
                     onSave:   { commitEditingAddedAlarm() },
                     onCancel: { showEditAlarmSheet = false }
                 )
                 .presentationDetents([.large])
                 .presentationDragIndicator(.hidden)
                 .presentationBackground(Color(red: 0.06, green: 0.03, blue: 0.14))
+            }
+            .alert(item: $dstNotice) { notice in
+                Alert(
+                    title: Text(notice.title),
+                    message: Text(notice.message),
+                    dismissButton: .default(Text("Got it"))
+                )
             }
 
             // ── Unified toggle button — travels from bottom to center ──
@@ -1485,6 +1535,7 @@ private func repeatSummary(_ days: [String]) -> String {
 
 struct AddAlarmSheet: View {
     @Binding var pickerTime: Date
+    let conflictsWithMainAlarm: (Date, [String]) -> Bool
     let onSet:    (Date, String, String, Int, [String]) -> Void  // time, label, sound, snoozeMinutes, repeatDays
     let onCancel: () -> Void
 
@@ -1493,6 +1544,7 @@ struct AddAlarmSheet: View {
     @State private var addedAlarmSnoozeMinutes: Int = 5
     @State private var addedAlarmRepeatDays: [String] = []
     @State private var repeatExpanded: Bool = false
+    @State private var showMainAlarmConflictAlert = false
 
     var body: some View {
         NavigationStack {
@@ -1696,6 +1748,10 @@ struct AddAlarmSheet: View {
 
                     // ── Set Alarm button ──────────────────────
                     Button {
+                        guard !conflictsWithMainAlarm(pickerTime, addedAlarmRepeatDays) else {
+                            showMainAlarmConflictAlert = true
+                            return
+                        }
                         onSet(pickerTime, addedAlarmLabel, addedAlarmSound, addedAlarmSnoozeMinutes, addedAlarmRepeatDays)
                     } label: {
                         Text("Set Alarm")
@@ -1718,6 +1774,11 @@ struct AddAlarmSheet: View {
                     .buttonStyle(.plain)
                     .padding(.horizontal, 24)
                     .padding(.bottom, 36)
+                }
+                .alert("Already covered by Lunifer", isPresented: $showMainAlarmConflictAlert) {
+                    Button("Choose another time", role: .cancel) {}
+                } message: {
+                    Text("Lunifer already has its main alarm set for that exact time.")
                 }
             }
             .toolbar(.hidden, for: .navigationBar)
@@ -1811,6 +1872,64 @@ struct AddedAlarmSoundView: View {
         ) else { return }
         audioPlayer = try? AVAudioPlayer(contentsOf: url)
         audioPlayer?.play()
+    }
+}
+
+struct DSTAlarmNotice: Identifiable, Equatable {
+    enum Transition {
+        case springForward
+        case fallBack
+    }
+
+    let transition: Transition
+    var id: String {
+        switch transition {
+        case .springForward: return "springForward"
+        case .fallBack: return "fallBack"
+        }
+    }
+
+    var title: String {
+        "Daylight saving time affects this alarm"
+    }
+
+    var message: String {
+        switch transition {
+        case .springForward:
+            return "Clocks skip from 2:00 AM to 3:00 AM on this date. Your alarm will ring at 3:00 AM local time."
+        case .fallBack:
+            return "Clocks move back from 2:00 AM to 1:00 AM on this date. Your alarm will ring at the first 2:00 AM local time, before the clock changes."
+        }
+    }
+
+    static func notice(
+        for date: Date,
+        calendar inputCalendar: Calendar = .current,
+        timeZone: TimeZone = .current
+    ) -> DSTAlarmNotice? {
+        var calendar = inputCalendar
+        calendar.timeZone = timeZone
+        let selected = calendar.dateComponents([.hour, .minute], from: date)
+
+        let startOfDay = calendar.startOfDay(for: date)
+        guard let nextDay = calendar.date(byAdding: .day, value: 1, to: startOfDay),
+              let previousMoment = calendar.date(byAdding: .second, value: -1, to: startOfDay),
+              let transition = timeZone.nextDaylightSavingTimeTransition(after: previousMoment),
+              transition < nextDay else { return nil }
+
+        let beforeTransition = timeZone.isDaylightSavingTime(for: transition.addingTimeInterval(-60))
+        let afterTransition = timeZone.isDaylightSavingTime(for: transition.addingTimeInterval(60))
+        let selectedTwoAM = selected.hour == 2 && selected.minute == 0
+        let selectedNormalizedSpringTime = abs(date.timeIntervalSince(transition)) < 60
+        if !beforeTransition && afterTransition {
+            guard selectedTwoAM || selectedNormalizedSpringTime else { return nil }
+            return DSTAlarmNotice(transition: .springForward)
+        }
+        if beforeTransition && !afterTransition {
+            guard selectedTwoAM else { return nil }
+            return DSTAlarmNotice(transition: .fallBack)
+        }
+        return nil
     }
 }
 
@@ -1990,10 +2109,12 @@ struct EditAddedAlarmSheet: View {
     @Binding var sound: String
     @Binding var snoozeMinutes: Int
     @Binding var repeatDays: [String]
+    let conflictsWithMainAlarm: (Date, [String]) -> Bool
     let onSave:   () -> Void
     let onCancel: () -> Void
 
     @State private var repeatExpanded: Bool = false
+    @State private var showMainAlarmConflictAlert = false
 
     var body: some View {
         NavigationStack {
@@ -2014,7 +2135,13 @@ struct EditAddedAlarmSheet: View {
                             .font(.custom("Cormorant Garamond", size: 28).weight(.light))
                             .foregroundColor(Color.white.opacity(0.90))
                         Spacer()
-                        Button(action: onSave) {
+                        Button {
+                            guard !conflictsWithMainAlarm(pickerTime, repeatDays) else {
+                                showMainAlarmConflictAlert = true
+                                return
+                            }
+                            onSave()
+                        } label: {
                             Text("Save")
                                 .font(.custom("DM Sans", size: 14).weight(.medium))
                                 .foregroundColor(Color(red: 0.706, green: 0.588, blue: 0.902))
@@ -2170,6 +2297,11 @@ struct EditAddedAlarmSheet: View {
 
                     Spacer()
                 }
+            }
+            .alert("Already covered by Lunifer", isPresented: $showMainAlarmConflictAlert) {
+                Button("Choose another time", role: .cancel) {}
+            } message: {
+                Text("Lunifer already has its main alarm set for that exact time.")
             }
             .toolbar(.hidden, for: .navigationBar)
         }
@@ -2591,7 +2723,6 @@ struct LuniferDebugView: View {
 private struct LuniferMainPreview: View {
     @State private var answers: SurveyAnswers = {
         var a = SurveyAnswers()
-        a.age = "28"
         a.wakeDays = ["sun", "mon", "tue", "wed", "thu", "fri", "sat"]
         a.calendar = "apple"
         a.routine = TimeValue(hours: 0, minutes: 45, auto: false)
@@ -2608,7 +2739,6 @@ private struct LuniferMainPreview: View {
 private struct SleepInsightsOnlyPreview: View {
     @State private var answers: SurveyAnswers = {
         var a = SurveyAnswers()
-        a.age = "28"
         a.sleep = TimeValue(hours: 8, minutes: 0, auto: false)
         return a
     }()

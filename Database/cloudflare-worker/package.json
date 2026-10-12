@@ -1,9 +1,11 @@
 {
   "name": "lunifer-whoop-worker",
   "private": true,
+  "type": "module",
   "scripts": {
     "deploy": "wrangler deploy",
-    "dev": "wrangler dev"
+    "dev": "wrangler dev",
+    "test": "node --test src/*.test.mjs"
   },
   "devDependencies": {
     "@cloudflare/workers-types": "^4.20260327.0",

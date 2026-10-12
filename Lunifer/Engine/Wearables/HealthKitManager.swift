@@ -13,7 +13,7 @@ import HealthKit
 // SCOPE (intentional):
 //   • This is a *data source*, not a recommendation source. The
 //     target "recommended hours" still comes from the existing engine
-//     (`SleepDurationModel.baselineForAge` / manual), so HealthKit
+//     (manual/default sleep target), so HealthKit
 //     does NOT plug into `WearableRecommendationStore`. It only makes
 //     the *measured* nights accurate.
 //   • Nights are recorded with `source: .wearable`, so they take

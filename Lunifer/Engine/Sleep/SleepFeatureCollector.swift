@@ -12,17 +12,16 @@ import CoreMotion
 // it persists interaction timestamps to UserDefaults and queries
 // CoreMotion's historical activity buffer when the app wakes up.
 //
-// TWO MODES OF OPERATION:
+// MODE OF OPERATION:
 //
-//   1. FOREGROUND (app is open):
-//      - Tracks interactions live via app lifecycle notifications
-//      - CoreMotion delivers real-time stationary updates
-//      - All features update on a 60-second timer
-//
-//   2. BACKGROUND / RETROACTIVE (app was suspended):
+//   BACKGROUND / RETROACTIVE:
 //      - On wake-up, queries CoreMotion for historical activity
 //      - Reads persisted last-interaction timestamp from UserDefaults
 //      - Reconstructs what happened while the app was asleep
+//
+// Live collection remains available as a helper but is not started by the
+// dashboard path. Opening Lunifer is treated as awake evidence instead of a
+// reason to activate live sleep detection.
 //
 // Feature variables:
 //   isStationary                   CoreMotion (live or historical)
@@ -353,7 +352,7 @@ final class SleepFeatureCollector: ObservableObject {
     // MARK: - Persisted state loading
     // ─────────────────────────────────────────────────────────
 
-    private func loadPersistedState() {
+    func loadPersistedState() {
         // Load weekday / weekend averages
         historicalAvgSleepOnsetWeekday = trackingStore.historicalAverageSleepOnsetWeekday()
         historicalAvgSleepOnsetWeekend = trackingStore.historicalAverageSleepOnsetWeekend()

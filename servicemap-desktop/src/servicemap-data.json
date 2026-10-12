@@ -1,0 +1,255 @@
+{
+  "generatedAt": "2026-10-11T20:39:32.197Z",
+  "project": {
+    "name": "lunifer",
+    "root": "/Users/dougie/Desktop/parentlunifer/lunifer",
+    "framework": "static",
+    "logo": {
+      "path": "Lunifer/Assets 2.xcassets/AppIcon.appiconset/lunifer-darkerpurple.png",
+      "source": "asset-catalog-app-icon"
+    },
+    "logoUrl": "/internalservicemap-assets/project-logo.png"
+  },
+  "access": {
+    "allowedEmails": [],
+    "requested": false
+  },
+  "services": [
+    {
+      "id": "cloudflare",
+      "name": "Cloudflare",
+      "key": "cloudflare",
+      "category": "cloud",
+      "evidence": [
+        {
+          "type": "config-file",
+          "value": "wrangler.toml",
+          "confidence": "high"
+        }
+      ],
+      "confidence": "high",
+      "iconUrl": "https://cdn.jsdelivr.net/npm/simple-icons@16/icons/cloudflare.svg"
+    },
+    {
+      "id": "firebase",
+      "name": "Firebase",
+      "key": "firebase",
+      "category": "cloud",
+      "evidence": [
+        {
+          "type": "package",
+          "value": "firebase-admin",
+          "confidence": "high"
+        },
+        {
+          "type": "external-url-host",
+          "value": "firebase.google.com",
+          "confidence": "medium"
+        },
+        {
+          "type": "config-file",
+          "value": "firebase.json",
+          "confidence": "high"
+        }
+      ],
+      "confidence": "high",
+      "iconUrl": "https://cdn.jsdelivr.net/npm/simple-icons@16/icons/firebase.svg"
+    },
+    {
+      "id": "github",
+      "name": "GitHub",
+      "key": "github",
+      "category": "developer-tools",
+      "evidence": [
+        {
+          "type": "external-url-host",
+          "value": "github.com",
+          "confidence": "medium"
+        }
+      ],
+      "confidence": "medium",
+      "iconUrl": "https://cdn.jsdelivr.net/npm/simple-icons@16/icons/github.svg"
+    },
+    {
+      "id": "healthkit",
+      "key": "healthkit",
+      "name": "Apple HealthKit",
+      "category": "health",
+      "confidence": "high",
+      "evidence": [
+        {
+          "type": "source-integration",
+          "value": "Lunifer/Engine/Wearables/HealthKitManager.swift",
+          "confidence": "high"
+        }
+      ],
+      "iconUrl": "https://cdn.jsdelivr.net/npm/simple-icons@16/icons/apple.svg"
+    },
+    {
+      "id": "eventkit",
+      "key": "eventkit",
+      "name": "Apple EventKit",
+      "category": "calendar",
+      "confidence": "high",
+      "evidence": [
+        {
+          "type": "source-integration",
+          "value": "Lunifer/Engine/CalendarManager.swift",
+          "confidence": "high"
+        }
+      ],
+      "iconUrl": "https://cdn.jsdelivr.net/npm/simple-icons@16/icons/apple.svg"
+    },
+    {
+      "id": "mapkit",
+      "key": "mapkit",
+      "name": "Apple MapKit",
+      "category": "maps",
+      "confidence": "high",
+      "evidence": [
+        {
+          "type": "source-integration",
+          "value": "Lunifer/Engine/CommuteManager.swift",
+          "confidence": "high"
+        }
+      ],
+      "iconUrl": "https://cdn.jsdelivr.net/npm/simple-icons@16/icons/apple.svg"
+    },
+    {
+      "id": "google-calendar",
+      "key": "google-calendar",
+      "name": "Google Calendar",
+      "category": "calendar",
+      "confidence": "high",
+      "evidence": [
+        {
+          "type": "source-integration",
+          "value": "Lunifer/Engine/Calendar/GoogleCalendarService.swift",
+          "confidence": "high"
+        }
+      ],
+      "iconUrl": "https://cdn.jsdelivr.net/npm/simple-icons@16/icons/googlecalendar.svg"
+    },
+    {
+      "id": "microsoft-outlook",
+      "key": "microsoft-outlook",
+      "name": "Microsoft Outlook",
+      "category": "calendar",
+      "confidence": "high",
+      "evidence": [
+        {
+          "type": "source-integration",
+          "value": "Lunifer/Engine/Calendar/MicrosoftCalendarService.swift",
+          "confidence": "high"
+        }
+      ]
+    },
+    {
+      "id": "oura",
+      "key": "oura",
+      "name": "Oura",
+      "category": "health",
+      "confidence": "high",
+      "evidence": [
+        {
+          "type": "source-integration",
+          "value": "Lunifer/Engine/Wearables/OuraManager.swift",
+          "confidence": "high"
+        }
+      ],
+      "iconUrl": "/oura.png"
+    },
+    {
+      "id": "whoop",
+      "key": "whoop",
+      "name": "WHOOP",
+      "category": "health",
+      "confidence": "high",
+      "evidence": [
+        {
+          "type": "source-integration",
+          "value": "Lunifer/Engine/Wearables/WhoopManager.swift",
+          "confidence": "high"
+        }
+      ],
+      "iconUrl": "/whoop.png"
+    },
+    {
+      "id": "apns",
+      "key": "apns",
+      "name": "Apple Push Notifications",
+      "category": "messaging",
+      "confidence": "high",
+      "evidence": [
+        {
+          "type": "source-integration",
+          "value": "Database/cloudflare-worker/src/index.js",
+          "confidence": "high"
+        }
+      ],
+      "iconUrl": "https://cdn.jsdelivr.net/npm/simple-icons@16/icons/apple.svg"
+    }
+  ],
+  "edges": [
+    {
+      "source": "project",
+      "target": "cloudflare",
+      "label": "uses"
+    },
+    {
+      "source": "project",
+      "target": "firebase",
+      "label": "uses"
+    },
+    {
+      "source": "project",
+      "target": "github",
+      "label": "may use"
+    },
+    {
+      "source": "project",
+      "target": "healthkit",
+      "label": "uses"
+    },
+    {
+      "source": "project",
+      "target": "eventkit",
+      "label": "uses"
+    },
+    {
+      "source": "project",
+      "target": "mapkit",
+      "label": "uses"
+    },
+    {
+      "source": "project",
+      "target": "google-calendar",
+      "label": "uses"
+    },
+    {
+      "source": "project",
+      "target": "microsoft-outlook",
+      "label": "uses"
+    },
+    {
+      "source": "project",
+      "target": "oura",
+      "label": "uses"
+    },
+    {
+      "source": "project",
+      "target": "whoop",
+      "label": "uses"
+    },
+    {
+      "source": "project",
+      "target": "apns",
+      "label": "uses"
+    }
+  ],
+  "summary": {
+    "serviceCount": 11,
+    "highConfidenceCount": 10,
+    "scannedFileCount": 185
+  }
+}

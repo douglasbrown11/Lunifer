@@ -13,15 +13,23 @@ final class LuniferTests: XCTestCase {
     private let defaults = UserDefaults.standard
     private var savedDefaults: [String: Any] = [:]
     private let keys = [
+        "selectedAlarmSound",
+        "addedAlarms",
         "luniferEnabled",
         "overrideActive",
         "surveyAnswers",
         "lunifer_sleep_history",
+        "lunifer_wake_time_samples",
         "restDayAlarmOptInDate",
         AppPreferencesStore.Keys.disabledPendingAlarmTimestamp,
         AppPreferencesStore.Keys.pendingReplacementAlarmTimestamp,
         AppPreferencesStore.Keys.pendingStopRescheduleTimestamp,
-        AppPreferencesStore.Keys.finalizedMainAlarmTimestamp
+        AppPreferencesStore.Keys.finalizedMainAlarmTimestamp,
+        AppPreferencesStore.Keys.mainAlarmWallClockYear,
+        AppPreferencesStore.Keys.mainAlarmWallClockMonth,
+        AppPreferencesStore.Keys.mainAlarmWallClockDay,
+        AppPreferencesStore.Keys.mainAlarmWallClockHour,
+        AppPreferencesStore.Keys.mainAlarmWallClockMinute
     ]
 
     override func setUp() async throws {
@@ -34,6 +42,7 @@ final class LuniferTests: XCTestCase {
         LuniferAlarm.shared.activeAlarms = []
         CommuteManager.shared.currentDurationMinutes = 0
         CommuteManager.shared.ignoredCommuteMinutes = nil
+        UITestSupport.didRejectSchedule = false
         UITestSupport.forceScheduleFailure = false
         UITestSupport.forceAlarmRegistryReadFailure = false
         UITestSupport.alarmRefreshDelayNanoseconds = 0
@@ -51,9 +60,50 @@ final class LuniferTests: XCTestCase {
         LuniferAlarm.shared.activeAlarms = []
         CommuteManager.shared.currentDurationMinutes = 0
         CommuteManager.shared.ignoredCommuteMinutes = nil
+        UITestSupport.didRejectSchedule = false
         UITestSupport.forceScheduleFailure = false
         UITestSupport.forceAlarmRegistryReadFailure = false
         UITestSupport.alarmRefreshDelayNanoseconds = 0
+    }
+
+    func testAlarmSoundSelectionSurvivesSubsequentSchedulingReads() throws {
+        let alarm = LuniferAlarm.shared
+        XCTAssertEqual(alarm.alarmSoundFilename(), "DeafultAlarm.wav")
+        for option in SoundOption.all {
+            defaults.set(option.filename, forKey: "selectedAlarmSound")
+            XCTAssertEqual(alarm.alarmSoundFilename(), option.filename)
+            XCTAssertEqual(alarm.alarmSoundFilename(), option.filename)
+            XCTAssertNotNil(Bundle.main.url(forResource: option.filename, withExtension: nil),
+                            "AlarmKit needs the complete filename of a bundled sound")
+        }
+    }
+
+    func testSoundRefreshFailurePreservesScheduledAlarm() async {
+        let date = Date().addingTimeInterval(3600)
+        BackgroundActivitySession.shared.resume()
+        LuniferAlarm.shared.scheduledWakeTime = date
+        defaults.set("Space.wav", forKey: "selectedAlarmSound")
+        UITestSupport.forceScheduleFailure = true
+
+        await LuniferAlarm.shared.refreshScheduledAlarmSound()
+
+        XCTAssertTrue(UITestSupport.didRejectSchedule)
+        XCTAssertEqual(LuniferAlarm.shared.scheduledWakeTime, date)
+        XCTAssertEqual(LuniferAlarm.shared.alarmSoundFilename(), "Space.wav")
+    }
+
+    func testAddedAlarmRetainsItsSoundWhenGlobalSelectionChanges() throws {
+        let id = UUID()
+        let record = AddedAlarm(id: id, timestamp: Date().addingTimeInterval(3600).timeIntervalSince1970,
+                               label: "Test", sound: "Church Bells.wav", snoozeMinutes: 5,
+                               repeatDays: ["Mon"])
+        defaults.set(try JSONEncoder().encode([record]), forKey: "addedAlarms")
+        defaults.set("Space.wav", forKey: "selectedAlarmSound")
+        XCTAssertEqual(LuniferAlarm.shared.alarmSoundFilename(for: id), "Church Bells.wav")
+        XCTAssertEqual(LuniferAlarm.shared.alarmSoundFilename(), "Space.wav")
+        defaults.set("Twin Alarm Bell.wav", forKey: "selectedAlarmSound")
+        XCTAssertEqual(LuniferAlarm.shared.alarmSoundFilename(for: id), "Church Bells.wav")
+        XCTAssertEqual(LuniferAlarm.shared.alarmSoundFilename(), "Twin Alarm Bell.wav")
     }
 
     func testSleepBasedWakeTimeMatchesTargetDayAcrossRestDays() {
@@ -75,6 +125,58 @@ final class LuniferTests: XCTestCase {
         XCTAssertNil(LuniferAlarm.sleepBasedWakeTime(
             onset: nil, sleepHours: 8, targetDay: monday, calendar: calendar
         ))
+    }
+
+    func testSavedMainAlarmWallClockRebuildsInNewTimeZone() {
+        var newYork = Calendar(identifier: .gregorian)
+        newYork.timeZone = TimeZone(identifier: "America/New_York")!
+        let original = newYork.date(from: DateComponents(year: 2026, month: 10, day: 7, hour: 7, minute: 15))!
+        AppPreferencesStore.shared.saveMainAlarmWallClock(for: original, calendar: newYork)
+
+        var losAngeles = Calendar(identifier: .gregorian)
+        losAngeles.timeZone = TimeZone(identifier: "America/Los_Angeles")!
+        let rebuilt = LuniferAlarm.dateInCurrentTimeZone(
+            for: AppPreferencesStore.shared.mainAlarmWallClock!,
+            calendar: losAngeles
+        )
+
+        XCTAssertEqual(losAngeles.component(.year, from: rebuilt!), 2026)
+        XCTAssertEqual(losAngeles.component(.month, from: rebuilt!), 10)
+        XCTAssertEqual(losAngeles.component(.day, from: rebuilt!), 7)
+        XCTAssertEqual(losAngeles.component(.hour, from: rebuilt!), 7)
+        XCTAssertEqual(losAngeles.component(.minute, from: rebuilt!), 15)
+    }
+
+    func testDSTNoticeMatchesOnlyRelevantTransition() {
+        var calendar = Calendar(identifier: .gregorian)
+        let timeZone = TimeZone(identifier: "America/New_York")!
+        calendar.timeZone = timeZone
+
+        let spring = calendar.date(from: DateComponents(year: 2026, month: 3, day: 8, hour: 2, minute: 0))!
+        XCTAssertEqual(DSTAlarmNotice.notice(for: spring, calendar: calendar, timeZone: timeZone)?.transition, .springForward)
+
+        let fall = calendar.date(from: DateComponents(year: 2026, month: 11, day: 1, hour: 2, minute: 0))!
+        XCTAssertEqual(DSTAlarmNotice.notice(for: fall, calendar: calendar, timeZone: timeZone)?.transition, .fallBack)
+
+        let ordinary = calendar.date(from: DateComponents(year: 2026, month: 3, day: 9, hour: 2, minute: 0))!
+        XCTAssertNil(DSTAlarmNotice.notice(for: ordinary, calendar: calendar, timeZone: timeZone))
+    }
+
+    func testAutoSleepFallbackDoesNotUseLegacyAgeAnswer() throws {
+        let legacyPayload = """
+        {
+            "age": "2012-01-01",
+            "wakeDays": ["mon"],
+            "sleep": { "hours": 6, "minutes": 30, "auto": true },
+            "routine": { "hours": 0, "minutes": 45, "auto": false },
+            "commute": { "hours": 0, "minutes": 0, "auto": true },
+            "commuteMode": "drive"
+        }
+        """.data(using: .utf8)!
+
+        let answers = try JSONDecoder().decode(SurveyAnswers.self, from: legacyPayload)
+
+        XCTAssertEqual(WearableRecommendationStore.fallbackSleepHours(from: answers), 8.0)
     }
 
     func testWakeHistoryMedianResistsOutliersAndHandlesEvenCounts() {
@@ -113,6 +215,59 @@ final class LuniferTests: XCTestCase {
         XCTAssertEqual(median?.minute, 0)
         load([recent, cutoff.addingTimeInterval(-60), future])
         XCTAssertNil(SleepHistoryStore.shared.medianWakeTime(forWeekday: 2, now: now))
+    }
+
+    func testManualOverrideWakeSampleContributesToMedianWithoutSleepNight() {
+        var calendar = Calendar(identifier: .gregorian)
+        calendar.timeZone = TimeZone(identifier: "America/New_York")!
+        let now = calendar.date(from: DateComponents(year: 2026, month: 10, day: 19, hour: 12))!
+        let firstMonday = calendar.date(from: DateComponents(year: 2026, month: 10, day: 5, hour: 7))!
+        let overrideMonday = calendar.date(from: DateComponents(year: 2026, month: 10, day: 12, hour: 9))!
+
+        SleepHistoryStore.shared.recordNight(
+            date: firstMonday,
+            duration: 8,
+            onset: nil,
+            wake: firstMonday
+        )
+        SleepHistoryStore.shared.recordWakeTimeSample(overrideMonday)
+
+        let median = SleepHistoryStore.shared.medianWakeTime(forWeekday: 2, now: now)
+
+        XCTAssertEqual(median?.hour, 8)
+        XCTAssertEqual(median?.minute, 0)
+        XCTAssertEqual(SleepHistoryStore.shared.allHistory().count, 1)
+    }
+
+    func testWakeTimesCardIncludesStandaloneWakeSampleForToday() {
+        var calendar = Calendar(identifier: .gregorian)
+        calendar.timeZone = TimeZone(identifier: "America/New_York")!
+        let todayWake = calendar.date(from: DateComponents(year: 2026, month: 10, day: 7, hour: 9, minute: 38))!
+
+        SleepHistoryStore.shared.recordWakeTimeSample(todayWake)
+
+        let points = WakeHistoryPoint.points(from: [], referenceDate: todayWake.addingTimeInterval(60))
+
+        XCTAssertEqual(points.count, 1)
+        XCTAssertEqual(points.first?.wakeTime, todayWake)
+        XCTAssertEqual(points.first?.minuteOfDay, 9 * 60 + 38)
+    }
+
+    func testWakeTimeSamplesDedupeByCalendarDay() {
+        var calendar = Calendar(identifier: .gregorian)
+        calendar.timeZone = TimeZone(identifier: "America/New_York")!
+        let firstWake = calendar.date(from: DateComponents(year: 2026, month: 10, day: 7, hour: 9, minute: 38))!
+        let laterWake = calendar.date(from: DateComponents(year: 2026, month: 10, day: 7, hour: 10, minute: 5))!
+
+        SleepHistoryStore.shared.recordWakeTimeSample(firstWake)
+        SleepHistoryStore.shared.recordWakeTimeSample(laterWake)
+
+        let samples = SleepHistoryStore.shared.wakeTimeSamples(
+            since: firstWake.addingTimeInterval(-60),
+            through: laterWake.addingTimeInterval(60)
+        )
+
+        XCTAssertEqual(samples, [firstWake])
     }
 
     func testConfiguredCommuteAndRoutineApplyWhenCommuteIsConfigured() {
@@ -213,6 +368,17 @@ final class LuniferTests: XCTestCase {
             alarmAuthorized: true,
             confirmedAlarmDate: confirmed
         ))
+    }
+
+    func testPermissionGateMessageNamesMissingPermission() {
+        XCTAssertEqual(
+            PermissionGatePage.message(for: ["Alarm permission"]),
+            "Lunifer cannot run correctly without Alarm permission approval. Approve this in Settings to continue."
+        )
+        XCTAssertEqual(
+            PermissionGatePage.message(for: ["Alarm permission", "Motion & Fitness"]),
+            "Lunifer cannot run correctly without Alarm permission and Motion & Fitness approval. Approve this in Settings to continue."
+        )
     }
 
     func testFinalizedMainAlarmAppliesOnlyToSameFutureWakeDay() throws {
@@ -330,10 +496,90 @@ final class LuniferTests: XCTestCase {
         XCTAssertEqual(metadata.addedAlarmID, logicalID)
     }
 
+    func testRepeatingAddedAlarmNextOccurrenceCanUseTodayIfStillFuture() throws {
+        var calendar = Calendar(identifier: .gregorian)
+        calendar.timeZone = TimeZone(identifier: "America/New_York")!
+        let reference = try XCTUnwrap(calendar.date(from: DateComponents(year: 2026, month: 10, day: 12, hour: 6)))
+        let originalTime = try XCTUnwrap(calendar.date(from: DateComponents(year: 2026, month: 1, day: 1, hour: 7, minute: 30)))
+
+        let next = try XCTUnwrap(LuniferAlarm.nextAddedAlarmOccurrence(
+            after: reference,
+            repeatDays: ["mon"],
+            timeOf: originalTime,
+            calendar: calendar
+        ))
+
+        XCTAssertEqual(calendar.component(.day, from: next), 12)
+        XCTAssertEqual(calendar.component(.hour, from: next), 7)
+        XCTAssertEqual(calendar.component(.minute, from: next), 30)
+    }
+
+    func testRepeatingAddedAlarmNextOccurrenceAdvancesPastMissedToday() throws {
+        var calendar = Calendar(identifier: .gregorian)
+        calendar.timeZone = TimeZone(identifier: "America/New_York")!
+        let reference = try XCTUnwrap(calendar.date(from: DateComponents(year: 2026, month: 10, day: 12, hour: 8)))
+        let originalTime = try XCTUnwrap(calendar.date(from: DateComponents(year: 2026, month: 1, day: 1, hour: 7, minute: 30)))
+
+        let next = try XCTUnwrap(LuniferAlarm.nextAddedAlarmOccurrence(
+            after: reference,
+            repeatDays: ["mon"],
+            timeOf: originalTime,
+            calendar: calendar
+        ))
+
+        XCTAssertEqual(calendar.component(.day, from: next), 19)
+        XCTAssertEqual(calendar.component(.hour, from: next), 7)
+        XCTAssertEqual(calendar.component(.minute, from: next), 30)
+    }
+
+    func testAddedAlarmConflictMatchesMainAlarmMinute() throws {
+        var calendar = Calendar(identifier: .gregorian)
+        calendar.timeZone = TimeZone(identifier: "America/New_York")!
+        let mainAlarm = try XCTUnwrap(calendar.date(from: DateComponents(year: 2026, month: 10, day: 12, hour: 7, minute: 30, second: 0)))
+        let sameMinute = try XCTUnwrap(calendar.date(from: DateComponents(year: 2026, month: 10, day: 12, hour: 7, minute: 30, second: 45)))
+        let nextMinute = try XCTUnwrap(calendar.date(from: DateComponents(year: 2026, month: 10, day: 12, hour: 7, minute: 31, second: 0)))
+
+        LuniferAlarm.shared.scheduledWakeTime = mainAlarm
+
+        XCTAssertTrue(LuniferAlarm.shared.addedAlarmConflictsWithMainAlarm(sameMinute, calendar: calendar))
+        XCTAssertFalse(LuniferAlarm.shared.addedAlarmConflictsWithMainAlarm(nextMinute, calendar: calendar))
+    }
+
+    func testAddedAlarmConflictCanUseFinalizedMainAlarmAfterRelaunch() throws {
+        var calendar = Calendar(identifier: .gregorian)
+        calendar.timeZone = TimeZone(identifier: "America/New_York")!
+        let mainAlarm = try XCTUnwrap(calendar.date(from: DateComponents(year: 2026, month: 10, day: 12, hour: 7, minute: 30)))
+        let addedAlarm = try XCTUnwrap(calendar.date(from: DateComponents(year: 2026, month: 10, day: 12, hour: 7, minute: 30)))
+
+        AppPreferencesStore.shared.finalizedMainAlarmDate = mainAlarm
+        LuniferAlarm.shared.scheduledWakeTime = nil
+
+        XCTAssertTrue(LuniferAlarm.shared.addedAlarmConflictsWithMainAlarm(addedAlarm, calendar: calendar))
+    }
+
+    func testTimeOnlyAddedAlarmResolvesToTomorrowWhenTodayAlreadyPassed() throws {
+        var calendar = Calendar(identifier: .gregorian)
+        calendar.timeZone = TimeZone(identifier: "America/New_York")!
+        let reference = try XCTUnwrap(calendar.date(from: DateComponents(year: 2026, month: 10, day: 11, hour: 17)))
+        let pickedTime = try XCTUnwrap(calendar.date(from: DateComponents(year: 2026, month: 10, day: 11, hour: 7, minute: 30)))
+        let mainAlarm = try XCTUnwrap(calendar.date(from: DateComponents(year: 2026, month: 10, day: 12, hour: 7, minute: 30)))
+
+        let resolved = LuniferAlarm.resolvedAddedAlarmDate(
+            after: reference,
+            timeOf: pickedTime,
+            repeatDays: [],
+            calendar: calendar
+        )
+
+        XCTAssertEqual(resolved, mainAlarm)
+        XCTAssertTrue(LuniferAlarm.sameAlarmMinute(resolved, mainAlarm, calendar: calendar))
+    }
+
     func testRefreshStopsWhenLuniferIsDisabledMidCalculation() async throws {
         var answers = SurveyAnswers()
         answers.wakeDays = ["sun", "mon", "tue", "wed", "thu", "fri", "sat"]
         UITestSupport.alarmRefreshDelayNanoseconds = 50_000_000
+        UITestSupport.forceScheduleFailure = true
 
         let refresh = Task { @MainActor in
             await LuniferAlarm.shared.refreshTomorrowAlarm(answers: answers)
@@ -345,6 +591,7 @@ final class LuniferTests: XCTestCase {
 
         XCTAssertNil(refreshed)
         XCTAssertNil(LuniferAlarm.shared.scheduledWakeTime)
+        XCTAssertFalse(UITestSupport.didRejectSchedule)
     }
 
     func testAlarmInputTimeoutUsesFallback() async {
@@ -375,6 +622,21 @@ final class LuniferTests: XCTestCase {
 
         XCTAssertEqual(displayedAlarm, morningAlarm)
         XCTAssertEqual(LuniferAlarm.shared.scheduledWakeTime, morningAlarm)
+    }
+
+    func testBackgroundRefreshDoesNotPreserveTodaysAlarmAfterClockChange() async throws {
+        var answers = SurveyAnswers()
+        answers.wakeDays = []
+        let staleSameDayAlarm = try upcomingAlarmToday()
+        LuniferAlarm.shared.scheduledWakeTime = staleSameDayAlarm
+
+        let displayedAlarm = await LuniferAlarm.shared.refreshTomorrowAlarm(
+            answers: answers,
+            preserveTodayPendingAlarm: false
+        )
+
+        XCTAssertNil(displayedAlarm)
+        XCTAssertNil(LuniferAlarm.shared.scheduledWakeTime)
     }
 
     func testForegroundAdaptiveCheckPreservesTodaysAlarmWhenTomorrowIsRestDay() async throws {

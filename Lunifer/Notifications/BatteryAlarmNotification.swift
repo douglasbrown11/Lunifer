@@ -217,12 +217,11 @@ final class BatteryAlarmNotification {
         if let avg = SleepHistoryManager.shared.averageDuration(days: 7) {
             return avg
         }
-        // Fall back to age-based recommendation from survey
+        // Fall back to the user's manual sleep preference or Lunifer's default.
         if let answers = SurveyAnswers.loadFromDefaults() {
-            return SleepDurationModel.baselineForAge(answers.age)
+            return WearableRecommendationStore.fallbackSleepHours(from: answers)
         }
-        // Last resort: 8 hours
-        return 8.0
+        return SleepDurationModel.defaultBaselineHours()
     }
 
     // ── Conservative drain rate ───────────────────────────────
