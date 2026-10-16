@@ -37,6 +37,7 @@ struct ContentView: View {
                 })
             case .splash:
                 ReturningUserSplash(onFinish: {
+                    guard screen == .splash else { return }
                     withAnimation(.easeInOut(duration: 0.7)) { screen = .dashboard }
                 })
                 .transition(.opacity)
@@ -51,12 +52,22 @@ struct ContentView: View {
             if let fixture = UITestSupport.dashboardAnswers() {
                 surveyAnswers = fixture
                 screen = .dashboard
+                if ProcessInfo.processInfo.arguments.contains("--ui-test-returning-session") {
+                    screen = ProcessInfo.processInfo.arguments.contains("--ui-test-session-listener-only")
+                        ? .intro : .splash
+                    Task { @MainActor in
+                        await restoreSession(saved: fixture) {
+                            try? await Task.sleep(for: .seconds(8))
+                        }
+                    }
+                }
                 return
             }
             #endif
             if authStateHandle == nil {
                 authStateHandle = Auth.auth().addStateDidChangeListener { _, user in
                     Task { @MainActor in
+                        guard Auth.auth().currentUser?.uid == user?.uid else { return }
                         // An explicit sign-in owns its own routing through
                         // handleSignedIn. In particular, a newly-created account
                         // can arrive while this device still has the previous
@@ -67,9 +78,10 @@ struct ContentView: View {
                            screen != .auth,
                            surveyCompleted,
                            let saved = SurveyAnswers.loadFromDefaults() {
-                            await SilentPushManager.shared.syncStoredToken()
-                            surveyAnswers = saved
-                            screen = .splash
+                            await restoreSession(saved: saved) {
+                                await SilentPushManager.shared.syncStoredToken()
+                            }
+                            guard Auth.auth().currentUser?.uid == user?.uid else { return }
                             await AdaptiveAlarmStore.shared.loadFromFirestore()
                         } else if user == nil,
                                   screen != .intro,
@@ -82,7 +94,8 @@ struct ContentView: View {
                 }
             }
 
-            if surveyCompleted,
+            if screen == .intro,
+               surveyCompleted,
                Auth.auth().currentUser != nil,
                let saved = SurveyAnswers.loadFromDefaults() {
                 surveyAnswers = saved
@@ -113,8 +126,20 @@ struct ContentView: View {
     }
 
     @MainActor
+    private func restoreSession(saved: SurveyAnswers, synchronize: () async -> Void) async {
+        // Route from local state before networking. A late upload must never
+        // reopen the splash, overwrite edited answers, or undo a sign-out.
+        if screen == .intro {
+            surveyAnswers = saved
+            screen = .splash
+        }
+        await synchronize()
+    }
+
+    @MainActor
     private func handleSignedIn(isNewUser: Bool) async {
-        await SilentPushManager.shared.syncStoredToken()
+        // Push registration is maintenance, not a prerequisite for navigation.
+        Task { await SilentPushManager.shared.syncStoredToken() }
         if isNewUser {
             surveyCompleted = false
             screen = .survey

@@ -49,11 +49,11 @@ final class CalendarNudgeNotification {
     static let shared = CalendarNudgeNotification()
     private init() {}
 
-    private let notificationID = "lunifer.calendar.nudge"
+    private let scheduler = AlarmNotificationScheduler(identifier: "lunifer.calendar.nudge", preferenceKey: "allNotificationsEnabled")
 
     // UserDefaults keys (not centralised in AppPreferencesStore.Keys)
-    private static let lastEventDrivenKey = "lunifer_calendar_last_event_driven"
-    private static let sentThisStreakKey  = "lunifer_calendar_nudge_sent_streak"
+    nonisolated private static let lastEventDrivenKey = "lunifer_calendar_last_event_driven"
+    nonisolated private static let sentThisStreakKey  = "lunifer_calendar_nudge_sent_streak"
 
     /// Number of the user's wake days that must elapse with no calendar-driven
     /// alarm before the nudge fires.
@@ -85,6 +85,7 @@ final class CalendarNudgeNotification {
     /// Call on dashboard load (after resolveAlarmDate has run).
     @MainActor
     func checkAndNudgeIfNeeded(answers: SurveyAnswers) async {
+        guard UserDefaults.standard.object(forKey: "luniferEnabled") as? Bool != false else { cancel(); return }
         // Respect the master toggle (a missing key means enabled).
         guard UserDefaults.standard.object(forKey: "allNotificationsEnabled") as? Bool != false else { return }
 
@@ -151,32 +152,14 @@ final class CalendarNudgeNotification {
         let fireComps = cal.dateComponents([.year, .month, .day, .hour, .minute], from: fireDate)
         let trigger = UNCalendarNotificationTrigger(dateMatching: fireComps, repeats: false)
 
-        center.removePendingNotificationRequests(withIdentifiers: [notificationID])
-
-        let request = UNNotificationRequest(
-            identifier: notificationID,
-            content:    content,
-            trigger:    trigger
-        )
-        do {
-            try await center.add(request)
-            if !BackgroundActivitySession.shared.accepts(generation) {
-                center.removePendingNotificationRequests(withIdentifiers: [request.identifier])
-                center.removeDeliveredNotifications(withIdentifiers: [request.identifier])
-            }
-            // Mark this empty streak as nudged so we don't send again until a
-            // calendar event drives the alarm at least once more.
+        if await scheduler.schedule(content: content, trigger: trigger) {
             defaults.set(true, forKey: Self.sentThisStreakKey)
-            print("📅 Calendar nudge scheduled for \(fireDate) — \(wakeDaysElapsed) wake days without a calendar-driven alarm")
-        } catch {
-            print("❌ Calendar nudge failed: \(error.localizedDescription)")
         }
     }
 
     /// Cancels any pending nudge.
     func cancel() {
-        UNUserNotificationCenter.current()
-            .removePendingNotificationRequests(withIdentifiers: [notificationID])
+        scheduler.cancel()
     }
 
     // ── Helpers ───────────────────────────────────────────────

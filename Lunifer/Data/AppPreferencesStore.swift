@@ -15,6 +15,7 @@ final class AppPreferencesStore {
         static let luniferEnabled = "luniferEnabled"
         static let overrideActive = "overrideActive"
         static let overrideTimestamp = "overrideTimestamp"
+        static let commuteMessageAlarmTimestamps = "commuteMessageAlarmTimestamps"
         static let calculatedAlarmTimestamp = "calculatedAlarmTimestamp"
         static let disabledPendingAlarmTimestamp = "disabledPendingAlarmTimestamp"
         static let pendingReplacementAlarmTimestamp = "pendingReplacementAlarmTimestamp"
@@ -158,6 +159,26 @@ final class AppPreferencesStore {
 
     func clearPendingStopReschedule() {
         defaults.removeObject(forKey: Keys.pendingStopRescheduleTimestamp)
+    }
+
+    /// Retain today's first elapsed main alarm when scheduling tomorrow or snoozing.
+    /// Future replacements supersede the previous pending alarm.
+    func rememberCommuteMessageAlarm(_ date: Date?, now: Date = Date(), calendar: Calendar = .current) {
+        var dates = (defaults.array(forKey: Keys.commuteMessageAlarmTimestamps) as? [Double] ?? [])
+            .map { Date(timeIntervalSince1970: $0) }
+            .filter { $0 <= now && calendar.isDate($0, inSameDayAs: now) }
+        dates = Array(dates.sorted().prefix(1))
+        if let date { dates.append(date) }
+        defaults.set(dates.sorted().prefix(2).map { $0.timeIntervalSince1970 }, forKey: Keys.commuteMessageAlarmTimestamps)
+    }
+
+    func commuteMessageHasExpired(now: Date = Date(), calendar: Calendar = .current) -> Bool {
+        let timestamps = defaults.array(forKey: Keys.commuteMessageAlarmTimestamps) as? [Double] ?? []
+        return timestamps.contains { timestamp in
+            let alarmDate = Date(timeIntervalSince1970: timestamp)
+            return calendar.isDate(alarmDate, inSameDayAs: now)
+                && now.timeIntervalSince(alarmDate) >= 3 * 3600
+        }
     }
 
     var finalizedMainAlarmDate: Date? {

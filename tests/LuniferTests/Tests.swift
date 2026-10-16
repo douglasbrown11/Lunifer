@@ -13,6 +13,7 @@ final class LuniferTests: XCTestCase {
     private let defaults = UserDefaults.standard
     private var savedDefaults: [String: Any] = [:]
     private let keys = [
+        AppPreferencesStore.Keys.commuteMessageAlarmTimestamps,
         "selectedAlarmSound",
         "addedAlarms",
         "luniferEnabled",
@@ -31,6 +32,39 @@ final class LuniferTests: XCTestCase {
         AppPreferencesStore.Keys.mainAlarmWallClockHour,
         AppPreferencesStore.Keys.mainAlarmWallClockMinute
     ]
+
+    func testCommuteMessageExpiryBoundaryAndNextDayReset() {
+        var calendar = Calendar(identifier: .gregorian)
+        calendar.timeZone = TimeZone(secondsFromGMT: 0)!
+        let alarm = calendar.date(from: DateComponents(year: 2026, month: 10, day: 16, hour: 7))!
+        let store = AppPreferencesStore.shared
+        XCTAssertFalse(store.commuteMessageHasExpired(now: alarm, calendar: calendar))
+        store.rememberCommuteMessageAlarm(alarm, now: alarm.addingTimeInterval(-3600), calendar: calendar)
+        XCTAssertFalse(store.commuteMessageHasExpired(now: alarm.addingTimeInterval(3 * 3600 - 1), calendar: calendar))
+        XCTAssertTrue(store.commuteMessageHasExpired(now: alarm.addingTimeInterval(3 * 3600), calendar: calendar))
+        XCTAssertFalse(store.commuteMessageHasExpired(now: alarm.addingTimeInterval(24 * 3600), calendar: calendar))
+    }
+
+    func testCommuteMessageExpirySurvivesSnoozeAndNextAlarmScheduling() {
+        let calendar = Calendar.current
+        let alarm = calendar.startOfDay(for: Date()).addingTimeInterval(7 * 3600)
+        let store = AppPreferencesStore.shared
+        store.rememberCommuteMessageAlarm(alarm, now: alarm.addingTimeInterval(-3600))
+        store.rememberCommuteMessageAlarm(alarm.addingTimeInterval(10 * 60), now: alarm.addingTimeInterval(60))
+        store.rememberCommuteMessageAlarm(alarm.addingTimeInterval(24 * 3600), now: alarm.addingTimeInterval(20 * 60))
+        XCTAssertTrue(store.commuteMessageHasExpired(now: alarm.addingTimeInterval(3 * 3600)))
+        XCTAssertTrue(store.commuteMessageHasExpired(now: alarm.addingTimeInterval(27 * 3600)))
+    }
+
+    func testCommuteMessageExpiryUsesReplacementAndIgnoresCancelledFutureAlarm() {
+        let alarm = Calendar.current.startOfDay(for: Date()).addingTimeInterval(7 * 3600)
+        let store = AppPreferencesStore.shared
+        store.rememberCommuteMessageAlarm(alarm, now: alarm.addingTimeInterval(-3600))
+        store.rememberCommuteMessageAlarm(alarm.addingTimeInterval(3600), now: alarm.addingTimeInterval(-1800))
+        XCTAssertFalse(store.commuteMessageHasExpired(now: alarm.addingTimeInterval(3 * 3600)))
+        store.rememberCommuteMessageAlarm(nil, now: alarm.addingTimeInterval(-60))
+        XCTAssertFalse(store.commuteMessageHasExpired(now: alarm.addingTimeInterval(5 * 3600)))
+    }
 
     override func setUp() async throws {
         for key in keys {
@@ -548,8 +582,10 @@ final class LuniferTests: XCTestCase {
     func testAddedAlarmConflictCanUseFinalizedMainAlarmAfterRelaunch() throws {
         var calendar = Calendar(identifier: .gregorian)
         calendar.timeZone = TimeZone(identifier: "America/New_York")!
-        let mainAlarm = try XCTUnwrap(calendar.date(from: DateComponents(year: 2026, month: 10, day: 12, hour: 7, minute: 30)))
-        let addedAlarm = try XCTUnwrap(calendar.date(from: DateComponents(year: 2026, month: 10, day: 12, hour: 7, minute: 30)))
+        // Persisted finalized alarms expire, so this fixture must remain in the future.
+        let tomorrow = try XCTUnwrap(calendar.date(byAdding: .day, value: 1, to: Date()))
+        let mainAlarm = try XCTUnwrap(calendar.date(bySettingHour: 7, minute: 30, second: 0, of: tomorrow))
+        let addedAlarm = mainAlarm
 
         AppPreferencesStore.shared.finalizedMainAlarmDate = mainAlarm
         LuniferAlarm.shared.scheduledWakeTime = nil

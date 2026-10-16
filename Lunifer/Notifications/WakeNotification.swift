@@ -19,10 +19,13 @@ import UserNotifications
 // reminder and replaces it, so overriding the alarm time from
 // the dashboard always keeps the notification in sync.
 
+@MainActor
 final class WakeNotification {
 
     static let shared = WakeNotification()
-    private let notificationID = "lunifer.wake.reminder"
+    private let scheduler = AlarmNotificationScheduler(
+        identifier: "lunifer.wake.reminder", preferenceKey: "wakeReminderEnabled"
+    )
 
     // ── Public API ────────────────────────────────────────────
 
@@ -35,7 +38,9 @@ final class WakeNotification {
     ///   - answers:  The user's survey answers, used to derive sleep duration.
     func schedule(wakeDate: Date, answers: SurveyAnswers) async {
         // Respect the user's toggle — cancel any pending reminder and bail if disabled
-        guard UserDefaults.standard.object(forKey: "wakeReminderEnabled") as? Bool != false else {
+        guard UserDefaults.standard.object(forKey: AppPreferencesStore.Keys.luniferEnabled) as? Bool != false,
+              UserDefaults.standard.object(forKey: "allNotificationsEnabled") as? Bool != false,
+              UserDefaults.standard.object(forKey: "wakeReminderEnabled") as? Bool != false else {
             cancel()
             return
         }
@@ -63,18 +68,6 @@ final class WakeNotification {
             return
         }
 
-        // ── Permission check ──────────────────────────────────
-        let center   = UNUserNotificationCenter.current()
-        let generation = BackgroundActivitySession.shared.generation
-        guard BackgroundActivitySession.shared.accepts(generation) else { return }
-        let settings = await center.notificationSettings()
-        guard BackgroundActivitySession.shared.accepts(generation) else { return }
-        guard settings.authorizationStatus == .authorized ||
-              settings.authorizationStatus == .provisional else {
-            print("⏭️ Wake reminder skipped — notifications not authorised")
-            return
-        }
-
         // ── Format display strings ────────────────────────────
         let f = DateFormatter()
         f.dateFormat = "h:mm a"
@@ -95,32 +88,11 @@ final class WakeNotification {
         )
         let trigger = UNCalendarNotificationTrigger(dateMatching: comps, repeats: false)
 
-        // Replace any existing wake reminder
-        center.removePendingNotificationRequests(withIdentifiers: [notificationID])
-
-        let request = UNNotificationRequest(
-            identifier: notificationID,
-            content: content,
-            trigger: trigger
-        )
-
-        do {
-            try await center.add(request)
-            if !BackgroundActivitySession.shared.accepts(generation) {
-                center.removePendingNotificationRequests(withIdentifiers: [request.identifier])
-                center.removeDeliveredNotifications(withIdentifiers: [request.identifier])
-            }
-            print("🌙 Wake reminder scheduled for \(f.string(from: notifyAt)) " +
-                  "(bedtime \(bedtimeStr), wake \(wakeStr))")
-        } catch {
-            print("❌ Wake reminder failed to schedule: \(error.localizedDescription)")
-        }
+        await scheduler.schedule(content: content, trigger: trigger)
     }
 
     /// Cancels any pending wake reminder (e.g. when the user disables Lunifer).
     func cancel() {
-        UNUserNotificationCenter.current()
-            .removePendingNotificationRequests(withIdentifiers: [notificationID])
-        print("🌙 Wake reminder cancelled")
+        scheduler.cancel()
     }
 }

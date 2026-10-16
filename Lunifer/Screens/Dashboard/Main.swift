@@ -75,6 +75,7 @@ struct AddedAlarm: Codable, Identifiable {
 struct LuniferMain: View {
     @Binding var answers: SurveyAnswers
     @ObservedObject private var alarmManager = LuniferAlarm.shared
+    @ObservedObject private var calendarManager = CalendarManager.shared
     @ObservedObject private var commuteManager = CommuteManager.shared
     @State private var showSettings = false
     @State private var showSound = false
@@ -358,9 +359,18 @@ struct LuniferMain: View {
         guard answers.wakeDays.contains(weekdayID(for: Date())) else { return false }
         // Only show while the user is between waking up and their first event starting.
         // If there is no calendar event today, the card (and nudge) are not shown.
-        guard let firstEvent = CalendarManager.shared.firstEventToday else { return false }
+        guard let firstEvent = calendarManager.firstEventToday,
+              !(firstEvent.location ?? "").trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else { return false }
         let now = Date()
         return now >= calculatedAlarmDate && now < firstEvent.startDate
+    }
+
+    private var shouldShowCommuteLocationMessage: Bool {
+        _ = ticker
+        guard !AppPreferencesStore.shared.commuteMessageHasExpired() else { return false }
+        guard luniferEnabled, hasCommuteSetup, !isTomorrowRestDay else { return false }
+        return (calendarManager.firstEventTomorrow?.location ?? "")
+            .trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
     }
 
     /// Day name of the next day Lunifer will set an alarm for after the rest period.
@@ -478,6 +488,13 @@ struct LuniferMain: View {
         .frame(maxWidth: .infinity, maxHeight: .infinity)
         // Coach-mark overlay for the dashboard + Sleep Insights walkthrough steps.
         .walkthroughHost([.dashboard, .insights])
+        #if DEBUG
+        .overlay(alignment: .top) {
+            if ProcessInfo.processInfo.arguments.contains("--ui-test-wake-reminder-race") {
+                WakeReminderRaceProbe()
+            }
+        }
+        #endif
         // Drive navigation for the active walkthrough step: swipe to the right
         // page so each target is on screen.
         .onChange(of: walkthrough.currentStep) { _, step in
@@ -522,6 +539,11 @@ struct LuniferMain: View {
             guard Auth.auth().currentUser != nil else { return }
             #endif
             BackgroundActivitySession.shared.resume()
+            if !luniferEnabled {
+                AlarmNotificationScheduler.cancelOrdinaryNotifications()
+                await LuniferAlarm.shared.cancelAlarm()
+                await LuniferAlarm.shared.cancelAllAddedAlarms()
+            }
             Task { await LuniferAlarm.shared.startMonitoring() }
             UIApplication.shared.registerForRemoteNotifications()
             // Restore persisted override time, or clear it if the alarm has already passed.
@@ -683,6 +705,9 @@ struct LuniferMain: View {
         // the next 5-minute timer tick.
         .onReceive(NotificationCenter.default.publisher(for: UIApplication.didBecomeActiveNotification)) { _ in
             guard !isRunningPreview else { return }
+            if !luniferEnabled {
+                AlarmNotificationScheduler.cancelOrdinaryNotifications()
+            }
             let wasDenied = showAlarmDeniedAlert
             checkAlarmAuthorization()
             checkMotionAuthorization()
@@ -704,10 +729,10 @@ struct LuniferMain: View {
                 }
             }
             MorningRoutineEstimator.shared.refresh(answers: answers)
-            // A morning phone pickup near the alarm is a strong wake signal — try to
-            // finalize last night immediately so Sleep Insights updates on foreground.
+            // Reconstruct missed sleep before considering this app return a wake.
+            // Tracking continues even while alarms are turned off.
             // Independent of the alarm enable/override state, so it runs before the guard.
-            Task { await SleepTracker.shared.confirmWakeFromMorningPickup() }
+            Task { await SleepTracker.shared.refreshWakeTracking() }
             Task { await alarmManager.reconcileAddedAlarms() }
             guard luniferEnabled else { return }
             Task { @MainActor in
@@ -817,11 +842,15 @@ struct LuniferMain: View {
         guard !isChangingAlarmEnablement else { return }
         let enabled = !luniferEnabled
         withAnimation(.easeInOut(duration: 0.5)) { luniferEnabled = enabled }
+        if !enabled {
+            AlarmNotificationScheduler.cancelOrdinaryNotifications()
+        }
         isChangingAlarmEnablement = true
         Task { @MainActor in
             defer { isChangingAlarmEnablement = false }
             if enabled {
                 TurnBackOnNotification.shared.cancel()
+                await LuniferAlarm.shared.reconcileAddedAlarms()
                 let rememberedAlarm = AppPreferencesStore.shared.disabledPendingAlarmDate
                 overrideActive = false
                 overrideTimestamp = 0
@@ -848,8 +877,8 @@ struct LuniferMain: View {
                 AppPreferencesStore.shared.clearRestDayAlarmOptIn()
                 AppPreferencesStore.shared.clearPendingStopReschedule()
                 await LuniferAlarm.shared.cancelAlarm()
-                WakeNotification.shared.cancel()
-                BatteryAlarmNotification.shared.cancelWarning()
+                await LuniferAlarm.shared.cancelAllAddedAlarms()
+                AlarmNotificationScheduler.cancelOrdinaryNotifications()
                 await TurnBackOnNotification.shared.schedule()
             }
         }
@@ -1269,6 +1298,17 @@ struct LuniferMain: View {
                             .padding(.horizontal, 52)
                         }
                         .transition(.opacity.combined(with: .offset(y: -8)))
+                    }
+                    if !alarmExpanded && shouldShowCommuteLocationMessage {
+                        VStack(alignment: .leading, spacing: 8) {
+                            Text("COMMUTE")
+                                .font(.custom("DM Sans", size: 10))
+                                .foregroundColor(Color.white.opacity(0.3))
+                                .kerning(2.5)
+                                .padding(.horizontal, 60)
+                            CommuteLocationMessage()
+                        }
+                        .padding(.top, 24)
                     }
                     } // end else — alarm header hidden while the commute card takes over
 

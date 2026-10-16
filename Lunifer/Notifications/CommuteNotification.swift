@@ -23,13 +23,15 @@ final class CommuteNotification {
 
     static let shared = CommuteNotification()
 
-    private let leaveReminderID = "lunifer.commute.leave.reminder"
-    private let deltaAlertID    = "lunifer.commute.delta.alert"
+    private let leaveScheduler = AlarmNotificationScheduler(identifier: "lunifer.commute.leave.reminder", preferenceKey: "commuteReminderEnabled")
+    private let deltaScheduler = AlarmNotificationScheduler(identifier: "lunifer.commute.delta.alert", preferenceKey: "commuteReminderEnabled")
 
     private var isEnabled: Bool {
         // A missing key (first launch) is treated as enabled —
         // same pattern used by BatteryAlarmNotification.
-        UserDefaults.standard.object(forKey: "commuteReminderEnabled") as? Bool != false
+        UserDefaults.standard.object(forKey: "luniferEnabled") as? Bool != false
+            && UserDefaults.standard.object(forKey: "allNotificationsEnabled") as? Bool != false
+            && UserDefaults.standard.object(forKey: "commuteReminderEnabled") as? Bool != false
     }
 
     // ── Public API ────────────────────────────────────────────
@@ -65,21 +67,7 @@ final class CommuteNotification {
         )
         let trigger = UNCalendarNotificationTrigger(dateMatching: comps, repeats: false)
 
-        let center = UNUserNotificationCenter.current()
-        center.removePendingNotificationRequests(withIdentifiers: [leaveReminderID])
-
-        let request = UNNotificationRequest(
-            identifier: leaveReminderID,
-            content:    content,
-            trigger:    trigger
-        )
-        center.add(request) { error in
-            if let error {
-                print("❌ Commute leave reminder failed: \(error.localizedDescription)")
-            } else {
-                print("🚗 Commute leave reminder set for \(f.string(from: fireTime)) (leave by \(leaveStr))")
-            }
-        }
+        Task { await leaveScheduler.schedule(content: content, trigger: trigger) }
     }
 
     /// Pushes an immediate alert when commute duration shifts by ≥5 minutes.
@@ -108,34 +96,19 @@ final class CommuteNotification {
         // UNTimeIntervalNotificationTrigger minimum is 1 second
         let trigger = UNTimeIntervalNotificationTrigger(timeInterval: 1, repeats: false)
 
-        let center = UNUserNotificationCenter.current()
-        center.removePendingNotificationRequests(withIdentifiers: [deltaAlertID])
-
-        let request = UNNotificationRequest(
-            identifier: deltaAlertID,
-            content:    content,
-            trigger:    trigger
-        )
-        center.add(request) { error in
-            if let error {
-                print("❌ Commute delta alert failed: \(error.localizedDescription)")
-            } else {
-                print("🚗 Commute delta alert pushed — leave by \(timeStr), increased: \(didIncrease)")
-            }
-        }
+        Task { await deltaScheduler.schedule(content: content, trigger: trigger) }
     }
 
     /// Cancels the pending leave reminder without touching the delta alert.
     func cancelLeaveReminder() {
-        UNUserNotificationCenter.current()
-            .removePendingNotificationRequests(withIdentifiers: [leaveReminderID])
+        leaveScheduler.cancel()
         print("🚗 Commute leave reminder cancelled")
     }
 
     /// Cancels all pending commute notifications.
     func cancelAll() {
-        UNUserNotificationCenter.current()
-            .removePendingNotificationRequests(withIdentifiers: [leaveReminderID, deltaAlertID])
+        leaveScheduler.cancel()
+        deltaScheduler.cancel()
         print("🚗 All commute notifications cancelled")
     }
 }
