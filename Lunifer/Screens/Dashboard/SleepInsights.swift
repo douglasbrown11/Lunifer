@@ -52,6 +52,7 @@ struct SleepInsights: View {
     }
 
     @State private var showSettings = false
+    @State private var recommendationCardHeight: CGFloat = 0
 
     // Wearable state — read directly from AppStorage so changes sync immediately
     @AppStorage(AppPreferencesStore.Keys.hasWearable)               private var hasWearable: Bool      = false
@@ -62,7 +63,12 @@ struct SleepInsights: View {
 
     // Pull complete local sleep history from the manager (or injected preview data).
     private var allStoredHistory: [SleepHistoryEntry] {
-        previewEntries ?? SleepHistoryManager.shared.allHistory()
+        #if DEBUG
+        if ProcessInfo.processInfo.arguments.contains("--ui-test-wake-times") {
+            return SleepHistoryMock.entries
+        }
+        #endif
+        return previewEntries ?? SleepHistoryManager.shared.allHistory()
     }
 
     private var wakeHistoryPoints: [WakeHistoryPoint] {
@@ -101,77 +107,90 @@ struct SleepInsights: View {
     }
 
     var body: some View {
-        ScrollView(.vertical, showsIndicators: false) {
-            VStack(spacing: 0) {
+        GeometryReader { geometry in
+            ScrollView(.vertical, showsIndicators: false) {
+                VStack(spacing: 0) {
 
-                Spacer().frame(height: 28)
+                    Spacer().frame(height: 28)
 
-                // ── Optimal sleep duration card ──────────
-                VStack(spacing: 10) {
+                    // ── Optimal sleep duration card ──────────
+                    VStack(spacing: 10) {
 
-                    // Subtle link to the sleep editor in Settings
-                    HStack {
-                        Spacer()
-                        Button {
-                            showSettings = true
-                        } label: {
-                            HStack(spacing: 4) {
-                                Text("Adjust in Settings")
-                                    .font(.custom("DM Sans", size: 12))
-                                    .foregroundColor(Color(red: 0.627, green: 0.471, blue: 1.0).opacity(0.7))
-                                Image(systemName: "arrow.right")
-                                    .font(.system(size: 9, weight: .medium))
-                                    .foregroundColor(Color(red: 0.627, green: 0.471, blue: 1.0).opacity(0.5))
+                        // Subtle link to the sleep editor in Settings
+                        HStack {
+                            Spacer()
+                            Button {
+                                showSettings = true
+                            } label: {
+                                HStack(spacing: 4) {
+                                    Text("Adjust in Settings")
+                                        .font(.custom("DM Sans", size: 12))
+                                        .foregroundColor(Color(red: 0.627, green: 0.471, blue: 1.0).opacity(0.7))
+                                    Image(systemName: "arrow.right")
+                                        .font(.system(size: 9, weight: .medium))
+                                        .foregroundColor(Color(red: 0.627, green: 0.471, blue: 1.0).opacity(0.5))
+                                }
                             }
+                            .buttonStyle(.plain)
+                            .padding(.trailing, 14)
+                            .padding(.leading, 3)
                         }
-                        .buttonStyle(.plain)
-                        .padding(.trailing, 14)
-                        .padding(.leading, 3)
-                    }
 
-                    Text("RECOMMENDED SLEEP")
-                        .font(.custom("DM Sans", size: 11))
-                        .foregroundColor(Color.white.opacity(0.35))
-                        .kerning(2.5)
+                        Text("RECOMMENDED SLEEP")
+                            .font(.custom("DM Sans", size: 11))
+                            .foregroundColor(Color.white.opacity(0.35))
+                            .kerning(2.5)
 
-                    Text(formattedDurationAttributed(recommendedHours, size: 44))
-                        .foregroundColor(Color.white.opacity(0.95))
+                        Text(formattedDurationAttributed(recommendedHours, size: 44))
+                            .foregroundColor(Color.white.opacity(0.95))
 
-                    // "recommended to you via [logo]" — only shown when a wearable
-                    // is the source. No plain-text caption when there's no wearable.
-                    if let recommendation = wearableRecommendation {
-                        HStack(spacing: 6) {
-                            Text("recommended to you via")
-                                .font(.custom("DM Sans", size: 13))
-                                .foregroundColor(Color.white.opacity(0.4))
-                            Image(recommendation.provider.wordmarkAssetName)
-                                .resizable()
-                                .interpolation(.high)
-                                .scaledToFit()
-                                .frame(height: 13)
+                        // "recommended to you via [logo]" — only shown when a wearable
+                        // is the source. No plain-text caption when there's no wearable.
+                        if let recommendation = wearableRecommendation {
+                            HStack(spacing: 6) {
+                                Text("recommended to you via")
+                                    .font(.custom("DM Sans", size: 13))
+                                    .foregroundColor(Color.white.opacity(0.4))
+                                Image(recommendation.provider.wordmarkAssetName)
+                                    .resizable()
+                                    .interpolation(.high)
+                                    .scaledToFit()
+                                    .frame(height: 13)
+                            }
+                            .transition(.opacity)
                         }
-                        .transition(.opacity)
                     }
-                }
-                .frame(maxWidth: .infinity)
-                .padding(.vertical, 20)
-                .background(
-                    RoundedRectangle(cornerRadius: 20)
-                        .fill(Color.white.opacity(0.04))
-                        .overlay(
-                            RoundedRectangle(cornerRadius: 20)
-                                .stroke(Color.white.opacity(0.08), lineWidth: 1)
-                        )
-                )
-                .padding(.horizontal, 60)
-                .walkthroughTarget(.sleepInsights)
-
-                Spacer().frame(height: 16)
-
-                WakeTimesCard(points: wakeHistoryPoints, averageWakeTime: averageWakeTime)
+                    .frame(maxWidth: .infinity)
+                    .padding(.vertical, 20)
+                    .background(
+                        RoundedRectangle(cornerRadius: 20)
+                            .fill(Color.white.opacity(0.04))
+                            .overlay(
+                                RoundedRectangle(cornerRadius: 20)
+                                    .stroke(Color.white.opacity(0.08), lineWidth: 1)
+                            )
+                    )
                     .padding(.horizontal, 60)
+                    .onGeometryChange(for: CGFloat.self) { geometry in
+                        geometry.size.height
+                    } action: { height in
+                        recommendationCardHeight = height
+                    }
+                    .walkthroughTarget(.sleepInsights)
 
-                Spacer().frame(height: 28)
+                    Spacer().frame(height: 16)
+
+                    WakeTimesCard(points: wakeHistoryPoints, averageWakeTime: averageWakeTime)
+                        .padding(.horizontal, 60)
+
+                    Spacer().frame(height: 28)
+                }
+                // Reserve the paging dots and fixed gaps, then shorten only the wake card by 25%.
+                .frame(minHeight: {
+                    let pageHeight = max(0, geometry.size.height - 48)
+                    let wakeCardHeight = max(0, pageHeight - recommendationCardHeight - 72)
+                    return pageHeight - wakeCardHeight * 0.25
+                }())
             }
         }
         .frame(maxWidth: .infinity)
@@ -222,7 +241,7 @@ struct WakeHistoryPoint: Identifiable, Equatable {
                     id: "wake-\(Int(wakeTime.timeIntervalSince1970))",
                     date: entry.date,
                     wakeTime: wakeTime,
-                    label: calendar.isDateInToday(wakeTime) ? "Today" : entry.dayLabel,
+                    label: calendar.isDateInToday(wakeTime) ? "Today" : Self.dayLabel(for: wakeTime),
                     minuteOfDay: minuteOfDay
                 )
             }
@@ -270,6 +289,11 @@ struct WakeHistoryPoint: Identifiable, Equatable {
 private struct WakeTimesCard: View {
     let points: [WakeHistoryPoint]
     let averageWakeTime: Date?
+    @State private var selectedPointID: String?
+
+    private var selectedPoint: WakeHistoryPoint? {
+        points.first { $0.id == selectedPointID }
+    }
 
     var body: some View {
         VStack(alignment: .leading, spacing: 16) {
@@ -316,13 +340,17 @@ private struct WakeTimesCard: View {
                 }
                 .frame(maxWidth: .infinity)
                 .padding(.vertical, 28)
+                .frame(maxHeight: .infinity)
             } else {
-                WakeTimesChart(points: points)
-                    .frame(height: 150)
+                WakeTimesChart(points: points, selectedPointID: $selectedPointID)
+                    .frame(minHeight: 150, maxHeight: .infinity)
 
-                Text("Last 7 days")
+                Text(selectedPoint.map {
+                    "\($0.wakeTime.formatted(.dateTime.weekday(.abbreviated).month(.abbreviated).day())) · \($0.wakeTime.formatted(date: .omitted, time: .shortened))"
+                } ?? "Last 7 days")
+                    .accessibilityIdentifier("wakeTimes.selection")
                     .font(.custom("DM Sans", size: 12))
-                    .foregroundColor(Color.white.opacity(0.34))
+                    .foregroundColor(Color.white.opacity(selectedPoint == nil ? 0.34 : 0.9))
             }
         }
         .frame(maxWidth: .infinity, alignment: .leading)
@@ -416,6 +444,7 @@ struct SleepEditSheet: View {
 
 private struct WakeTimesChart: View {
     let points: [WakeHistoryPoint]
+    @Binding var selectedPointID: String?
 
     private var axis: WakeTimeAxis {
         WakeTimeAxis(points: points)
@@ -462,11 +491,29 @@ private struct WakeTimesChart: View {
                             style: StrokeStyle(lineWidth: 2, lineCap: .round, dash: [2, 8])
                         )
 
-                        ForEach(Array(zip(points, coordinates)), id: \.0.id) { _, coordinate in
-                            Circle()
-                                .fill(Color.white)
-                                .frame(width: 9, height: 9)
-                                .position(coordinate)
+                        ForEach(Array(zip(points, coordinates)), id: \.0.id) { point, coordinate in
+                            Button {
+                                selectedPointID = selectedPointID == point.id ? nil : point.id
+                            } label: {
+                                Circle()
+                                    .fill(Color.white)
+                                    .frame(width: 9, height: 9)
+                                    .overlay {
+                                        if selectedPointID == point.id {
+                                            Circle()
+                                                .stroke(Color.white.opacity(0.7), lineWidth: 1.5)
+                                                .frame(width: 19, height: 19)
+                                        }
+                                    }
+                                    .frame(width: min(44, plotWidth / CGFloat(max(points.count, 1))), height: 44)
+                                    .contentShape(Rectangle())
+                            }
+                            .buttonStyle(.plain)
+                            .accessibilityLabel(point.wakeTime.formatted(date: .complete, time: .omitted))
+                            .accessibilityValue(point.wakeTime.formatted(date: .omitted, time: .shortened))
+                            .accessibilityAddTraits(selectedPointID == point.id ? [.isSelected] : [])
+                            .accessibilityIdentifier("wakeTimes.point.\(point.id)")
+                            .position(coordinate)
                         }
                     }
                     .frame(width: plotWidth, height: plotHeight)
@@ -495,11 +542,11 @@ private struct WakeTimesChart: View {
 
     private func chartCoordinates(width: CGFloat, height: CGFloat) -> [CGPoint] {
         guard !points.isEmpty else { return [] }
-        let xStep = points.count == 1 ? 0 : width / CGFloat(points.count - 1)
+        let xStep = width / CGFloat(points.count)
         let range = max(axis.maxMinute - axis.minMinute, 1)
 
         return points.enumerated().map { index, point in
-            let x = points.count == 1 ? width / 2 : CGFloat(index) * xStep
+            let x = (CGFloat(index) + 0.5) * xStep
             let normalized = CGFloat(point.minuteOfDay - axis.minMinute) / CGFloat(range)
             let y = height - (normalized * height)
             return CGPoint(x: x, y: y)
@@ -516,24 +563,21 @@ private struct WakeTimeAxis {
         let values = points.map(\.minuteOfDay)
         let minValue = values.min() ?? 6 * 60
         let maxValue = values.max() ?? 9 * 60
-        var lower = (minValue / 60) * 60
-        var upper = Int(ceil(Double(maxValue) / 60.0)) * 60
-
-        if upper - lower < 3 * 60 {
-            let midpoint = (lower + upper) / 2
-            lower = max(0, midpoint - 90)
-            upper = min(24 * 60, lower + 3 * 60)
-            lower = max(0, upper - 3 * 60)
-        }
+        let lower = (minValue / 60) * 60 - 60
+        let upper = Int(ceil(Double(maxValue) / 60.0)) * 60 + 60
 
         minMinute = lower
         maxMinute = upper
-        let step = max((upper - lower) / 3, 60)
-        tickMinutes = stride(from: upper, through: lower, by: -step).map { $0 }
+        let step = max(Int(ceil(Double(upper - lower) / (6 * 60))), 1) * 60
+        var ticks = stride(from: upper, through: lower, by: -step).map { $0 }
+        if ticks.last != lower {
+            ticks.append(lower)
+        }
+        tickMinutes = ticks
     }
 
     func label(for minute: Int) -> String {
-        let hour24 = (minute / 60) % 24
+        let hour24 = ((minute / 60) % 24 + 24) % 24
         let hour12 = hour24 % 12 == 0 ? 12 : hour24 % 12
         let period = hour24 < 12 ? "AM" : "PM"
         return "\(hour12) \(period)"
@@ -592,7 +636,7 @@ private struct WakeTimeAxis {
 
     ZStack {
         Color(red: 0.07, green: 0.04, blue: 0.15).ignoresSafeArea()
-        WakeTimesChart(points: points)
+        WakeTimesChart(points: points, selectedPointID: .constant(nil))
         .frame(height: 200)
         .padding(.horizontal, 24)
     }

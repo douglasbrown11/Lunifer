@@ -276,6 +276,22 @@ struct CommuteRouteMap: View {
 
 // MARK: - CommuteStatusCard
 
+struct CommuteLocationMessage: View {
+    var body: some View {
+        HStack(alignment: .firstTextBaseline, spacing: 8) {
+            Image(systemName: "calendar")
+                .font(.system(size: 14, weight: .light))
+                .foregroundColor(Color(red: 0.706, green: 0.588, blue: 0.902))
+            Text("Add locations to your calendar events and Lunifer will track your commute automatically.")
+                .font(.custom("DM Sans", size: 13))
+                .foregroundColor(Color.white.opacity(0.50))
+                .fixedSize(horizontal: false, vertical: true)
+            Spacer()
+        }
+        .padding(.horizontal, 60)
+    }
+}
+
 struct CommuteStatusCard: View {
     let answers: SurveyAnswers
     /// The resolved Lunifer alarm time for today, used to derive the leave-by time.
@@ -402,17 +418,7 @@ struct CommuteStatusCard: View {
                 .padding(.horizontal, 60)
             } else {
                 // ── No destination nudge ──────────────────────
-                HStack(alignment: .firstTextBaseline, spacing: 8) {
-                    Image(systemName: "calendar")
-                        .font(.system(size: 14, weight: .light))
-                        .foregroundColor(Color(red: 0.706, green: 0.588, blue: 0.902))
-                    Text("Add locations to your calendar events and Lunifer will track your commute automatically.")
-                        .font(.custom("DM Sans", size: 13))
-                        .foregroundColor(Color.white.opacity(0.50))
-                        .fixedSize(horizontal: false, vertical: true)
-                    Spacer()
-                }
-                .padding(.horizontal, 60)
+                CommuteLocationMessage()
             }
         }
     }

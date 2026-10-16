@@ -79,22 +79,28 @@ final class SleepTracker: ObservableObject {
         isTracking = true
         let generation = BackgroundActivitySession.shared.generation
         observeAppLifecycle()
-        recordInteraction()
-        featureCollector.loadPersistedState()
-
-        // Run retroactive analysis for the overnight period we missed
-        await runRetroactiveAnalysis()
-        guard BackgroundActivitySession.shared.accepts(generation), isTracking else { return }
-
-        // A deliberate phone pickup in the morning near the alarm is a near-certain
-        // "the user is awake now" signal. Finalize last night immediately so Sleep
-        // Insights updates the moment the app is opened, rather than waiting for the
-        // passive state machine to confirm a wake (which is slow right after waking).
-        await confirmWakeFromMorningPickup()
+        await refreshWakeTracking()
         guard BackgroundActivitySession.shared.accepts(generation), isTracking else { return }
 
         // Schedule the next background wake-up
         scheduleBackgroundTask()
+    }
+
+    private var isRefreshingWake = false
+
+    /// Reconstruct missed sleep before treating this app return as a new wake.
+    /// Alarm enablement deliberately does not gate sleep tracking.
+    func refreshWakeTracking() async {
+        guard !isRefreshingWake, !BackgroundActivitySession.shared.isStopped else { return }
+        isRefreshingWake = true
+        defer { isRefreshingWake = false }
+        let generation = BackgroundActivitySession.shared.generation
+        let pickup = Date()
+        recordInteraction()
+        featureCollector.loadPersistedState()
+        await runRetroactiveAnalysis()
+        guard BackgroundActivitySession.shared.accepts(generation) else { return }
+        await confirmWakeFromMorningPickup(now: pickup)
     }
 
     func stopTracking() {
@@ -104,6 +110,11 @@ final class SleepTracker: ObservableObject {
         predictionTimer?.invalidate()
         predictionTimer = nil
         lifecycleCancellables.removeAll()
+        isAsleep = false
+        estimatedSleepOnset = nil
+        estimatedWakeTime = nil
+        consecutiveAsleepCount = 0
+        consecutiveAwakeCount = 0
     }
 
     private func observeAppLifecycle() {
@@ -387,10 +398,25 @@ final class SleepTracker: ObservableObject {
     /// Finalizes last night from a morning phone pickup. Safe to call on every app
     /// open / foreground; it no-ops outside the morning window, without an onset, or
     /// once it has already recorded a wake today.
-    func confirmWakeFromMorningPickup() async {
+    func confirmWakeFromMorningPickup(now pickup: Date = Date()) async {
         let generation = BackgroundActivitySession.shared.generation
         guard BackgroundActivitySession.shared.accepts(generation) else { return }
-        let now = Date()
+
+        // A later app open must never replace a completed night with "awake now".
+        // Read persisted history as well as samples so this survives relaunch/restore.
+        let calendar = Calendar.current
+        if let night = SleepHistoryStore.shared.allHistory().first(where: {
+            guard let wake = $0.wakeTime else { return false }
+            return wake <= pickup && calendar.isDate(wake, inSameDayAs: pickup)
+        }) {
+            estimatedSleepOnset = night.sleepOnset
+            estimatedWakeTime = night.wakeTime
+            isAsleep = false
+            return
+        }
+        let now = SleepHistoryStore.shared.wakeTimeSamples(
+            since: calendar.startOfDay(for: pickup), through: pickup
+        ).first ?? pickup
 
         // Dedupe — at most one morning-pickup wake per calendar day.
         let dayKey = Self.dayKey(for: now)

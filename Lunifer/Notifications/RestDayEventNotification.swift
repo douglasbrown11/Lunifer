@@ -32,7 +32,7 @@ final class RestDayEventNotification {
     static let wakeupActionID  = "lunifer.restday.wakeup"
     static let dismissActionID = "lunifer.restday.dismiss"
 
-    private let notificationID = "lunifer.restday.event.prompt"
+    private let scheduler = AlarmNotificationScheduler(identifier: "lunifer.restday.event.prompt", preferenceKey: "restDayReminderEnabled")
 
     // ── Public API ────────────────────────────────────────────
 
@@ -44,6 +44,7 @@ final class RestDayEventNotification {
     ///   - answers: Survey answers used to derive the wake time
     ///              (routine + commute offset from event start).
     func scheduleIfNeeded(event: CalendarEvent, answers: SurveyAnswers) {
+        guard UserDefaults.standard.object(forKey: "luniferEnabled") as? Bool != false else { cancel(); return }
         guard !BackgroundActivitySession.shared.isStopped else { return }
         // Respect the user's notification preference
         guard UserDefaults.standard.object(forKey: "restDayReminderEnabled") as? Bool != false else { return }
@@ -113,31 +114,16 @@ final class RestDayEventNotification {
         }
 
         // ── Schedule ───────────────────────────────────────────
-        let center = UNUserNotificationCenter.current()
-        center.removePendingNotificationRequests(withIdentifiers: [notificationID])
-
-        let request = UNNotificationRequest(
-            identifier: notificationID,
-            content:    content,
-            trigger:    trigger
-        )
-        center.add(request) { error in
-            if let error {
-                print("❌ Rest-day event notification failed: \(error.localizedDescription)")
-            } else {
-                // Record today as the last sent date to prevent duplicates.
-                UserDefaults.standard.set(
-                    Date(),
-                    forKey: AppPreferencesStore.Keys.restDayNotificationSentDate
-                )
+        Task {
+            if await scheduler.schedule(content: content, trigger: trigger) {
+                UserDefaults.standard.set(Date(), forKey: AppPreferencesStore.Keys.restDayNotificationSentDate)
             }
         }
     }
 
     /// Cancels any pending rest-day event prompt.
     func cancel() {
-        UNUserNotificationCenter.current()
-            .removePendingNotificationRequests(withIdentifiers: [notificationID])
+        scheduler.cancel()
         print("💤 Rest-day event notification cancelled")
     }
 

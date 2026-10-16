@@ -413,6 +413,7 @@ class LuniferAlarm: ObservableObject {
             }
             originalScheduledWakeTime = nil
             scheduledWakeTime = date
+            AppPreferencesStore.shared.rememberCommuteMessageAlarm(date)
             AppPreferencesStore.shared.saveMainAlarmWallClock(for: date)
             AppPreferencesStore.shared.clearPendingReplacementAlarm()
             lastSchedulingFailure = nil
@@ -724,6 +725,10 @@ class LuniferAlarm: ObservableObject {
 
     @discardableResult
     func reconcileAddedAlarms(now: Date = Date()) async -> Int {
+        guard isLuniferEnabled else {
+            await cancelAllAddedAlarms()
+            return 0
+        }
         guard let registry = readAlarmRegistry() else { return 0 }
         let records = persistedAddedAlarmRecords()
         var repaired = 0
@@ -779,7 +784,11 @@ class LuniferAlarm: ObservableObject {
         }
     }
 
+    private var addedSchedulingRevision = UUID()
+
     func scheduleAddedAlarm(for date: Date, alarmID: UUID, snoozeMinutes: Int) async {
+        guard isLuniferEnabled else { return }
+        let revision = addedSchedulingRevision
         let generation = BackgroundActivitySession.shared.generation
         guard !BackgroundActivitySession.shared.isStopped else { return }
 
@@ -792,10 +801,11 @@ class LuniferAlarm: ObservableObject {
         }
 
         if !isAuthorized { await requestAuthorization() }
-        guard BackgroundActivitySession.shared.accepts(generation), isAuthorized else { return }
+        guard BackgroundActivitySession.shared.accepts(generation), isAuthorized, isLuniferEnabled, revision == addedSchedulingRevision else { return }
 
         // Cancel any existing alarm with the same logical ID first
         await cancelAddedAlarm(id: alarmID)
+        guard isLuniferEnabled, revision == addedSchedulingRevision else { return }
 
         let alert = AlarmPresentation.Alert(
             title: "Added Alarm",
@@ -834,7 +844,7 @@ class LuniferAlarm: ObservableObject {
                     sound: .named(alarmSoundFilename(for: alarmID))
                 )
             )
-            guard BackgroundActivitySession.shared.accepts(generation) else {
+            guard BackgroundActivitySession.shared.accepts(generation), isLuniferEnabled, revision == addedSchedulingRevision else {
                 try? manager.cancel(id: alarmKitID)
                 return
             }
@@ -876,6 +886,7 @@ class LuniferAlarm: ObservableObject {
     }
 
     func cancelAllAddedAlarms() async {
+        addedSchedulingRevision = UUID()
         if let alarms = readAlarmRegistry() {
             for alarm in alarms where isAddedAlarm(alarm) {
                 try? manager.cancel(id: alarm.id)
@@ -1448,6 +1459,7 @@ class LuniferAlarm: ObservableObject {
                 self.activeAlarms = alarms
             }
             self.scheduledWakeTime = nil
+            AppPreferencesStore.shared.rememberCommuteMessageAlarm(nil)
             AppPreferencesStore.shared.clearMainAlarmWallClock()
             return true
         }

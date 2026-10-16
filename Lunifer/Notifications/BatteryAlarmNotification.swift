@@ -61,7 +61,9 @@ final class BatteryAlarmNotification {
     private let lastCheckLevelKey   = "lunifer_battery_last_check_level"
     private let lastWarnedAlarmKey  = "lunifer_battery_last_warned_alarm"
 
-    private let notificationID = "lunifer.battery.warning"
+    private let scheduler = AlarmNotificationScheduler(
+        identifier: "lunifer.battery.warning", preferenceKey: "batteryAlertEnabled"
+    )
 
     // ── Lifecycle ─────────────────────────────────────────────
 
@@ -109,6 +111,10 @@ final class BatteryAlarmNotification {
     // ── Core check ────────────────────────────────────────────
 
     func checkAndWarnIfNeeded() async {
+        guard UserDefaults.standard.object(forKey: AppPreferencesStore.Keys.luniferEnabled) as? Bool != false else {
+            cancelWarning()
+            return
+        }
         guard !BackgroundActivitySession.shared.isStopped else { return }
         // Respect the user's notification preference
         guard UserDefaults.standard.object(forKey: "batteryAlertEnabled") as? Bool != false else { return }
@@ -320,15 +326,6 @@ final class BatteryAlarmNotification {
         alarmTime: Date,
         alarmLabel: String?
     ) async {
-        let center   = UNUserNotificationCenter.current()
-        let generation = BackgroundActivitySession.shared.generation
-        guard BackgroundActivitySession.shared.accepts(generation) else { return }
-        let settings = await center.notificationSettings()
-        guard BackgroundActivitySession.shared.accepts(generation) else { return }
-
-        guard settings.authorizationStatus == .authorized ||
-              settings.authorizationStatus == .provisional else { return }
-
         let content   = UNMutableNotificationContent()
         content.title = "Charge your phone tonight"
 
@@ -349,30 +346,10 @@ final class BatteryAlarmNotification {
         content.sound             = .default
         content.interruptionLevel = .timeSensitive
 
-        center.removePendingNotificationRequests(withIdentifiers: [notificationID])
-        center.removeDeliveredNotifications(withIdentifiers: [notificationID])
-
-        let request = UNNotificationRequest(
-            identifier: notificationID,
-            content: content,
-            trigger: nil
-        )
-
-        do {
-            try await center.add(request)
-            if !BackgroundActivitySession.shared.accepts(generation) {
-                center.removePendingNotificationRequests(withIdentifiers: [request.identifier])
-                center.removeDeliveredNotifications(withIdentifiers: [request.identifier])
-            }
-            print("🔋 Battery warning sent — \(batteryPct)% now, projected \(Int(projectedLevel * 100))% at \(alarmString)")
-        } catch {
-            print("❌ Battery warning failed: \(error.localizedDescription)")
-        }
+        await scheduler.schedule(content: content, trigger: nil)
     }
 
     func cancelWarning() {
-        let center = UNUserNotificationCenter.current()
-        center.removePendingNotificationRequests(withIdentifiers: [notificationID])
-        center.removeDeliveredNotifications(withIdentifiers: [notificationID])
+        scheduler.cancel()
     }
 }

@@ -107,7 +107,10 @@ struct LuniferIntro: View {
 struct ReturningUserSplash: View {
     let onFinish: () -> Void
 
+    @Environment(\.scenePhase) private var scenePhase
     @State private var appeared = false
+    @State private var deadline: Date?
+    @State private var finished = false
 
     var body: some View {
         ZStack {
@@ -124,13 +127,32 @@ struct ReturningUserSplash: View {
             .animation(.easeIn(duration: 0.9), value: appeared)
         }
         .frame(maxWidth: .infinity, maxHeight: .infinity)
+        .accessibilityIdentifier("startup.splash")
         .contentShape(Rectangle())
-        .onTapGesture { onFinish() }
-        .task {
+        .onTapGesture { finish() }
+        .task(id: scenePhase) {
+            if deadline == nil { deadline = Date().addingTimeInterval(3) }
+            // Never navigate inside a suspended scene. On foreground entry,
+            // use the original deadline rather than starting another delay.
+            guard scenePhase == .active, let deadline else { return }
             appeared = true
-            try? await Task.sleep(nanoseconds: 3_000_000_000)
-            onFinish()
+            let remaining = deadline.timeIntervalSinceNow
+            if remaining > 0 {
+                do {
+                    try await Task.sleep(for: .seconds(remaining))
+                } catch {
+                    return
+                }
+            }
+            guard !Task.isCancelled else { return }
+            finish()
         }
+    }
+
+    private func finish() {
+        guard !finished else { return }
+        finished = true
+        onFinish()
     }
 }
 

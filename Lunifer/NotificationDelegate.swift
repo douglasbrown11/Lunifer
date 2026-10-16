@@ -36,7 +36,8 @@ final class LuniferNotificationDelegate: NSObject, UNUserNotificationCenterDeleg
         willPresent notification: UNNotification,
         withCompletionHandler completionHandler: @escaping (UNNotificationPresentationOptions) -> Void
     ) {
-        completionHandler([.banner, .sound])
+        let enabled = UserDefaults.standard.object(forKey: "luniferEnabled") as? Bool != false
+        completionHandler(enabled || notification.request.identifier == "lunifer.reengagement" ? [.banner, .sound] : [])
     }
 
     // ── Action handling ───────────────────────────────────────
@@ -62,8 +63,8 @@ final class LuniferNotificationDelegate: NSObject, UNUserNotificationCenterDeleg
             let frozenWake = (userInfo["wakeTimestamp"] as? TimeInterval)
                 .map { Date(timeIntervalSince1970: $0) }
             Task { @MainActor in
-                // Make sure Lunifer is switched on for the night.
-                UserDefaults.standard.set(true, forKey: AppPreferencesStore.Keys.luniferEnabled)
+                // Ignore actions from an old alert after the user switches Lunifer off.
+                guard UserDefaults.standard.object(forKey: AppPreferencesStore.Keys.luniferEnabled) as? Bool != false else { return }
 
                 await LuniferAlarm.shared.requestAuthorization()
 

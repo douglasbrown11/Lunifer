@@ -23,6 +23,49 @@ final class LuniferUITests: XCTestCase {
     }
 
     @MainActor
+    func testMissingCommuteLocationKeepsTomorrowAlarm() {
+        let app = XCUIApplication()
+        app.launchArguments = ["--ui-test-dashboard"]
+        app.launch()
+        defer { app.terminate() }
+        let alarm = app.staticTexts["TOMORROW'S ALARM"]
+        XCTAssertTrue(alarm.waitForExistence(timeout: 15))
+        let message = app.staticTexts["Add locations to your calendar events and Lunifer will track your commute automatically."]
+        XCTAssertTrue(message.waitForExistence(timeout: 5))
+        XCTAssertGreaterThan(message.frame.minY, alarm.frame.maxY)
+        let screenshot = XCTAttachment(screenshot: app.screenshot())
+        screenshot.name = "Wake day without commute location"
+        screenshot.lifetime = .keepAlways
+        add(screenshot)
+    }
+
+    @MainActor
+    func testCommuteMessageExpiresAfterTodaysAlarm() throws {
+        let pastAlarm = Date().addingTimeInterval(-3 * 3600 - 60)
+        try XCTSkipUnless(Calendar.current.isDateInToday(pastAlarm), "Requires a same-day alarm at least three hours ago; boundary and midnight behavior are covered by unit tests.")
+        let app = XCUIApplication()
+        app.launchArguments = ["--ui-test-dashboard", "--ui-test-expired-commute-message"]
+        app.launch()
+        defer { app.terminate() }
+        XCTAssertTrue(app.staticTexts["TOMORROW'S ALARM"].waitForExistence(timeout: 15))
+        XCTAssertFalse(app.staticTexts["Add locations to your calendar events and Lunifer will track your commute automatically."].exists)
+    }
+
+    @MainActor
+    func testMissingCommuteLocationOnRestDay() {
+        let app = XCUIApplication()
+        app.launchArguments = ["--ui-test-dashboard", "--ui-test-rest-day"]
+        app.launch()
+        defer { app.terminate() }
+        XCTAssertTrue(app.staticTexts["No Alarm tomorrow"].waitForExistence(timeout: 15))
+        XCTAssertFalse(app.staticTexts["Add locations to your calendar events and Lunifer will track your commute automatically."].exists)
+        let screenshot = XCTAttachment(screenshot: app.screenshot())
+        screenshot.name = "Rest day without commute location"
+        screenshot.lifetime = .keepAlways
+        add(screenshot)
+    }
+
+    @MainActor
     func testExample() throws {
         // UI tests must launch the application that they test.
         let app = XCUIApplication()
@@ -84,6 +127,48 @@ final class LuniferUITests: XCTestCase {
     }
 
     @MainActor
+    func testTurningOffDuringWakeReminderScheduling() {
+        let app = XCUIApplication()
+        app.launchArguments = ["--ui-test-dashboard", "--ui-test-wake-reminder-race"]
+        app.launch()
+        defer { app.terminate() }
+        let toggle = app.buttons["lunifer.enabledToggle"]
+        XCTAssertTrue(toggle.waitForExistence(timeout: 15))
+        XCTAssertTrue(waitForAlarmStatus("Alarm scheduled", toggle: toggle))
+        app.buttons["wakeReminder.start"].tap()
+        let probe = app.staticTexts["wakeReminder.probe"]
+        let paused = XCTNSPredicateExpectation(predicate: NSPredicate(format: "label BEGINSWITH 'paused;'"), object: probe)
+        XCTAssertEqual(XCTWaiter.wait(for: [paused], timeout: 10), .completed)
+        toggle.tap()
+        XCTAssertTrue(waitForAlarmStatus("No scheduled alarms", toggle: toggle))
+        app.buttons["wakeReminder.resume"].tap()
+        let finished = XCTNSPredicateExpectation(predicate: NSPredicate(format: "label BEGINSWITH 'finished;'"), object: probe)
+        XCTAssertEqual(XCTWaiter.wait(for: [finished], timeout: 10), .completed)
+        XCTAssertEqual(probe.label, "finished; pending=0", "A suspended reminder must not recreate a notification after turning Lunifer off.")
+    }
+
+    @MainActor
+    func testTurningOffClearsAllNotificationsExceptSevenDayReminder() {
+        let app = XCUIApplication()
+        app.launchArguments = ["--ui-test-dashboard", "--ui-test-wake-reminder-race", "--ui-test-all-notifications"]
+        app.launch()
+        defer { app.terminate() }
+        let toggle = app.buttons["lunifer.enabledToggle"]
+        XCTAssertTrue(toggle.waitForExistence(timeout: 15))
+        XCTAssertTrue(waitForAlarmStatus("Alarm scheduled", toggle: toggle))
+        app.buttons["wakeReminder.start"].tap()
+        let probe = app.staticTexts["wakeReminder.probe"]
+        let paused = XCTNSPredicateExpectation(predicate: NSPredicate(format: "label BEGINSWITH 'paused;'"), object: probe)
+        XCTAssertEqual(XCTWaiter.wait(for: [paused], timeout: 10), .completed)
+        toggle.tap()
+        XCTAssertTrue(waitForAlarmStatus("No scheduled alarms", toggle: toggle))
+        app.buttons["wakeReminder.resume"].tap()
+        let finished = XCTNSPredicateExpectation(predicate: NSPredicate(format: "label BEGINSWITH 'finished;'"), object: probe)
+        XCTAssertEqual(XCTWaiter.wait(for: [finished], timeout: 10), .completed)
+        XCTAssertEqual(probe.label, "finished; pending=0", "A suspended reminder must not recreate a notification after turning Lunifer off.")
+    }
+
+    @MainActor
     func testTurningLuniferBackOnSchedulesAlarmImmediately() {
         let app = XCUIApplication()
         app.launchArguments = ["--ui-test-dashboard"]
@@ -133,6 +218,35 @@ final class LuniferUITests: XCTestCase {
         XCTAssertTrue(waitForAlarmStatus("Alarm scheduled", toggle: toggle), "Successful replacement must leave exactly one alarm, not duplicate wakeups.")
         app.staticTexts["Turn Lunifer off"].tap()
         XCTAssertTrue(waitForAlarmStatus("No scheduled alarms", toggle: toggle))
+    }
+
+    @MainActor
+    func testWakeTimePointSelection() {
+        let app = XCUIApplication()
+        app.launchArguments = ["--ui-test-dashboard", "--ui-test-wake-times"]
+        app.launch()
+        defer { app.terminate() }
+        XCTAssertTrue(app.buttons["lunifer.enabledToggle"].waitForExistence(timeout: 15))
+        app.swipeRight()
+        let dots = app.buttons.matching(NSPredicate(format: "identifier BEGINSWITH %@", "wakeTimes.point."))
+        let first = dots.element(boundBy: 0)
+        XCTAssertTrue(first.waitForExistence(timeout: 10))
+        let detail = app.staticTexts["wakeTimes.selection"]
+        XCTAssertEqual(detail.label, "Last 7 days")
+        first.tap()
+        XCTAssertTrue(detail.label.contains(first.value as? String ?? "missing time"))
+        XCTAssertNotEqual(detail.label, "Last 7 days")
+        let firstDetail = detail.label
+        let last = dots.element(boundBy: dots.count - 1)
+        last.tap()
+        XCTAssertTrue(detail.label.contains(last.value as? String ?? "missing time"))
+        XCTAssertNotEqual(detail.label, firstDetail)
+        let screenshot = XCTAttachment(screenshot: app.screenshot())
+        screenshot.name = "Selected wake time"
+        screenshot.lifetime = .keepAlways
+        add(screenshot)
+        last.tap()
+        XCTAssertEqual(detail.label, "Last 7 days")
     }
 
     @MainActor
