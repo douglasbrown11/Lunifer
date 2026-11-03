@@ -5,3 +5,10 @@ GoogleService-Info.plist
 Database/functions/node_modules/
 Database/cloudflare-worker/node_modules/
 Database/cloudflare-worker/.wrangler/
+
+# wrangler files
+.wrangler
+.dev.vars*
+!.dev.vars.example
+.env*
+!.env.example
